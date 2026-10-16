@@ -350,7 +350,7 @@ def create_app(scheduler: bool = True) -> FastAPI:
         out = []
         for r in _rows("SELECT file_path FROM genome_sequence WHERE genome_id IN (%s)" % ",".join("?" * len(ids)), *ids) if ids else []:
             try:
-                out.append(Path(r["file_path"]).read_text())
+                out.append(Path(r["file_path"]).read_text(encoding="utf-8"))
             except OSError:
                 pass
         return Response("".join(out), media_type="text/plain; charset=utf-8",

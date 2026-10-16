@@ -247,10 +247,16 @@ def _gc(seq: str) -> float:
     return round(100 * sum(seq.count(b) for b in "GCgc") / len(seq), 3) if seq else 0.0
 
 
+def _write_fasta(path, header: str, seq: str) -> None:
+    """UTF-8 and LF line endings on every OS (plain write_text would produce CRLF on Windows)."""
+    with open(path, "w", encoding="utf-8", newline="\n") as fh:
+        fh.write(header + "\n" + "\n".join(seq[i:i + 70] for i in range(0, len(seq), 70)) + "\n")
+
+
 def _read_staged(f, versioned: str):
     """Sequence from a staged FASTA written by apply(), or None if missing/mismatched."""
     try:
-        lines = f.read_text().splitlines()
+        lines = f.read_text(encoding="utf-8").splitlines()
     except OSError:
         return None
     if not lines or not lines[0].startswith(">" + versioned + " ") and lines[0][1:] != versioned:
@@ -315,13 +321,12 @@ def apply(changeset_id: int, progress=None, fetch_sequences: bool = True) -> dic
                     failed[a] = f"length {len(s)} != expected {exp}"
                     continue
                 f = stage / f"{a}.fna"
-                f.write_text(f">{v} {recs[a].get('genome_name', '')}\n" +
-                             "\n".join(s[i:i + 70] for i in range(0, len(s), 70)) + "\n")
+                _write_fasta(f, f">{v} {recs[a].get('genome_name', '')}", s)
                 meta[a] = {"md5": hashlib.md5(s.encode()).hexdigest(), "len": len(s), "gc": _gc(s), "file": f}
         if failed and not meta and recs:
             raise SystemExit(f"all downloads failed, e.g. {next(iter(failed.items()))}")
         p(72, f"서열 검증 완료 ({len(failed)}건 실패), 파일·DB 기록 중…")
-        taxon_dir = config.DATA_DIR / "genomes" / (w["name"].replace(" ", "_"))
+        taxon_dir = config.DATA_DIR / "genomes" / config.safe_name(w["name"])
         taxon_dir.mkdir(parents=True, exist_ok=True)
         snap.mkdir(parents=True, exist_ok=True)
         now = datetime.now().isoformat(timespec="seconds")
@@ -443,7 +448,7 @@ def fetch_missing_sequences(watch_id: int, genome_ids: list[str] | None = None, 
             rows = [r for r in rows if r["genome_id"] in wanted]
         if not rows:
             return {"fetched": 0, "failed": {}, "total": 0}
-        taxon_dir = config.DATA_DIR / "genomes" / w["name"].replace(" ", "_")
+        taxon_dir = config.DATA_DIR / "genomes" / config.safe_name(w["name"])
         taxon_dir.mkdir(parents=True, exist_ok=True)
         failed: dict[str, str] = {}
         fetched = 0
@@ -468,7 +473,7 @@ def fetch_missing_sequences(watch_id: int, genome_ids: list[str] | None = None, 
                     continue
                 path = taxon_dir / f"{r['genome_id']}.fna"
                 tmp = path.with_suffix(".fna.tmp")
-                tmp.write_text(f">{ver[a]} {r['genome_name'] or ''}\n" + "\n".join(s[i:i + 70] for i in range(0, len(s), 70)) + "\n")
+                _write_fasta(tmp, f">{ver[a]} {r['genome_name'] or ''}", s)
                 os.replace(tmp, path)
                 md5 = hashlib.md5(s.encode()).hexdigest()
                 con.execute("INSERT OR REPLACE INTO genome_sequence(accession,genome_id,version,length,gc_content,md5,file_path)"

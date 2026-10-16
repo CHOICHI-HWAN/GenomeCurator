@@ -24,5 +24,6 @@ if __name__ == "__main__":
         sys.exit(str(e))
     out = Path(a.out)
     out.parent.mkdir(parents=True, exist_ok=True)
-    out.write_text(html, encoding="utf-8")
+    with open(out, "w", encoding="utf-8", newline="\n") as fh:
+        fh.write(html)
     print(f"wrote {out} ({out.stat().st_size / 1e6:.2f} MB)")

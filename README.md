@@ -4,15 +4,30 @@
 Pathoplexus > NCBI Virus > BV-BRC 우선순위로 메타데이터를 병합해 BV-BRC 스타일 테이블로 저장합니다.
 새 데이터는 **changeset**으로만 쌓이고, 웹 페이지에서 승인해야 로컬에 반영됩니다.
 
-## 실행
+## 실행 (Windows · macOS · Linux)
+
+Python 3.10 이상과 git이 필요합니다. 저장소를 clone한 폴더에서 실행하세요.
+
+| OS | 한 번에 시작 (가상환경 생성 → 설치 → 실행 → 브라우저 열기) |
+|---|---|
+| Windows | `scripts\start.bat` 더블클릭 (또는 터미널에서 실행) |
+| macOS | Finder에서 `scripts/start.command` 더블클릭 (처음 한 번 `chmod +x scripts/start.*` 필요) |
+| Linux | `./scripts/start.sh` |
+
+직접 설치하려면 (모든 OS 공통):
 ```bash
-pip install -e .
+python -m venv .venv
+# Windows: .venv\Scriptsctivate     macOS/Linux: source .venv/bin/activate
+pip install -e ".[dev]"
 python -m genomecurator watch-add "Henipavirus nipahense"
-python -m genomecurator check "Henipavirus nipahense"   # changeset 생성 + dry-run
-python -m genomecurator serve                           # http://127.0.0.1:8000
+python -m genomecurator serve --open          # http://127.0.0.1:8000
+python -m pytest                              # 테스트
 ```
-웹(큐레이션 페이지)에서 항목 승인/거절/보류 → Apply. 데이터는 `data/`(변경: `GC_DATA_DIR`).
-환경변수: `NCBI_API_KEY`, `GC_CHECK_INTERVAL_HOURS`(기본 24), `GC_DRYRUN_SAMPLE`(기본 3).
+- 웹(큐레이션 페이지)에서 항목 승인/거절/보류 → Apply.
+- 데이터 위치: 기본 `<저장소>/data` (어느 폴더에서 실행해도 같은 곳). 바꾸려면 `GC_DATA_DIR` (예: Windows `set GC_DATA_DIR=D:\gc`, macOS/Linux `export GC_DATA_DIR=~/gc`).
+- 환경변수: `NCBI_API_KEY`, `GC_CHECK_INTERVAL_HOURS`(기본 24), `GC_DRYRUN_SAMPLE`(기본 3), `GC_REQUEST_DELAY_MS`(기본 300).
+- 공개 페이지 "배포하기"는 git이 PATH 또는 기본 설치 위치에 있고 `origin`에 push 권한(자격 증명)이 있어야 합니다.
+- 파일은 모든 OS에서 UTF-8 / LF로 저장됩니다. FASTA도 동일합니다. CI(GitHub Actions)가 Windows·macOS·Linux × Python 3.10/3.12에서 테스트를 돌립니다.
 
 ## 변경 판정
 메타데이터 값 변경, 또는 GenBank accession `.version` 증가 → changed. 신규 → new, NCBI에서 사라짐 → removed.

@@ -18,10 +18,14 @@ _GEN = re.compile(r'"generated":"\d{4}-\d{2}-\d{2}"')
 
 
 def _git() -> str:
-    exe = shutil.which("git") or next((p for p in (r"C:\Program Files\Git\cmd\git.exe",
-                                                    r"C:\Program Files (x86)\Git\cmd\git.exe") if os.path.exists(p)), None)
+    """git on PATH, else the usual install locations (apps started from a GUI often lack the shell PATH)."""
+    exe = shutil.which("git")
     if not exe:
-        raise RuntimeError("git을 찾을 수 없습니다. git을 설치하고 PATH에 추가하세요.")
+        cands = [Path(os.environ.get(v, "")) / "Git" / "cmd" / "git.exe" for v in ("ProgramFiles", "ProgramFiles(x86)", "LOCALAPPDATA")]
+        cands += [Path(p) for p in ("/opt/homebrew/bin/git", "/usr/local/bin/git", "/usr/bin/git", "/opt/local/bin/git")]
+        exe = next((str(p) for p in cands if p.is_file()), None)
+    if not exe:
+        raise RuntimeError("git을 찾을 수 없습니다. git을 설치하세요 (Windows: git-scm.com, macOS: xcode-select --install, Linux: 패키지 관리자).")
     return exe
 
 
@@ -82,7 +86,8 @@ def publish(progress=None, root: Path = ROOT) -> str:
         p(100, "변경 없음")
         return "이미 최신 상태라 게시할 변경이 없습니다."
     target.parent.mkdir(parents=True, exist_ok=True)
-    target.write_text(html, encoding="utf-8")
+    with open(target, "w", encoding="utf-8", newline="\n") as fh:
+        fh.write(html)
     (target.parent / ".nojekyll").touch()
     p(40, "변경 사항 커밋 중…")
     _run(root, "add", "--", REL, "docs/.nojekyll")

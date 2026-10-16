@@ -1,0 +1,8 @@
+# Store text as LF in the repository on every OS; check out with the platform's default.
+* text=auto eol=lf
+*.bat text eol=crlf
+*.cmd text eol=crlf
+*.sh text eol=lf
+*.command text eol=lf
+*.fna text eol=lf
+*.fasta text eol=lf

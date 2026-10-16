@@ -1,4 +1,4 @@
-﻿import sqlite3
+import sqlite3
 from contextlib import contextmanager
 
 from . import config
@@ -55,7 +55,10 @@ def connect() -> sqlite3.Connection:
     config.DATA_DIR.mkdir(parents=True, exist_ok=True)
     con = sqlite3.connect(config.DB_PATH, timeout=30)
     con.row_factory = sqlite3.Row
-    con.execute("PRAGMA journal_mode=WAL")
+    try:
+        con.execute("PRAGMA journal_mode=WAL")
+    except sqlite3.OperationalError:  # e.g. some network / virtual file systems do not support WAL
+        pass
     con.execute("PRAGMA foreign_keys=ON")
     con.executescript(SCHEMA)
     have = {r[1] for r in con.execute("PRAGMA table_info(genome)")}

@@ -1,8 +1,34 @@
 """Runtime settings. Override with environment variables."""
 import os
+import re
+import sys
 from pathlib import Path
 
-DATA_DIR = Path(os.environ.get("GC_DATA_DIR", "data")).resolve()
+
+def _default_data_dir() -> Path:
+    """GC_DATA_DIR, else <repo>/data when running from a clone (the usual case), else the OS user-data folder.
+    Never relative to the current directory, so the same data is used wherever the app is started from."""
+    env = os.environ.get("GC_DATA_DIR")
+    if env:
+        return Path(env).expanduser().resolve()
+    repo = Path(__file__).resolve().parent.parent
+    if (repo / "pyproject.toml").exists():
+        return repo / "data"
+    if sys.platform == "win32":
+        base = Path(os.environ.get("LOCALAPPDATA") or Path.home() / "AppData" / "Local")
+    elif sys.platform == "darwin":
+        base = Path.home() / "Library" / "Application Support"
+    else:
+        base = Path(os.environ.get("XDG_DATA_HOME") or Path.home() / ".local" / "share")
+    return base / "GenomeCurator"
+
+
+def safe_name(name: str) -> str:
+    """Folder/file-safe version of a watch name (spaces, slashes, colons, reserved characters on Windows)."""
+    return re.sub(r"[^\w.\-]+", "_", name, flags=re.UNICODE).strip("._") or "virus"
+
+
+DATA_DIR = _default_data_dir()
 DB_PATH = DATA_DIR / "genomecurator.db"
 NCBI_API_KEY = os.environ.get("NCBI_API_KEY") or None
 # Minimum gap between any two outgoing web requests (NCBI, BV-BRC, Pathoplexus).

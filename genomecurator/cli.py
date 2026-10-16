@@ -1,11 +1,24 @@
 import argparse
 import json
+import sys
+import threading
+import webbrowser
 
 from . import config, curate
 from .db import connect
 
 
+def _utf8_console():
+    """Korean text must not crash print() on consoles with a legacy code page (e.g. Windows cp949)."""
+    for stream in (sys.stdout, sys.stderr):
+        try:
+            stream.reconfigure(encoding="utf-8", errors="replace")
+        except (AttributeError, ValueError):
+            pass
+
+
 def main(argv=None):
+    _utf8_console()
     p = argparse.ArgumentParser(prog="genomecurator")
     sub = p.add_subparsers(dest="cmd", required=True)
     a = sub.add_parser("watch-add", help="register a virus (taxon name or id)")
@@ -25,6 +38,7 @@ def main(argv=None):
     s.add_argument("--host", default="127.0.0.1")
     s.add_argument("--port", type=int, default=8000)
     s.add_argument("--no-scheduler", action="store_true")
+    s.add_argument("--open", action="store_true", help="open the browser when the server is up")
     args = p.parse_args(argv)
 
     if args.cmd == "watch-add":
@@ -49,6 +63,8 @@ def main(argv=None):
     elif args.cmd == "serve":
         import uvicorn
         from .web import create_app
+        if args.open:
+            threading.Timer(1.5, lambda: webbrowser.open(f"http://{'127.0.0.1' if args.host in ('0.0.0.0', '::') else args.host}:{args.port}/")).start()
         uvicorn.run(create_app(scheduler=not args.no_scheduler), host=args.host, port=args.port)
 
 

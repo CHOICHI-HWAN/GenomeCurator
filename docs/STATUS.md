@@ -68,3 +68,10 @@ Windows에서 `git`이 PATH에 없으면 `C:\Program Files\Git\cmd\git.exe`로 �
 
 ## 대량 선택 (1000건 초과)
 - 선택한 항목 id는 `items` 한 필드(쉼표 구분)로 보낸다. 항목마다 `item` 필드를 보내면 Starlette 폼 한도(1000 필드)에 걸려 `Too many fields` 오류가 난다(`web._item_ids`, 기존 `item` 방식도 호환).
+
+## 크로스플랫폼 (Windows · macOS · Linux)
+- 데이터 위치: `GC_DATA_DIR` → `<저장소>/data` → OS 사용자 데이터 폴더 순(`config._default_data_dir`). 현재 폴더에 의존하지 않는다.
+- 모든 텍스트 파일 쓰기는 UTF-8 + LF(`curate._write_fasta`, deploy, build_static). `.gitattributes`로 저장소는 LF 고정. BOM 제거(테스트로 검사).
+- 워치 이름은 `config.safe_name()`으로 폴더명에 안전하게 변환(Windows 금지 문자 대응). git은 PATH → 각 OS 기본 설치 위치 순으로 탐색(`deploy._git`).
+- CLI 출력은 UTF-8로 재설정(cp949 등 콘솔 대응), `serve --open`으로 브라우저 자동 열기. 시작 스크립트: `scripts/start.bat | start.sh | start.command`.
+- `.github/workflows/ci.yml`: ubuntu/windows/macos × Python 3.10/3.12에서 pytest.

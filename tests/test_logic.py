@@ -47,3 +47,27 @@ def test_base_template_script_has_no_broken_string_literals():
         assert len(re.findall(r'(?<!\\)"', line)) % 2 == 0, f"unbalanced quotes in base.html script line {n}: {line[:80]}"
     for name in ("runJob", "pollJob", "deploy"):
         assert f"function {name}(" in js
+
+
+def test_cross_platform_helpers(tmp_path):
+    from genomecurator import config
+    assert config.safe_name("Monkeypox virus") == "Monkeypox_virus"
+    assert config.safe_name("a/b:c*d") == "a_b_c_d"          # characters illegal on Windows
+    assert config.safe_name("  ..  ") == "virus"             # never empty / never a dot-only name
+    assert config.DATA_DIR.is_absolute()                     # independent of the current directory
+    f = tmp_path / "x.fna"
+    curate._write_fasta(f, ">AB123.1 test virus", "ACGT" * 40)
+    raw = f.read_bytes()
+    assert b"\r" not in raw                                  # LF on every OS (plain write_text gives CRLF on Windows)
+    assert raw.splitlines()[0] == b">AB123.1 test virus" and len(raw.splitlines()[1]) == 70
+    assert curate._read_staged(f, "AB123.1") == "ACGT" * 40
+
+
+def test_sources_have_no_bom_and_are_utf8():
+    import codecs
+    from pathlib import Path
+    root = Path(curate.__file__).parent
+    for p in list(root.glob("*.py")) + list(root.glob("templates/*.html")):
+        raw = p.read_bytes()
+        assert not raw.startswith(codecs.BOM_UTF8), f"BOM in {p.name}"
+        raw.decode("utf-8")
