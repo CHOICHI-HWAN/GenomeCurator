@@ -16,6 +16,7 @@ GENOME_COLS = [
     "collection_date", "isolation_source", "publication", "submitter", "genome_quality",
     "sequence_hash", "bvbrc_genome_id", "pathoplexus_accession", "release_date", "update_date",
     "sra_accession", "bioproject_accession", "biosample_accession", "assembly_method", "sequencing_platform",
+    "clade", "lineage", "serotype", "outbreak",
 ]
 COMPARE = ["accession_version"] + config.TRACKED_FIELDS
 

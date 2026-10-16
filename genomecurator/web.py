@@ -54,6 +54,8 @@ CS_COLS = [("kind", "종류", True, True), ("decision", "결정", True, True), (
            ("accession_version", "Ver", True, False), ("genome_name", "Genome Name", True, False),
            ("genome_status", "Status", True, False), ("genome_length", "Length", True, False),
            ("strain", "Strain", True, False), ("host_name", "Host", True, False),
+           ("clade", "Clade", None, False), ("lineage", "Lineage", None, False), ("serotype", "Serotype", None, False),
+           ("genotype", "Genotype", None, False), ("subtype", "Subtype", None, False), ("outbreak", "Outbreak", None, False),
            ("isolation_country", "Country", True, False), ("geographic_location", "Geographic Location", False, False),
            ("collection_date", "Collection Date", True, False), ("isolation_source", "Isolation Source", False, False),
            ("sra_accession", "SRA Accession", True, False), ("bioproject_accession", "BioProject", False, False),
@@ -66,14 +68,36 @@ CS_FACETS = [("kind", "종류"), ("decision", "결정"), ("genome_status", "Geno
 GN_COLS = [("genome_name", "Genome Name", True), ("strain", "Strain", True), ("genbank", "GenBank Accessions", True),
            ("genome_length", "Size", True), ("genome_status", "Genome Status", True), ("collection_date", "Collection Date", True),
            ("isolation_country", "Isolation Country", True), ("host_name", "Host Name", True),
+           ("clade", "Clade", None), ("lineage", "Lineage", None), ("serotype", "Serotype", None),
+           ("genotype", "Genotype", None), ("subtype", "Subtype", None), ("outbreak", "Outbreak", None),
            ("geographic_location", "Geographic Location", False), ("isolation_source", "Isolation Source", False),
            ("sra_accession", "SRA Accession", True), ("bioproject_accession", "BioProject", False),
            ("biosample_accession", "BioSample", False), ("sequencing_platform", "Sequencing Platform", False),
            ("assembly_method", "Assembly Method", False), ("has_sra", "SRA Available", False), ("has_fasta", "FASTA", False),
            ("genome_quality", "Genome Quality", False), ("genome_id", "Genome ID", False), ("bvbrc_genome_id", "BV-BRC ID", False),
            ("gc_content", "GC %", False), ("release_date", "Release Date", False), ("date_modified", "Modified", False)]
+TAX_FACETS = [("clade", "Clade"), ("lineage", "Lineage"), ("serotype", "Serotype"), ("genotype", "Genotype"), ("subtype", "Subtype")]
 GN_FACETS = [("genome_status", "Genome Status"), ("host_name", "Host"), ("isolation_country", "Country"),
              ("collection_year", "Collection Year"), ("has_sra", "SRA"), ("has_fasta", "FASTA"), ("genome_quality", "Quality")]
+
+
+def _cols(cols, rows):
+    """Optional taxonomy columns (on=None) are shown only when at least one row has a value."""
+    out = []
+    for c in cols:
+        k, label, on = c[0], c[1], c[2]
+        d = {"k": k, "label": label, "on": any(r.get(k) for r in rows) if on is None else on}
+        if len(c) > 3:
+            d["cls"] = c[3]
+        out.append(d)
+    return out
+
+
+def _facets(facets, rows):
+    extra = [f for f in TAX_FACETS if any(r.get(f[0]) for r in rows)]
+    base = list(facets)
+    at = next((i for i, f in enumerate(base) if f[0] == "collection_year"), len(base))
+    return [{"k": k, "label": l} for k, l in base[:at] + extra + base[at:]]
 
 
 def pending_total() -> int:
@@ -107,7 +131,7 @@ def dashboard_data(g: list[dict], prov: list[dict], last_checked) -> dict:
             hist["values"].append(bins.get(i, 0))
     fields = ["host_name", "isolation_country", "collection_date", "isolation_source", "strain",
               "geographic_location", "genotype", "subtype", "genome_quality", "publication",
-              "sra_accession", "bioproject_accession", "biosample_accession"]
+              "sra_accession", "bioproject_accession", "biosample_accession", "clade", "lineage"]
     n = len(g) or 1
     fill = sorted(({"f": f, "pct": round(100 * sum(1 for r in g if r.get(f)) / n, 1)} for f in fields),
                   key=lambda x: x["pct"])
@@ -118,6 +142,9 @@ def dashboard_data(g: list[dict], prov: list[dict], last_checked) -> dict:
         "pending": pending_total(), "prov": {p["source"]: p["n"] for p in prov},
         "monthly": by_prefix("release_date", 7), "year": by_prefix("collection_date", 4),
         "country": top("isolation_country"), "host": top("host_name", 8), "status": top("genome_status", 6),
+        "clade": top("clade", 10) if any(r.get("clade") for r in g) else None,
+        "lineage": top("lineage", 15) if any(r.get("lineage") for r in g) else None,
+        "serotype": top("serotype", 10) if any(r.get("serotype") for r in g) else None,
         "hist": hist, "fill": {"labels": [x["f"] for x in fill], "values": [x["pct"] for x in fill]},
     }
 
@@ -229,8 +256,7 @@ def create_app(scheduler: bool = True) -> FastAPI:
                 r["_diff"] = json.loads(i["diff_json"] or "{}")
             rows.append(r)
         data = {"rows": rows, "selectable": True, "name": f"changeset_{cid}",
-                "cols": [{"k": k, "label": l, "on": on, "cls": c} for k, l, on, c in CS_COLS],
-                "facets": [{"k": k, "label": l} for k, l in CS_FACETS]}
+                "cols": _cols(CS_COLS, rows), "facets": _facets(CS_FACETS, rows)}
         return render(request, "changeset.html", cs=cs, data=data, nav="cur", watch=cs["watch_id"],
                       summary=json.loads(cs["summary_json"] or "{}"),
                       dry=json.loads(cs["dryrun_json"] or "{}"))
@@ -314,8 +340,7 @@ def create_app(scheduler: bool = True) -> FastAPI:
             r["has_fasta"] = "Yes" if r.get("md5") else "No"
         ppx = _ppx_slug(watch, rows)
         data = {"rows": rows, "name": "genomes", "watch": cur and cur["name"], "lineage": lineage, "ppx": ppx,
-                "cols": [{"k": k, "label": l, "on": on} for k, l, on in GN_COLS],
-                "facets": [{"k": k, "label": l} for k, l in GN_FACETS]}
+                "cols": _cols(GN_COLS, rows), "facets": _facets(GN_FACETS, rows)}
         return render(request, "genomes.html", data=data, nav="gen", watches=watches, watch=watch, msg=msg)
 
     @app.post("/genomes/fasta")

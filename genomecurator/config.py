@@ -27,5 +27,6 @@ TRACKED_FIELDS = [
     "isolation_source", "sequence_hash", "publication", "submitter",
     "genome_quality", "subtype", "genotype", "segment",
     "sra_accession", "bioproject_accession", "biosample_accession", "assembly_method", "sequencing_platform",
+    "clade", "lineage", "serotype", "outbreak",
 ]
 

@@ -270,8 +270,11 @@ PPX_KNOWN = ["mpox", "ebola-zaire", "ebola-sudan", "marburg", "cchf", "west-nile
              "measles", "dengue", "zika", "chikungunya", "yellow-fever"]
 _PPX_FIELDS = ["insdcAccessionFull", "insdcAccessionBase", "accessionVersion", "specimenCollectorSampleId",
                "hostNameScientific", "hostNameCommon", "geoLocCountry", "geoLocAdmin1", "sampleCollectionDate",
-               "clade", "lineage", "authorAffiliations", "earliestReleaseDate", "anatomicalPart", "bodyProduct",
+               "authorAffiliations", "earliestReleaseDate", "anatomicalPart", "bodyProduct",
                "bioprojectAccession", "biosampleAccession", "insdcRawReadsAccession"]
+# Organism-specific classification fields (mpox: clade/lineage, dengue: serotype/lineage, measles: genotype ...).
+# LAPIS rejects unknown field names, so the ones an organism really has are discovered first.
+_PPX_TAXON = ["clade", "lineage", "genotype", "subtype", "serotype", "outbreak"]
 _PPX_FILTER = {"versionStatus": "LATEST_VERSION", "isRevocation": "false"}
 _ppx_cache: dict[tuple, tuple | None] = {}
 
@@ -324,8 +327,12 @@ def fetch_pathoplexus(watch_name: str, taxon: str = "", taxon_id: int | None = N
     flt = dict(_PPX_FILTER)  # whole organism: NCBI defines the accession set, extra rows simply don't join
     out: dict[str, dict] = {}
     with _client() as c:
+        probe = _get(c, f"{config.PATHOPLEXUS_BASE}/{slug}/sample/details", params={**flt, "limit": 1})
+        probe.raise_for_status()
+        have = set((probe.json().get("data") or [{}])[0])
+        fields = [f for f in _PPX_FIELDS if f in have] + [f for f in _PPX_TAXON if f in have]
         r = _get(c, f"{config.PATHOPLEXUS_BASE}/{slug}/sample/details",
-                  params={**flt, "fields": ",".join(_PPX_FIELDS), "limit": 200000}, timeout=300)
+                  params={**flt, "fields": ",".join(fields), "limit": 200000}, timeout=300)
         r.raise_for_status()
         for row in r.json().get("data", []):
             full = row.get("insdcAccessionFull") or row.get("insdcAccessionBase")
@@ -340,7 +347,8 @@ def fetch_pathoplexus(watch_name: str, taxon: str = "", taxon_id: int | None = N
                    "isolation_country": row.get("geoLocCountry"),
                    "geographic_location": geo or None,
                    "collection_date": row.get("sampleCollectionDate"),
-                   "genotype": row.get("clade"), "subtype": row.get("lineage"),
+                   "clade": row.get("clade"), "lineage": row.get("lineage"), "serotype": row.get("serotype"),
+                   "genotype": row.get("genotype"), "subtype": row.get("subtype"), "outbreak": row.get("outbreak"),
                    "isolation_source": row.get("anatomicalPart") or row.get("bodyProduct"),
                    "submitter": row.get("authorAffiliations"),
                    "release_date": row.get("earliestReleaseDate"),

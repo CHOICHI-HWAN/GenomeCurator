@@ -92,8 +92,8 @@ const fmt=n=>Number(n).toLocaleString();
 const COLS=[["genome_name","Genome Name",1],["strain","Strain",1],["genbank","GenBank Accessions",1],["genome_length","Size",1],["genome_status","Genome Status",1],
  ["collection_date","Collection Date",1],["isolation_country","Isolation Country",1],["host_name","Host Name",1],["sra_accession","SRA Accession",1],
  ["bioproject_accession","BioProject",0],["biosample_accession","BioSample",0],["sequencing_platform","Sequencing Platform",0],["assembly_method","Assembly Method",0],
- ["geographic_location","Geographic Location",0],["isolation_source","Isolation Source",0],["genome_quality","Genome Quality",0],["has_sra","SRA Available",0],
- ["genome_id","Genome ID",0],["bvbrc_genome_id","BV-BRC ID",0],["gc_content","GC %",0],["release_date","Release Date",0]].map(([k,label,on])=>({k,label,on:!!on}));
+ ["clade","Clade",-1],["lineage","Lineage",-1],["serotype","Serotype",-1],["genotype","Genotype",-1],["subtype","Subtype",-1],["outbreak","Outbreak",-1],["geographic_location","Geographic Location",0],["isolation_source","Isolation Source",0],["genome_quality","Genome Quality",0],["has_sra","SRA Available",0],
+ ["genome_id","Genome ID",0],["bvbrc_genome_id","BV-BRC ID",0],["gc_content","GC %",0],["release_date","Release Date",0]].map(([k,label,on])=>({k,label,on:on===1,opt:on===-1}));
 const FACETS=[["genome_status","Genome Status"],["host_name","Host"],["isolation_country","Country"],["collection_year","Collection Year"],["has_sra","SRA"],["genome_quality","Quality"]].map(([k,label])=>({k,label}));
 const LINKS={genbank:a=>'https://www.ncbi.nlm.nih.gov/nuccore/'+a,sra_accession:a=>'https://www.ncbi.nlm.nih.gov/sra/'+a,
  bioproject_accession:a=>'https://www.ncbi.nlm.nih.gov/bioproject/?term='+a,biosample_accession:a=>'https://www.ncbi.nlm.nih.gov/biosample/'+a};
@@ -177,7 +177,9 @@ function overview(){
 /* ---------------- Genomes grid ---------------- */
 function openGenomes(filters){show('genomes',filters)}
 function genomes(preset){
- const rows=cur.rows,cols=COLS,facets=FACETS;
+ const rows=cur.rows,cols=COLS.map(c=>c.opt?{...c,on:rows.some(r=>r[c.k])}:c),facets=FACETS.slice();
+ {const ex=[['clade','Clade'],['lineage','Lineage'],['serotype','Serotype'],['genotype','Genotype'],['subtype','Subtype']].filter(([k])=>rows.some(r=>r[k])).map(([k,label])=>({k,label}));
+  const at=facets.findIndex(f=>f.k==='collection_year');facets.splice(at<0?facets.length:at,0,...ex)}
  const st={f:{},q:'',sort:null,dir:1,pg:0,ps:100,vis:new Set(cols.filter(c=>c.on).map(c=>c.k)),cur:null,sel:new Set(),fp:true,rpHide:(()=>{try{return localStorage.getItem('gcRp')==='0'}catch(e){return false}})()};
  for(const k in (preset||{}))st.f[k]=new Set(preset[k]);
  $('#v-genomes').innerHTML=`<div class="bvh"><div class="ico">T</div><div><small>Taxon View · Genomes</small><div class="crumb">${esc(cur.lineage.slice(0,-1).join(' › '))}${cur.lineage.length>1?' › ':''}<b>${esc(cur.name)}</b> ( ${fmt(rows.length)} Genomes )</div></div></div>

@@ -15,7 +15,7 @@ FIELDS = [
     "collection_date", "isolation_country", "geographic_location", "host_name", "isolation_source",
     "sra_accession", "bioproject_accession", "biosample_accession", "sequencing_platform", "assembly_method",
     "genome_quality", "bvbrc_genome_id", "release_date", "taxon_id", "genotype", "subtype", "segment", "publication",
-    "pathoplexus_accession",
+    "pathoplexus_accession", "clade", "lineage", "serotype", "outbreak",
 ]
 
 

@@ -18,6 +18,7 @@
  <div class="ch"><h4>수집 연도별 <small>collection_date</small></h4><div><canvas id="c_year"></canvas></div></div>
  <div class="ch"><h4>국가별 상위 15 <small>클릭하면 유전체 목록 필터</small></h4><div><canvas id="c_country"></canvas></div></div>
  <div class="ch"><h4>숙주별 <small>클릭하면 유전체 목록 필터</small></h4><div><canvas id="c_host"></canvas></div></div>
+ {% for k, t in [("clade","Clade"),("lineage","Lineage 상위 15"),("serotype","Serotype")] %}{% if data[k] %}<div class="ch"><h4>{{ t }} <small>클릭하면 유전체 목록 필터</small></h4><div><canvas id="c_{{ k }}"></canvas></div></div>{% endif %}{% endfor %}
  <div class="ch"><h4>서열 길이 분포 <small>bp</small></h4><div><canvas id="c_hist"></canvas></div></div>
  <div class="ch"><h4>메타데이터 완성도 <small>값이 채워진 비율 (%)</small></h4><div><canvas id="c_fill"></canvas></div></div>
 </div>
@@ -45,6 +46,7 @@ mk('c_country','bar',D.country.labels,D.country.values,base({indexAxis:'y',onCli
 new Chart(document.getElementById('c_host'),{type:'doughnut',data:{labels:D.host.labels,datasets:[{data:D.host.values,backgroundColor:pal,borderWidth:0}]},
  options:{responsive:true,maintainAspectRatio:false,onClick:go('host_name'),plugins:{legend:{position:'right'}}}});
 mk('c_hist','bar',D.hist.labels,D.hist.values,base(),'#3a9d6e');
+for(const k of ['clade','lineage','serotype'])if(D[k])mk('c_'+k,'bar',D[k].labels,D[k].values,base({indexAxis:'y',onClick:go(k)}),'#8a6bbd');
 mk('c_fill','bar',D.fill.labels,D.fill.values,base({indexAxis:'y',scales:{x:{max:100}}}),'#e08a1e');
 }
 </script>
