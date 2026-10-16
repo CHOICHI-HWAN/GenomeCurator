@@ -1,15 +1,18 @@
 {% extends "base.html" %}{% block body %}
-<div class="bvh"><div class="ico">Δ</div><div><small>Changeset View</small>
- <div class="crumb"><b>{{ cs.wname }}</b> · Changeset #{{ cs.id }} <span class="pill {{ cs.status }}">{{ cs.status }}</span>
-  <em>— 신규 <b style="color:var(--ok)">{{ summary.new }}</b> · 변경 <b style="color:var(--warn)">{{ summary.changed }}</b> · 삭제 <b style="color:var(--bad)">{{ summary.removed }}</b>
-  · 소스 {% for s, n in summary.sources.items() %}{{ s }} {{ n }}{{ ', ' if not loop.last }}{% endfor %}</em></div></div></div>
+<div class="bvh"><div class="ico">Δ</div><div><small>변경 사항 검토</small>
+ <div class="crumb"><b>{{ cs.wname }}</b> · 변경 사항 {{ cs.id }}번
+  <span class="pill {{ cs.status }}">{{ {'READY': '검토 대기', 'APPLIED': '적용 완료', 'BLOCKED': '적용 불가', 'PENDING': '준비 중'}.get(cs.status, cs.status) }}</span>
+  <em>— 새로 발견 <b style="color:var(--ok)">{{ summary.new }}</b> · 정보 바뀜 <b style="color:var(--warn)">{{ summary.changed }}</b> · NCBI에서 사라짐 <b style="color:var(--bad)">{{ summary.removed }}</b>
+  · 출처 {% for s, n in summary.sources.items() %}{{ {'ncbi': 'NCBI', 'bvbrc': 'BV-BRC', 'pathoplexus': 'Pathoplexus'}.get(s, s) }} {{ n }}{{ ', ' if not loop.last }}{% endfor %}</em></div></div></div>
+<div class="help" style="margin:6px 0 0;font-size:12.5px"><b>이렇게 쓰세요</b> ① 표에서 항목을 골라(체크박스 또는 <b>Select all</b>) ② <b>Approve</b>(승인)·<b>Reject</b>(거절)·<b>Hold</b>(보류) 중 하나를 누르고 ③ 승인한 것을 <b>Apply</b>로 내 데이터에 반영합니다.
+ <span class="mut">용어 — 종류: <b>new</b> 새로 발견 · <b>changed</b> 정보 바뀜 · <b>removed</b> NCBI에서 사라짐 / 결정: <b>pending</b> 미결정 · <b>approved</b> 승인 · <b>rejected</b> 거절(같은 내용은 다시 안 올라옴) · <b>hold</b> 보류 · <b>applied</b> 반영됨</span></div>
 <div class="tabs"><a href="/dashboard?watch={{ watch }}">Overview</a><a href="/genomes?watch={{ watch }}">Genomes</a><a class="on">Changes</a><a href="/history">History</a></div>
 {% if n_conf %}<div class="msg" style="border-left-color:var(--warn);margin:0">⚠ 이 changeset의 <b>{{ n_conf }}건</b>은 소스(NCBI·BV-BRC·Pathoplexus) 사이에 값이 서로 다릅니다. 표의 <b>정합성</b> 열이 "불일치"인 항목은 <a href="/integrity?watch={{ watch }}">정합성 탭</a>에서 두 값을 확인한 뒤 승인하세요. 정합성 필터로 불일치 항목만 골라 보류/거절할 수도 있습니다.</div>{% endif %}
 <details class="card" style="margin:0;border-top:0;border-radius:0" {% if cs.status == 'BLOCKED' %}open{% endif %}>
- <summary>Dry-run: <b class="{{ 'READY' if cs.status == 'READY' else 'BLOCKED' }}">{{ 'OK' if cs.status == 'READY' else cs.status }}</b>
+ <summary>적용 전 점검 (Dry-run): <b class="{{ 'READY' if cs.status == 'READY' else 'BLOCKED' }}">{{ 'OK' if cs.status == 'READY' else cs.status }}</b>
  {% for n in summary.notes %}<span class="mut"> · ⚠ {{ n }}</span>{% endfor %}</summary>
  <table style="margin-top:6px">{% for c in dry.checks %}<tr><td>{{ c.name }}</td><td class="{{ 'READY' if c.ok else 'BLOCKED' }}">{{ 'OK' if c.ok else 'FAIL' }}</td><td>{{ c.detail }}</td></tr>{% endfor %}</table>
- <form method="post" action="/changeset/{{ cs.id }}/dryrun" style="margin-top:6px"><button>Dry-run 다시 실행</button></form></details>
+ <form method="post" action="/changeset/{{ cs.id }}/dryrun" style="margin-top:6px"><button>점검 다시 실행</button></form></details>
 <form method="post" id="csdel" action="/changeset/{{ cs.id }}/delete" style="display:none"></form>
 <form method="post" id="df" action="/changeset/{{ cs.id }}/decide"><input type="hidden" name="decision" id="act"><input type="hidden" name="fetch_sequences" id="fsv" value="1"><div id="ids"></div></form>
 {% set toolbar_extra %}

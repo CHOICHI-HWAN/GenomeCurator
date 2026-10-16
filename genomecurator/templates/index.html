@@ -67,12 +67,44 @@ async function lookup(){const q=document.getElementById('lkq').value.trim();if(!
  else h+='<div class="msg" style="margin-top:10px;border-left-color:var(--bad)">NCBI Virus에서 바이러스 분류군을 찾지 못해 추가할 수 없습니다. 철자나 학명(예: Orthohantavirus andesense)으로 다시 입력해 보세요.</div>';
  box.innerHTML=h}
 </script>
-<h2>변경 사항 (changeset)</h2>
-<table><tr><th>#</th><th>바이러스</th><th>생성</th><th>상태</th><th>신규/변경/삭제</th><th></th></tr>
-{% for c in changesets %}
-<tr><td>{{ c.id }}</td><td>{{ c.wname }}</td><td>{{ c.created }}</td><td class="{{ c.status }}">{{ c.status }}</td>
-<td class="mut">{{ c.summary_json[:90] }}</td><td><a href="/changeset/{{ c.id }}">검토</a> <button class="dcs" data-id="{{ c.id }}">삭제</button></td></tr>
-{% else %}<tr><td colspan="6" class="mut">없음</td></tr>{% endfor %}</table>
+<style>
+.cs{background:var(--card);border:1px solid var(--bd);border-left:4px solid var(--warn);border-radius:4px;padding:12px 16px;margin-bottom:12px}
+.cs.bad{border-left-color:var(--bad)}.cs.ok{border-left-color:var(--ok)}
+.cs .top{display:flex;gap:10px;align-items:baseline;flex-wrap:wrap}.cs .top b{font-size:16px}
+.cs .st{border-radius:10px;padding:1px 10px;font-size:12px;font-weight:600;border:1px solid currentColor}.st.warn{color:var(--warn)}.st.bad{color:var(--bad)}.st.ok{color:var(--ok)}
+.cs .nums{display:flex;gap:22px;flex-wrap:wrap;margin:10px 0 6px}.cs .nums div{min-width:120px}.cs .nums b{font-size:22px;display:block;line-height:1.1;font-variant-numeric:tabular-nums}.cs .nums span{font-size:12.5px;color:var(--mut)}
+.cs .seg{display:flex;height:10px;border-radius:5px;overflow:hidden;background:var(--th);margin:8px 0 4px;max-width:520px}.cs .seg i{display:block}
+.sg-a{background:var(--ok)}.sg-r{background:var(--bad)}.sg-h{background:var(--warn)}.sg-p{background:var(--bd)}
+.cs .leg{font-size:12px;color:var(--mut)}.cs .leg span{margin-right:12px}
+.cs .warnb{font-size:13px;margin:6px 0;color:var(--warn)}.cs .go{display:flex;gap:8px;align-items:center;margin-top:10px;flex-wrap:wrap}
+.cs .go .next{flex:1;min-width:220px}
+.steps{display:flex;gap:6px;font-size:12px;color:var(--mut);margin:0 0 4px}.steps span{padding:0 8px;border-radius:10px;background:var(--th)}.steps .on{background:var(--acc);color:#fff}
+</style>
+<h2 style="margin-top:22px">검토할 변경 사항</h2>
+<div class="help"><b>변경 사항이란?</b> "지금 확인"을 누르면 NCBI·BV-BRC·Pathoplexus를 살펴보고, 내 데이터와 달라진 점을 모아 둡니다. 이것이 <b>변경 사항</b>입니다.
+ <b>내가 승인한 항목만</b> 내 데이터(유전체 표·FASTA)에 반영됩니다. 흐름: <b>① 확인</b> → <b>② 검토·승인</b> → <b>③ 적용</b>.</div>
+{% set open_cs = changesets | rejectattr('status','equalto','APPLIED') | list %}
+{% set done_cs = changesets | selectattr('status','equalto','APPLIED') | list %}
+{% for c in open_cs %}
+<div class="cs {{ c.tone }}">
+ <div class="top"><b>{{ c.wname }}</b><span class="st {{ c.tone }}">{{ c.label }}</span><span class="mut">{{ c.created }} 확인 · 변경 사항 {{ c.id }}번</span></div>
+ <div class="nums">
+  <div><b style="color:var(--ok)">{{ '{:,}'.format(c.new) }}</b><span>새로 발견된 유전체</span></div>
+  <div><b style="color:var(--warn)">{{ '{:,}'.format(c.changed) }}</b><span>정보가 바뀐 유전체</span></div>
+  <div><b style="color:var(--bad)">{{ '{:,}'.format(c.removed) }}</b><span>NCBI에서 사라진 유전체</span></div></div>
+ {% if c.total %}<div class="seg" title="결정 현황"><i class="sg-a" style="width:{{ 100 * (c.approved + c.applied) / c.total }}%"></i><i class="sg-r" style="width:{{ 100 * c.rejected / c.total }}%"></i><i class="sg-h" style="width:{{ 100 * c.hold / c.total }}%"></i><i class="sg-p" style="width:{{ 100 * c.pending / c.total }}%"></i></div>
+ <div class="leg"><span style="color:var(--ok)">■ 승인 {{ '{:,}'.format(c.approved + c.applied) }}</span><span style="color:var(--bad)">■ 거절 {{ '{:,}'.format(c.rejected) }}</span><span style="color:var(--warn)">■ 보류 {{ '{:,}'.format(c.hold) }}</span><span>■ 미결정 {{ '{:,}'.format(c.pending) }}</span></div>{% endif %}
+ {% if c.n_conf %}<div class="warnb">⚠ {{ '{:,}'.format(c.n_conf) }}건은 소스끼리 값이 서로 다릅니다. 승인 전에 <a href="/integrity?watch={{ watches[0].id if watches else '' }}">정합성</a>을 확인하세요.</div>{% endif %}
+ <div class="go"><span class="next">{{ c.next }}</span>
+  <a href="/changeset/{{ c.id }}"><button class="p">검토하기</button></a>
+  <button class="dcs" data-id="{{ c.id }}" style="color:var(--bad)" title="이 변경 사항을 지웁니다 (이미 반영된 데이터는 그대로)">삭제</button></div>
+</div>
+{% else %}<div class="card mut">검토할 변경 사항이 없습니다. 위 Watchlist에서 <b>지금 확인</b>을 눌러 최신 상태를 가져오세요. 달라진 점이 없으면 이곳은 비어 있습니다.</div>{% endfor %}
+{% if done_cs %}<h3>적용 완료된 변경 사항</h3>
+<table><tr><th>바이러스</th><th>확인한 시각</th><th>내용</th><th></th></tr>
+{% for c in done_cs %}<tr><td><b>{{ c.wname }}</b></td><td class="nw">{{ c.created }}</td>
+<td>새 유전체 {{ '{:,}'.format(c.new) }} · 바뀐 유전체 {{ '{:,}'.format(c.changed) }} · 사라진 유전체 {{ '{:,}'.format(c.removed) }}<span class="mut"> — 승인 {{ '{:,}'.format(c.applied) }}건 반영{{ (', 거절 ' ~ c.rejected ~ '건') if c.rejected }}{{ (', 보류 ' ~ c.hold ~ '건') if c.hold }}</span></td>
+<td class="nw"><a href="/changeset/{{ c.id }}">내용 보기</a> <button class="dcs" data-id="{{ c.id }}" style="color:var(--bad)" title="기록만 지웁니다. 반영된 데이터는 그대로">기록 삭제</button></td></tr>{% endfor %}</table>{% endif %}
 <form id="csdel" method="post" style="display:none"></form>
 <script>
 async function delChangeset(id){

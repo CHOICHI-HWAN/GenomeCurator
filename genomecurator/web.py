@@ -207,8 +207,38 @@ def create_app(scheduler: bool = True) -> FastAPI:
     def index(request: Request, msg: str = ""):
         return render(request, "index.html", msg=msg, nav="cur",
                       watches=_rows("SELECT w.*, (SELECT COUNT(*) FROM genome g WHERE g.watch_id=w.id) n_genomes FROM watchlist w"),
-                      changesets=_rows("SELECT c.*, w.name wname FROM changeset c JOIN watchlist w ON w.id=c.watch_id "
-                                       "WHERE c.status!='DISCARDED' ORDER BY c.id DESC LIMIT 30"))
+                      changesets=_changeset_cards())
+
+    STATUS_TEXT = {"PENDING": ("준비 중", "warn"), "READY": ("검토 대기", "warn"), "BLOCKED": ("적용 불가", "bad"), "APPLIED": ("적용 완료", "ok")}
+
+    def _changeset_cards():
+        out = []
+        for c in _rows("SELECT c.*, w.name wname FROM changeset c JOIN watchlist w ON w.id=c.watch_id "
+                       "WHERE c.status!='DISCARDED' ORDER BY c.id DESC LIMIT 30"):
+            sm = json.loads(c["summary_json"] or "{}")
+            dec = {r["decision"]: r["n"] for r in _rows("SELECT decision, COUNT(*) n FROM changeset_item WHERE changeset_id=? GROUP BY decision", c["id"])}
+            n_conf = 0
+            if c["status"] != "APPLIED":
+                ag = curate.source_agreement(c["watch_id"])
+                n_conf = sum(1 for r in _rows("SELECT accession FROM changeset_item WHERE changeset_id=?", c["id"])
+                             if ag.get(r["accession"], {}).get("conflict"))
+            label, tone = STATUS_TEXT.get(c["status"], (c["status"], "warn"))
+            pend, appr = dec.get("pending", 0), dec.get("approved", 0)
+            if c["status"] == "APPLIED":
+                nxt = "모두 반영되었습니다."
+            elif c["status"] == "BLOCKED":
+                nxt = "Dry-run에서 문제가 발견되어 적용할 수 없습니다. 검토 화면에서 원인을 확인하세요."
+            elif pend:
+                nxt = f"아직 결정하지 않은 항목이 {pend:,}건 있습니다. 검토하고 승인하세요."
+            elif appr:
+                nxt = f"승인된 {appr:,}건을 적용하면 내 데이터에 반영됩니다."
+            else:
+                nxt = "남은 작업이 없습니다."
+            out.append({"id": c["id"], "wname": c["wname"], "created": (c["created"] or "")[:16], "status": c["status"], "label": label,
+                        "tone": tone, "new": sm.get("new", 0), "changed": sm.get("changed", 0), "removed": sm.get("removed", 0),
+                        "pending": pend, "approved": appr, "rejected": dec.get("rejected", 0), "hold": dec.get("hold", 0),
+                        "applied": dec.get("applied", 0), "total": sum(dec.values()), "n_conf": n_conf, "next": nxt})
+        return out
 
     def _same_origin(request: Request) -> bool:
         from urllib.parse import urlparse
