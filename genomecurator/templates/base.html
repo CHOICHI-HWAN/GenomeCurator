@@ -2,24 +2,45 @@
 <html lang="ko"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
 <title>GenomeCurator</title>
 <style>
-:root{--bg:#fafafa;--fg:#1c1c1e;--mut:#6b6b70;--card:#fff;--bd:#e2e2e6;--acc:#1f6feb;--ok:#1a7f37;--bad:#cf222e;--warn:#9a6700}
-@media(prefers-color-scheme:dark){:root{--bg:#161618;--fg:#ececf0;--mut:#9a9aa2;--card:#202024;--bd:#33333a;--acc:#58a6ff;--ok:#3fb950;--bad:#f85149;--warn:#d29922}}
-body{margin:0;background:var(--bg);color:var(--fg);font:14px/1.5 system-ui,sans-serif}
-nav{display:flex;gap:16px;align-items:center;padding:12px 20px;border-bottom:1px solid var(--bd);background:var(--card)}
-nav a{color:var(--fg);text-decoration:none}nav b{margin-right:8px}
-.badge{background:var(--bad);color:#fff;border-radius:10px;padding:0 7px;font-size:12px}
-main{max-width:1100px;margin:0 auto;padding:20px}
+:root{--bg:#eef1f5;--fg:#27303a;--mut:#6b7785;--card:#fff;--bd:#d5dbe3;--acc:#2f79b5;--ok:#1a7f37;--bad:#c62828;--warn:#9a6700;
+--hd:#1f4e79;--hd2:#2f79b5;--hd2fg:#fff;--th:#e3e9f0;--stripe:#f7f9fb;--hover:#e8f1fa;--chip:#dbe9f6}
+@media(prefers-color-scheme:dark){:root{--bg:#14181d;--fg:#e4e8ed;--mut:#8f9aa7;--card:#1d232a;--bd:#323b45;--acc:#5aa2dc;--ok:#3fb950;--bad:#f85149;--warn:#d29922;
+--hd:#0f2a44;--hd2:#25506f;--th:#27313b;--stripe:#20272e;--hover:#273544;--chip:#2c4458}}
+*{box-sizing:border-box}body{margin:0;background:var(--bg);color:var(--fg);font:14px/1.45 "Segoe UI",system-ui,"Malgun Gothic",sans-serif}
+header{background:var(--hd);color:#fff;display:flex;align-items:center;gap:6px;padding:0 20px;height:48px}
+header .logo{font-weight:700;font-size:18px;margin-right:22px;letter-spacing:.2px}header .logo i{font-style:normal;color:#8fd0ff}
+header a{color:#cfe3f5;text-decoration:none;padding:14px 12px;font-size:14px;border-bottom:3px solid transparent}
+header a:hover{color:#fff}header a.on{color:#fff;border-bottom-color:#8fd0ff}
+.badge{background:var(--bad);color:#fff;border-radius:10px;padding:0 7px;font-size:12px;margin-left:4px}
+main{max-width:1500px;margin:0 auto;padding:18px 20px}
+h2{font-size:20px;font-weight:600;margin:4px 0 12px}h3{font-size:15px;margin:18px 0 8px}
+.card{background:var(--card);border:1px solid var(--bd);border-radius:4px;padding:12px 14px;margin-bottom:14px}
 table{width:100%;border-collapse:collapse;background:var(--card);border:1px solid var(--bd)}
 th,td{padding:6px 10px;border-bottom:1px solid var(--bd);text-align:left;vertical-align:top}
-th{color:var(--mut);font-weight:600;font-size:12px}
-.pill{border-radius:10px;padding:1px 8px;font-size:12px;border:1px solid var(--bd)}
-.READY,.applied,.approved,.new{color:var(--ok)}.BLOCKED,.rejected,.removed{color:var(--bad)}.hold,.changed,.pending{color:var(--warn)}
-button,input{font:inherit;padding:4px 10px;border:1px solid var(--bd);border-radius:6px;background:var(--card);color:var(--fg)}
-button{cursor:pointer}button.p{background:var(--acc);color:#fff;border-color:var(--acc)}
-.msg{padding:8px 12px;background:var(--card);border:1px solid var(--bd);border-radius:6px;margin-bottom:12px}
-.mut{color:var(--mut)} .old{text-decoration:line-through;color:var(--bad)} .new{color:var(--ok)}
-code{font-size:12px}
-@media(max-width:700px){main{padding:12px}table{font-size:12px}}
+th{background:var(--th);font-weight:600;font-size:12.5px}
+.pill{border-radius:10px;padding:1px 9px;font-size:12px;border:1px solid currentColor;font-weight:600}
+.READY,.applied,.approved,.new,.Complete{color:var(--ok)}.BLOCKED,.rejected,.removed{color:var(--bad)}.hold,.changed,.pending{color:var(--warn)}
+button,input,select{font:inherit;padding:4px 11px;border:1px solid var(--bd);border-radius:3px;background:var(--card);color:var(--fg)}
+button{cursor:pointer}button:hover{border-color:var(--acc)}button:disabled{opacity:.45;cursor:not-allowed}
+button.p{background:var(--acc);color:#fff;border-color:var(--acc)}
+.msg{padding:8px 12px;background:var(--chip);border-left:4px solid var(--acc);margin-bottom:12px}
+#toast{position:fixed;right:18px;bottom:18px;width:320px;background:var(--card);border:1px solid var(--bd);border-left:4px solid var(--acc);border-radius:4px;box-shadow:0 6px 20px rgba(0,0,0,.25);padding:12px 14px;display:none;z-index:50}
+#toast.err{border-left-color:var(--bad)}#toast.ok{border-left-color:var(--ok)}#toast .bar{height:6px;background:var(--th);border-radius:3px;margin:8px 0 4px;overflow:hidden}
+#toast .bar i{display:block;height:100%;width:0;background:var(--acc);transition:width .4s}#toast.ok .bar i{background:var(--ok)}#toast.err .bar i{background:var(--bad)}
+#toast .x{float:right;cursor:pointer;color:var(--mut);display:none}#toast.err .x{display:inline}
+.mut{color:var(--mut)}code{font-size:12.5px}a{color:var(--acc)}
+@media(max-width:700px){main{padding:10px}header{overflow:auto}}
 </style></head><body>
-<nav><b>GenomeCurator</b><a href="/">큐레이션 {% if badge %}<span class="badge">{{ badge }}</span>{% endif %}</a><a href="/genomes">로컬 유전체</a><a href="/history">이력</a></nav>
-<main>{% if msg %}<div class="msg">{{ msg }}</div>{% endif %}{% block body %}{% endblock %}</main></body></html>
+<header><span class="logo">Genome<i>Curator</i></span>
+<a href="/" class="{{ 'on' if nav=='cur' }}">큐레이션{% if badge %}<span class="badge">{{ badge }}</span>{% endif %}</a>
+<a href="/genomes" class="{{ 'on' if nav=='gen' }}">유전체</a><a href="/history" class="{{ 'on' if nav=='his' }}">이력</a></header>
+<main>{% if msg %}<div class="msg">{{ msg }}</div>{% endif %}{% block body %}{% endblock %}</main>
+<div id="toast"><span class="x" onclick="this.parentNode.style.display='none'">✕</span><b id="tmsg"></b><div class="bar"><i id="tbar"></i></div><span class="mut" id="tpct"></span></div>
+<script>
+async function runJob(form){const T=document.getElementById("toast");T.className="";T.style.display="block";
+ const set=(p,m)=>{document.getElementById("tbar").style.width=p+"%";document.getElementById("tmsg").textContent=m;document.getElementById("tpct").textContent=Math.round(p)+"%"};
+ set(1,"요청 중…");let r;try{r=await (await fetch(form.action,{method:"POST",body:new URLSearchParams(new FormData(form))})).json()}catch(e){T.className="err";set(100,"요청 실패: "+e);return}
+ const tick=async()=>{const j=await (await fetch("/api/job/"+r.job)).json();
+  if(j.error){T.className="err";set(100,"실패: "+j.error);return}
+  set(j.pct,j.msg);if(j.done){T.className="ok";set(100,"완료");setTimeout(()=>location.href=j.redirect,500)}else setTimeout(tick,500)};tick()}
+</script></body></html>

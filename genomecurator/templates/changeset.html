@@ -1,38 +1,27 @@
 {% extends "base.html" %}{% block body %}
-<style>main{max-width:none}.sheet{overflow:auto;max-height:70vh;border:1px solid var(--bd)}
-.sheet table{border:0;white-space:nowrap}.sheet th{position:sticky;top:0;background:var(--card);z-index:1}
-td.chg{background:rgba(210,153,34,.18)}td.chg .old{display:block;font-size:11px}
-tr.rejected{opacity:.45}.bar{display:flex;gap:8px;flex-wrap:wrap;align-items:center;margin:10px 0}</style>
 <h2>Changeset #{{ cs.id }} · {{ cs.wname }} <span class="pill {{ cs.status }}">{{ cs.status }}</span></h2>
-<p class="mut">신규 {{ summary.new }} · 변경 {{ summary.changed }} · 삭제 {{ summary.removed }} · 소스 {{ summary.sources }}
-{% for n in summary.notes %} · ⚠ {{ n }}{% endfor %}</p>
-<details {% if cs.status == 'BLOCKED' %}open{% endif %}><summary>Dry-run 결과 ({{ 'OK' if cs.status == 'READY' else cs.status }})</summary>
-<table>{% for c in dry.checks %}<tr><td>{{ c.name }}</td><td class="{{ 'READY' if c.ok else 'BLOCKED' }}">{{ 'OK' if c.ok else 'FAIL' }}</td><td>{{ c.detail }}</td></tr>{% endfor %}</table></details>
+<div class="card"><span class="mut">신규 <b>{{ summary.new }}</b> · 변경 <b>{{ summary.changed }}</b> · 삭제 <b>{{ summary.removed }}</b> · 소스 {{ summary.sources }}
+{% for n in summary.notes %} · ⚠ {{ n }}{% endfor %}</span>
+<details style="margin-top:6px" {% if cs.status == 'BLOCKED' %}open{% endif %}><summary>Dry-run 결과 ({{ 'OK' if cs.status == 'READY' else cs.status }})</summary>
+<table style="margin-top:6px">{% for c in dry.checks %}<tr><td>{{ c.name }}</td><td class="{{ 'READY' if c.ok else 'BLOCKED' }}">{{ 'OK' if c.ok else 'FAIL' }}</td><td>{{ c.detail }}</td></tr>{% endfor %}</table>
+<form method="post" action="/changeset/{{ cs.id }}/dryrun" style="margin-top:6px"><button>Dry-run 다시 실행</button></form></details></div>
 
-<form method="post" action="/changeset/{{ cs.id }}/decide" id="f">
-<div class="bar">
-  <button class="p" formaction="/changeset/{{ cs.id }}/approve_apply" {% if cs.status != 'READY' %}disabled{% endif %}
-    onclick="return confirm('대기 중인 항목을 모두 승인하고 로컬에 적용할까요?')">전체 승인 + 적용</button>
-  <span class="mut">|</span>
-  <button name="action" value="approved">선택 승인</button><button name="action" value="rejected">선택 거절</button><button name="action" value="hold">선택 보류</button>
-  <button formaction="/changeset/{{ cs.id }}/apply" {% if cs.status != 'READY' %}disabled{% endif %}>승인분 적용</button>
-  <span class="mut">|</span>
-  <select id="kind" onchange="flt()"><option value="">전체</option><option>new</option><option>changed</option><option>removed</option></select>
-  <input id="q" placeholder="검색 (accession, 숙주, 국가…)" oninput="flt()" size="28">
-  <a href="/changeset/{{ cs.id }}.tsv">TSV 다운로드</a>
-</div>
-<div class="sheet"><table id="t"><thead><tr>
-<th><input type="checkbox" onclick="document.querySelectorAll('tbody input[type=checkbox]').forEach(c=>{if(c.closest('tr').style.display!='none')c.checked=this.checked})"></th>
-<th>종류</th><th>결정</th><th>accession</th><th>ver</th><th>genome_name</th><th>status</th><th>length</th><th>strain</th><th>host_name</th><th>country</th><th>collection_date</th><th>isolation_source</th></tr></thead><tbody>
-{% for i in items %}{% set r = i.rec %}<tr class="{{ i.decision }}" data-kind="{{ i.kind }}">
-<td><input type="checkbox" name="item" value="{{ i.id }}"></td><td class="{{ i.kind }}">{{ i.kind }}</td><td class="{{ i.decision }}">{{ i.decision }}</td>
-<td><code>{{ i.accession }}</code></td>
-{% for f in ['accession_version','genome_name','genome_status','genome_length','strain','host_name','isolation_country','collection_date','isolation_source'] %}
-{% set d = i.diff.get(f) %}<td{% if d and i.kind == 'changed' %} class="chg" title="{{ i.prov.get(f,'') }}"{% endif %}>
-{% if d and i.kind == 'changed' %}<span class="old">{{ d[0] if d[0] is not none else '∅' }}</span>{{ d[1] if d[1] is not none else '∅' }}{% else %}{{ r.get(f, '') }}{% endif %}</td>{% endfor %}
-</tr>{% endfor %}</tbody></table></div></form>
+<form method="post" id="df" action="/changeset/{{ cs.id }}/decide"><input type="hidden" name="action" id="act"><div id="ids"></div></form>
+{% set actions %}
+<button type="button" onclick="G.selectFiltered()">필터 결과 전체 선택</button>
+<button type="button" onclick="dec('approved')">승인</button><button type="button" onclick="dec('rejected')">거절</button><button type="button" onclick="dec('hold')">보류</button>
+<button type="button" class="p" {% if cs.status != 'READY' %}disabled{% endif %} onclick="aa()">승인분 적용</button>
+{% endset %}
+<script type="application/json" id="gdata">{{ data|tojson }}</script>
+{% include "grid.html" %}
 <script>
-function flt(){const k=document.getElementById('kind').value,q=document.getElementById('q').value.toLowerCase();
-document.querySelectorAll('#t tbody tr').forEach(r=>{r.style.display=(!k||r.dataset.kind==k)&&r.innerText.toLowerCase().includes(q)?'':'none'})}
+function send(action,url){const ids=G.selected();if(!ids.length&&action!=='approve_all'){alert('선택된 항목이 없습니다.');return}
+ const f=document.getElementById('df');f.action=url||f.action;document.getElementById('act').value=action;
+ document.getElementById('ids').innerHTML=ids.map(i=>`<input type="hidden" name="item" value="${i}">`).join('');f.submit()}
+function dec(a){send(a)}
+function aa(){const ids=G.selected();if(ids.length){if(!confirm(ids.length+'건을 승인하고 로컬에 적용할까요?'))return;
+ const f=document.getElementById('df');f.action='/changeset/{{ cs.id }}/approve_apply';document.getElementById('act').value='x';
+ document.getElementById('ids').innerHTML=ids.map(i=>`<input type="hidden" name="item" value="${i}">`).join('');runJob(f)}
+ else{if(confirm('선택이 없습니다. 이미 승인된 항목만 적용할까요?')){const f=document.getElementById('df');f.action='/changeset/{{ cs.id }}/apply';runJob(f)}}}
 </script>
 {% endblock %}

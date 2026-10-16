@@ -2,7 +2,7 @@
 <h2>Watchlist</h2>
 <table><tr><th>이름</th><th>NCBI taxon</th><th>로컬 유전체</th><th>마지막 확인</th><th></th></tr>
 {% for w in watches %}<tr><td>{{ w.name }}</td><td>{{ w.taxon }} <span class="mut">({{ w.taxon_id }})</span></td><td>{{ w.n_genomes }}</td><td>{{ w.last_checked or "-" }}</td>
-<td><form method="post" action="/watch/{{ w.name }}/check"><button>지금 확인</button></form></td></tr>
+<td><form method="post" action="/watch/{{ w.name }}/check" onsubmit="runJob(this);return false"><button>지금 확인</button></form></td></tr>
 {% else %}<tr><td colspan="5" class="mut">등록된 바이러스가 없습니다.</td></tr>{% endfor %}</table>
 <form method="post" action="/watch" style="margin:12px 0"><input name="name" placeholder="예: Henipavirus nipahense" required size="30">
 <input name="taxon" placeholder="NCBI taxon (비우면 이름과 동일)" size="28"> <button class="p">추가</button></form>

@@ -106,12 +106,14 @@ def fetch_ncbi(taxon: str, filters: dict | None = None) -> dict[str, dict]:
             params["page_token"] = tok
 
 
-def download_ncbi_fasta(accessions: list[str]) -> dict[str, str]:
+def download_ncbi_fasta(accessions: list[str], progress=None) -> dict[str, str]:
     """accessions may carry .version. Returns {accession-with-version: sequence}."""
     seqs: dict[str, str] = {}
     with _client() as c:
         for i in range(0, len(accessions), 100):
             batch = accessions[i:i + 100]
+            if progress:
+                progress(i, len(accessions))
             r = _ncbi_get(c, f"{config.NCBI_BASE}/accession/{','.join(batch)}/genome/download",
                           include_sequence="GENOME")
             with zipfile.ZipFile(io.BytesIO(r.content)) as z:
@@ -218,12 +220,15 @@ def fetch_pathoplexus(watch_name: str) -> dict[str, dict]:
     return out
 
 
-def fetch_all(watch_name: str, taxon: str, taxon_id: int | None, filters: dict | None):
+def fetch_all(watch_name: str, taxon: str, taxon_id: int | None, filters: dict | None, progress=None):
     """Returns ({source: {acc: rec}}, notes). Pathoplexus/BV-BRC failures are non-fatal."""
     notes: list[str] = []
+    p = progress or (lambda *a: None)
+    p(8, "NCBI Virus 메타데이터 가져오는 중…")
     res = {"ncbi": fetch_ncbi(taxon, filters)}
-    for name, fn in (("pathoplexus", lambda: fetch_pathoplexus(watch_name)),
-                     ("bvbrc", lambda: fetch_bvbrc(taxon_id))):
+    for name, fn, pct, label in (("pathoplexus", lambda: fetch_pathoplexus(watch_name), 45, "Pathoplexus 확인 중…"),
+                                 ("bvbrc", lambda: fetch_bvbrc(taxon_id), 55, "BV-BRC 메타데이터 가져오는 중…")):
+        p(pct, label)
         try:
             res[name] = fn()
             if not res[name]:

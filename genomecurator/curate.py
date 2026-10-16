@@ -60,16 +60,19 @@ def _diff(old: dict | None, new: dict) -> dict:
 
 
 # ---------------------------------------------------------------------- check
-def check(watch_name: str) -> int | None:
+def check(watch_name: str, progress=None) -> int | None:
     """Fetch sources, diff against local DB, store a changeset (no local data change).
     Returns changeset id or None when nothing changed."""
+    p = progress or (lambda *a: None)
+    p(2, "워치리스트 확인 중…")
     con = connect()
     try:
         w = con.execute("SELECT * FROM watchlist WHERE name=?", (watch_name,)).fetchone()
         if not w:
             raise SystemExit(f"unknown watch: {watch_name}")
         per_source, notes = sources.fetch_all(w["name"], w["taxon"], w["taxon_id"],
-                                              json.loads(w["filters_json"] or "{}"))
+                                              json.loads(w["filters_json"] or "{}"), progress=p)
+        p(75, "로컬 데이터와 비교 중…")
         if not per_source["ncbi"]:
             raise SystemExit("NCBI returned no records; refusing to compute removals")
         merged = merge(per_source)
@@ -103,6 +106,7 @@ def check(watch_name: str) -> int | None:
                 continue
             fresh.append((acc, kind, diff, rec, prov, fp))
 
+        p(88, "changeset 저장 중…")
         now = datetime.now().isoformat(timespec="seconds")
         for src, recs in per_source.items():
             for acc, rec in recs.items():
@@ -141,7 +145,9 @@ def _versioned(acc: str, rec: dict) -> str:
     return f"{acc}.{v}" if v else acc
 
 
-def dryrun(changeset_id: int, sample: int | None = None) -> dict:
+def dryrun(changeset_id: int, sample: int | None = None, progress=None) -> dict:
+    p = progress or (lambda *a: None)
+    p(92, "Dry-run: 링크·디스크 검사 중…")
     sample = sample if sample is not None else config.DRYRUN_SAMPLE_SIZE
     con = connect()
     try:
@@ -200,8 +206,10 @@ def _gc(seq: str) -> float:
     return round(100 * sum(seq.count(b) for b in "GCgc") / len(seq), 3) if seq else 0.0
 
 
-def apply(changeset_id: int) -> dict:
+def apply(changeset_id: int, progress=None) -> dict:
     """Apply approved items atomically: files first (with backups), then one DB transaction."""
+    p = progress or (lambda *a: None)
+    p(3, "적용 준비 중…")
     con = connect()
     backups: list[tuple[str, str | None]] = []
     try:
@@ -218,7 +226,10 @@ def apply(changeset_id: int) -> dict:
         stage.mkdir(parents=True, exist_ok=True)
 
         recs = {i["accession"]: json.loads(i["new_record_json"]) for i in items if i["kind"] != "removed"}
-        seqs = sources.download_ncbi_fasta([_versioned(a, r) for a, r in recs.items()]) if recs else {}
+        seqs = sources.download_ncbi_fasta(
+            [_versioned(a, r) for a, r in recs.items()],
+            lambda i, n: p(5 + 65 * i // max(n, 1), f"서열 다운로드 중… {i}/{n}")) if recs else {}
+        p(72, "서열 검증 완료, 파일·DB 기록 중…")
         for a, r in recs.items():
             s = seqs.get(_versioned(a, r))
             if not s or (r.get("genome_length") and len(s) != r["genome_length"]):
@@ -282,6 +293,7 @@ def apply(changeset_id: int) -> dict:
         audit(con, "apply", f"changeset {changeset_id}: {len(items)} items")
         con.commit()
         shutil.rmtree(stage, ignore_errors=True)
+        p(100, "완료")
         return {"applied": len(items), "remaining": left}
     except BaseException:
         con.rollback()

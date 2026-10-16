@@ -1,0 +1,94 @@
+<style>
+.gc{display:grid;grid-template-columns:250px 1fr;gap:14px;align-items:start}
+.facets{background:var(--card);border:1px solid var(--bd);border-radius:4px}
+.facets h4{margin:0;padding:8px 12px;background:var(--hd2);color:var(--hd2fg);font-size:13px;border-radius:4px 4px 0 0;display:flex;justify-content:space-between}
+.facets h4 a{cursor:pointer;font-weight:400;font-size:12px}
+.fg{border-bottom:1px solid var(--bd);padding:6px 12px 8px}.fg:last-child{border:0}
+.fg>b{display:block;font-size:12px;color:var(--mut);text-transform:uppercase;letter-spacing:.03em;margin:4px 0}
+.fv{display:flex;justify-content:space-between;gap:6px;padding:1px 4px;border-radius:3px;cursor:pointer;font-size:13px}
+.fv:hover{background:var(--hover)}.fv.on{background:var(--acc);color:#fff}.fv .n{opacity:.7}.fv span:first-child{overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.more{font-size:12px;color:var(--acc);cursor:pointer;padding:2px 4px}
+.gp{background:var(--card);border:1px solid var(--bd);border-radius:4px;min-width:0}
+.tb{display:flex;gap:8px;flex-wrap:wrap;align-items:center;padding:8px 10px;border-bottom:1px solid var(--bd)}
+.tb .sp{flex:1}.chips{display:flex;gap:6px;flex-wrap:wrap;padding:6px 10px;border-bottom:1px solid var(--bd)}
+.chip{background:var(--chip);border-radius:12px;padding:1px 4px 1px 10px;font-size:12px}.chip a{cursor:pointer;margin-left:4px;padding:0 4px}
+.gscroll{overflow:auto;max-height:68vh}
+.gt{width:100%;border:0;white-space:nowrap}.gt th{position:sticky;top:0;background:var(--th);cursor:pointer;user-select:none;border-bottom:2px solid var(--bd);z-index:1}
+.gt th.s::after{content:" ▲"}.gt th.s.d::after{content:" ▼"}.gt tbody tr:nth-child(even){background:var(--stripe)}.gt tbody tr:hover{background:var(--hover)}
+.gt td.chg{background:rgba(210,153,34,.22)}.gt td.chg i{display:block;font-size:11px;text-decoration:line-through;color:var(--bad);font-style:normal}
+.gt tr.sel{outline:2px solid var(--acc);outline-offset:-2px}
+.pg{display:flex;gap:8px;align-items:center;padding:8px 10px;border-top:1px solid var(--bd)}
+.colmenu{position:absolute;background:var(--card);border:1px solid var(--bd);padding:8px;border-radius:4px;box-shadow:0 4px 12px rgba(0,0,0,.2);z-index:5;display:none;max-height:300px;overflow:auto}
+.colmenu label{display:block;font-size:13px}.colmenu.open{display:block}
+@media(max-width:850px){.gc{grid-template-columns:1fr}}
+</style>
+<div class="gc" id="gc">
+  <aside class="facets"><h4>필터 <a onclick="G.clear()">모두 지우기</a></h4><div id="facets"></div></aside>
+  <section class="gp">
+    <div class="tb"><input id="gq" placeholder="키워드 검색…" size="26">
+      <span id="gcount" class="mut"></span><span class="sp"></span>
+      {{ actions|default('')|safe }}
+      <span style="position:relative"><button type="button" onclick="document.getElementById('colmenu').classList.toggle('open')">열 ▾</button><div class="colmenu" id="colmenu"></div></span>
+      <button type="button" onclick="G.exportTsv()">TSV</button></div>
+    <div class="chips" id="chips" style="display:none"></div>
+    <div class="gscroll"><table class="gt"><thead id="gh"></thead><tbody id="gb"></tbody></table></div>
+    <div class="pg"><button type="button" onclick="G.page(-1)">◀</button><span id="gpage"></span><button type="button" onclick="G.page(1)">▶</button>
+      <select id="gps" onchange="G.size(this.value)"><option>25</option><option selected>50</option><option>100</option><option>250</option></select><span class="mut">행/쪽</span>
+      <span class="sp" style="flex:1"></span><span id="gsel" class="mut"></span></div>
+  </section>
+</div>
+<script>
+const G=(()=>{
+const D=JSON.parse(document.getElementById('gdata').textContent);
+const rows=D.rows,cols=D.cols,facets=D.facets,sel=new Set();
+rows.forEach(r=>{r.collection_year=(r.collection_date||'').slice(0,4)||'(없음)'});
+const st={f:{},q:'',sort:null,dir:1,pg:0,ps:50,vis:new Set(cols.filter(c=>c.on!==false).map(c=>c.k))};
+const $=id=>document.getElementById(id);
+const esc=s=>String(s??'').replace(/[&<>"]/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c]));
+const val=(r,k)=>{const v=r[k];return v===null||v===undefined||v===''?'(없음)':String(v)};
+function match(r,skip){
+  for(const k in st.f){if(k===skip||!st.f[k].size)continue;if(!st.f[k].has(val(r,k)))return false}
+  if(st.q){const q=st.q.toLowerCase();if(!cols.some(c=>String(r[c.k]??'').toLowerCase().includes(q)))return false}
+  return true}
+let view=[];
+function filt(){view=rows.filter(r=>match(r));
+  if(st.sort){const k=st.sort,d=st.dir;view.sort((a,b)=>{let x=a[k],y=b[k];if(x==null||x==='')return 1;if(y==null||y==='')return -1;
+    const nx=parseFloat(x),ny=parseFloat(y);if(!isNaN(nx)&&!isNaN(ny)&&String(nx)==String(x))return(nx-ny)*d;return String(x).localeCompare(String(y))*d})}}
+function renderFacets(){let h='';
+  for(const f of facets){const cnt={};rows.forEach(r=>{if(match(r,f.k)){const v=val(r,f.k);cnt[v]=(cnt[v]||0)+1}});
+    const act=st.f[f.k]||new Set();act.forEach(v=>{if(!(v in cnt))cnt[v]=0});
+    const ents=Object.entries(cnt).sort((a,b)=>b[1]-a[1]||a[0].localeCompare(b[0]));if(!ents.length)continue;
+    const open=st['m'+f.k];const shown=open?ents:ents.slice(0,8);
+    h+=`<div class="fg"><b>${esc(f.label)}</b>`+shown.map(([v,n])=>`<div class="fv ${act.has(v)?'on':''}" data-k="${esc(f.k)}" data-v="${esc(v)}"><span title="${esc(v)}">${esc(v)}</span><span class="n">${n}</span></div>`).join('')
+      +(ents.length>8?`<div class="more" data-more="${esc(f.k)}">${open?'접기':`+${ents.length-8}개 더 보기`}</div>`:'')+'</div>'}
+  $('facets').innerHTML=h;
+  const chips=[];for(const k in st.f)st.f[k].forEach(v=>chips.push(`<span class="chip">${esc(facets.find(f=>f.k===k).label)}: ${esc(v)}<a data-rm="${esc(k)}" data-v="${esc(v)}">✕</a></span>`));
+  $('chips').style.display=chips.length?'flex':'none';$('chips').innerHTML=chips.join('')}
+function renderTable(){const vc=cols.filter(c=>st.vis.has(c.k));
+  $('gh').innerHTML='<tr>'+(D.selectable?'<th><input type="checkbox" id="gall" title="필터된 전체 선택"></th>':'')+vc.map(c=>`<th data-s="${c.k}" class="${st.sort===c.k?'s '+(st.dir<0?'d':''):''}">${esc(c.label)}</th>`).join('')+'</tr>';
+  const pages=Math.max(1,Math.ceil(view.length/st.ps));st.pg=Math.min(st.pg,pages-1);
+  const sl=view.slice(st.pg*st.ps,(st.pg+1)*st.ps);
+  $('gb').innerHTML=sl.map(r=>`<tr data-id="${r.id}" class="${sel.has(r.id)?'sel':''}">`+(D.selectable?`<td><input type="checkbox" ${sel.has(r.id)?'checked':''}></td>`:'')
+    +vc.map(c=>{const d=r.kind==='changed'&&r._diff&&r._diff[c.k];const cls=c.cls?` class="${esc(r[c.k])}"`:'';
+      return d?`<td class="chg" title="이전 값 → 새 값"><i>${esc(d[0]??'∅')}</i>${esc(d[1]??'∅')}</td>`:`<td${cls}>${esc(r[c.k])}</td>`}).join('')+'</tr>').join('');
+  $('gcount').textContent=`${view.length.toLocaleString()} / ${rows.length.toLocaleString()}건`;
+  $('gpage').textContent=`${st.pg+1} / ${pages}`;$('gsel').textContent=D.selectable?`선택 ${sel.size}건`:'';
+  const ga=$('gall');if(ga)ga.checked=view.length>0&&view.every(r=>sel.has(r.id))}
+function draw(){filt();renderFacets();renderTable()}
+document.addEventListener('click',e=>{const t=e.target;
+  const fv=t.closest('.fv');if(fv){const k=fv.dataset.k,v=fv.dataset.v;(st.f[k]=st.f[k]||new Set());st.f[k].has(v)?st.f[k].delete(v):st.f[k].add(v);st.pg=0;draw();return}
+  if(t.dataset.more){st['m'+t.dataset.more]=!st['m'+t.dataset.more];renderFacets();return}
+  if(t.dataset.rm){st.f[t.dataset.rm].delete(t.dataset.v);draw();return}
+  const th=t.closest('th[data-s]');if(th){const k=th.dataset.s;st.dir=st.sort===k?-st.dir:1;st.sort=k;draw();return}
+  if(t.id==='gall'){view.forEach(r=>t.checked?sel.add(r.id):sel.delete(r.id));renderTable();return}
+  const tr=t.closest('#gb tr');if(tr&&D.selectable&&t.tagName==='INPUT'){const id=+tr.dataset.id;t.checked?sel.add(id):sel.delete(id);tr.classList.toggle('sel',t.checked);$('gsel').textContent=`선택 ${sel.size}건`;return}
+  if(!t.closest('#colmenu')&&!t.closest('button'))$('colmenu').classList.remove('open')});
+$('gq').addEventListener('input',e=>{st.q=e.target.value;st.pg=0;draw()});
+$('colmenu').innerHTML=cols.map(c=>`<label><input type="checkbox" data-c="${c.k}" ${st.vis.has(c.k)?'checked':''}> ${esc(c.label)}</label>`).join('');
+$('colmenu').addEventListener('change',e=>{const k=e.target.dataset.c;e.target.checked?st.vis.add(k):st.vis.delete(k);renderTable()});
+draw();
+return{clear(){st.f={};st.q='';$('gq').value='';st.pg=0;draw()},page(d){st.pg=Math.max(0,st.pg+d);renderTable()},size(v){st.ps=+v;st.pg=0;renderTable()},
+ selected:()=>[...sel],filtered:()=>view.map(r=>r.id),selectFiltered(){view.forEach(r=>sel.add(r.id));renderTable()},
+ exportTsv(){const vc=cols.filter(c=>st.vis.has(c.k));const t=[vc.map(c=>c.label).join('\t')].concat(view.map(r=>vc.map(c=>String(r[c.k]??'').replace(/[\t\n]/g,' ')).join('\t'))).join('\n');
+  const a=document.createElement('a');a.href=URL.createObjectURL(new Blob(['﻿'+t],{type:'text/tab-separated-values'}));a.download=(D.name||'export')+'.tsv';a.click()}}})();
+</script>
