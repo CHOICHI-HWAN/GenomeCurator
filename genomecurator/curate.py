@@ -22,6 +22,9 @@ COMPARE = ["accession_version"] + config.TRACKED_FIELDS
 def add_watch(name: str, taxon: str | None = None, filters: dict | None = None) -> int:
     taxon = taxon or name
     tid = sources.ncbi_resolve_taxon_id(taxon)
+    sp = sources.ncbi_species_scope(tid)
+    if sp:  # watch the species so records tagged at the species node are not missed
+        tid, taxon = sp
     with tx() as con:
         cur = con.execute(
             "INSERT INTO watchlist(name, taxon, taxon_id, filters_json) VALUES(?,?,?,?)",
@@ -72,8 +75,17 @@ def check(watch_name: str, progress=None) -> int | None:
         w = con.execute("SELECT * FROM watchlist WHERE name=?", (watch_name,)).fetchone()
         if not w:
             raise SystemExit(f"unknown watch: {watch_name}")
+        notes0 = []
+        sp = sources.ncbi_species_scope(w["taxon_id"])
+        if sp:
+            con.execute("UPDATE watchlist SET taxon=?, taxon_id=? WHERE id=?", (sp[1], sp[0], w["id"]))
+            con.commit()
+            audit(con, "watch_scope", f"{watch_name}: taxon widened {w['taxon']} ({w['taxon_id']}) -> {sp[1]} ({sp[0]})")
+            notes0.append(f"taxon widened to species {sp[1]} ({sp[0]})")
+            w = con.execute("SELECT * FROM watchlist WHERE id=?", (w["id"],)).fetchone()
         per_source, notes = sources.fetch_all(w["name"], w["taxon"], w["taxon_id"],
                                               json.loads(w["filters_json"] or "{}"), progress=p)
+        notes = notes0 + notes
         p(75, "로컬 데이터와 비교 중…")
         if not per_source["ncbi"]:
             raise SystemExit("NCBI returned no records; refusing to compute removals")

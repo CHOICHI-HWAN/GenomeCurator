@@ -70,6 +70,33 @@ def ncbi_resolve_taxon_id(taxon: str) -> int | None:
         return None
 
 
+def ncbi_species_scope(taxon_id: int | None) -> tuple[int, str] | None:
+    """If taxon_id is a rank-less virus name / strain / sub-species node, return its SPECIES ancestor.
+
+    NCBI tags many records at the species node (e.g. 'Orthopoxvirus monkeypox' 3431483) while the
+    well-known name ('Monkeypox virus' 10244) is a child, so querying the child misses records."""
+    if not taxon_id:
+        return None
+    try:
+        with _client() as c:
+            node = _ncbi_get(c, f"https://api.ncbi.nlm.nih.gov/datasets/v2/taxonomy/taxon/{taxon_id}").json()[
+                "taxonomy_nodes"][0]["taxonomy"]
+            rank = node.get("rank")
+            if rank in ("SPECIES", "GENUS", "FAMILY", "SUBFAMILY", "ORDER", "CLASS", "PHYLUM", "KINGDOM", "REALM"):
+                return None
+            ids = [i for i in node.get("lineage", []) if i > 1][-8:]
+            if not ids:
+                return None
+            anc = _ncbi_get(c, "https://api.ncbi.nlm.nih.gov/datasets/v2/taxonomy/taxon/" + ",".join(map(str, ids))).json()
+            for n in reversed(anc["taxonomy_nodes"]):
+                tx = n["taxonomy"]
+                if tx.get("rank") == "SPECIES":
+                    return int(tx["tax_id"]), tx["organism_name"]
+    except Exception:
+        pass
+    return None
+
+
 _STATUS = {"COMPLETE": "Complete", "PARTIAL": "Partial"}
 
 
@@ -239,7 +266,8 @@ def fetch_pathoplexus(watch_name: str, taxon: str = "", taxon_id: int | None = N
     res = pathoplexus_resolve(watch_name, taxon or watch_name, taxon_id)
     if not res:
         return {}
-    slug, flt = res
+    slug, _ = res
+    flt = dict(_PPX_FILTER)  # whole organism: NCBI defines the accession set, extra rows simply don't join
     out: dict[str, dict] = {}
     with _client() as c:
         r = _get(c, f"{config.PATHOPLEXUS_BASE}/{slug}/sample/details",
