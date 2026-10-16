@@ -35,3 +35,15 @@ def test_merge_coerces_list_values():
     per = {"ncbi": {"A1": {}}, "bvbrc": {"A1": {"segment": ["L"], "strain": "x"}}}
     rec, _ = curate.merge(per)["A1"]
     assert rec["segment"] == "L" and rec["strain"] == "x"
+
+
+def test_base_template_script_has_no_broken_string_literals():
+    """A raw newline inside a "..." JS string once broke the whole script (runJob undefined => buttons dead)."""
+    import re
+    from pathlib import Path
+    t = (Path(curate.__file__).parent / "templates" / "base.html").read_text(encoding="utf-8")
+    js = re.findall(r"<script>(.*?)</script>", t, re.S)[-1]
+    for n, line in enumerate(js.splitlines(), 1):
+        assert len(re.findall(r'(?<!\)"', line)) % 2 == 0, f"unbalanced quotes in base.html script line {n}: {line[:80]}"
+    for name in ("runJob", "pollJob", "deploy"):
+        assert f"function {name}(" in js
