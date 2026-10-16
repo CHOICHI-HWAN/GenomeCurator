@@ -70,11 +70,56 @@ GN_FACETS = [("genome_status", "Genome Status"), ("host_name", "Host"), ("isolat
              ("collection_year", "Collection Year"), ("genome_quality", "Quality")]
 
 
+def pending_total() -> int:
+    return _rows("SELECT COUNT(*) n FROM changeset WHERE status IN ('READY','BLOCKED')")[0]["n"]
+
+
+def dashboard_data(g: list[dict], prov: list[dict], last_checked) -> dict:
+    from collections import Counter
+
+    def top(key, n=15):
+        c = Counter((r.get(key) or "(없음)") for r in g)
+        items = c.most_common(n)
+        rest = sum(c.values()) - sum(v for _, v in items)
+        return {"labels": [k for k, _ in items] + (["기타"] if rest else []),
+                "values": [v for _, v in items] + ([rest] if rest else [])}
+
+    def by_prefix(key, n, empty="(없음)"):
+        c = Counter((r.get(key) or "")[:n] or empty for r in g)
+        keys = sorted(k for k in c if k != empty)
+        return {"labels": keys + ([empty] if empty in c else []),
+                "values": [c[k] for k in keys] + ([c[empty]] if empty in c else [])}
+
+    lens = [r["genome_length"] for r in g if r.get("genome_length")]
+    hist = {"labels": [], "values": []}
+    if lens:
+        lo, hi = min(lens), max(lens)
+        step = max(1, -(-(hi - lo + 1) // 20))
+        bins = Counter((x - lo) // step for x in lens)
+        for i in range(max(bins) + 1):
+            hist["labels"].append(f"{lo + i * step:,}")
+            hist["values"].append(bins.get(i, 0))
+    fields = ["host_name", "isolation_country", "collection_date", "isolation_source", "strain",
+              "geographic_location", "genotype", "subtype", "genome_quality", "publication"]
+    n = len(g) or 1
+    fill = sorted(({"f": f, "pct": round(100 * sum(1 for r in g if r.get(f)) / n, 1)} for f in fields),
+                  key=lambda x: x["pct"])
+    status = Counter(r.get("genome_status") for r in g)
+    return {
+        "total": len(g), "complete_pct": round(100 * status.get("Complete", 0) / n, 1),
+        "avg_len": round(sum(lens) / len(lens)) if lens else 0, "last_checked": last_checked,
+        "pending": pending_total(), "prov": {p["source"]: p["n"] for p in prov},
+        "monthly": by_prefix("release_date", 7), "year": by_prefix("collection_date", 4),
+        "country": top("isolation_country"), "host": top("host_name", 8), "status": top("genome_status", 6),
+        "hist": hist, "fill": {"labels": [x["f"] for x in fill], "values": [x["pct"] for x in fill]},
+    }
+
+
 def create_app(scheduler: bool = True) -> FastAPI:
     app = FastAPI(title="GenomeCurator")
 
     def pending_count():
-        return _rows("SELECT COUNT(*) n FROM changeset WHERE status IN ('READY','BLOCKED')")[0]["n"]
+        return pending_total()
 
     def render(request, name, **ctx):
         return T.TemplateResponse(request, name, {"badge": pending_count(), **ctx})
@@ -172,6 +217,18 @@ def create_app(scheduler: bool = True) -> FastAPI:
     def genomes_tsv():
         return _tsv(_rows("SELECT g.*, s.gc_content, s.md5, s.file_path FROM genome g "
                           "LEFT JOIN genome_sequence s ON s.accession=g.accession ORDER BY g.genome_id"), "genomes.tsv")
+
+    @app.get("/dashboard")
+    def dashboard(request: Request, watch: int = 0):
+        watches = _rows("SELECT w.id, w.name, (SELECT COUNT(*) FROM genome g WHERE g.watch_id=w.id) n FROM watchlist w")
+        if not watch and watches:
+            watch = next((w["id"] for w in watches if w["n"]), watches[0]["id"])
+        g = _rows("SELECT * FROM genome WHERE watch_id=?", watch)
+        prov = _rows("SELECT p.source, COUNT(*) n FROM field_provenance p JOIN genome g ON g.genome_id=p.genome_id "
+                     "WHERE g.watch_id=? GROUP BY p.source", watch)
+        last = _rows("SELECT last_checked FROM watchlist WHERE id=?", watch)
+        return render(request, "dashboard.html", nav="dash", watches=watches, watch=watch,
+                      data=dashboard_data(g, prov, last[0]["last_checked"] if last else None))
 
     @app.get("/history")
     def history(request: Request, msg: str = ""):

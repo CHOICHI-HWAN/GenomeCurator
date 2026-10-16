@@ -86,6 +86,7 @@ document.addEventListener('click',e=>{const t=e.target;
 $('gq').addEventListener('input',e=>{st.q=e.target.value;st.pg=0;draw()});
 $('colmenu').innerHTML=cols.map(c=>`<label><input type="checkbox" data-c="${c.k}" ${st.vis.has(c.k)?'checked':''}> ${esc(c.label)}</label>`).join('');
 $('colmenu').addEventListener('change',e=>{const k=e.target.dataset.c;e.target.checked?st.vis.add(k):st.vis.delete(k);renderTable()});
+new URLSearchParams(location.search).getAll('f').forEach(s=>{const i=s.indexOf(':');if(i>0){const k=s.slice(0,i);(st.f[k]=st.f[k]||new Set()).add(s.slice(i+1))}});
 draw();
 return{clear(){st.f={};st.q='';$('gq').value='';st.pg=0;draw()},page(d){st.pg=Math.max(0,st.pg+d);renderTable()},size(v){st.ps=+v;st.pg=0;renderTable()},
  selected:()=>[...sel],filtered:()=>view.map(r=>r.id),selectFiltered(){view.forEach(r=>sel.add(r.id));renderTable()},

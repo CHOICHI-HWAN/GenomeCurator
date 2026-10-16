@@ -1,0 +1,51 @@
+{% extends "base.html" %}{% block body %}
+<style>
+.cards{display:grid;grid-template-columns:repeat(auto-fit,minmax(170px,1fr));gap:12px;margin-bottom:14px}
+.kpi{background:var(--card);border:1px solid var(--bd);border-top:3px solid var(--acc);border-radius:4px;padding:10px 14px}
+.kpi b{display:block;font-size:26px;line-height:1.2}.kpi span{color:var(--mut);font-size:12.5px}
+.charts{display:grid;grid-template-columns:repeat(auto-fit,minmax(420px,1fr));gap:14px}
+.ch{background:var(--card);border:1px solid var(--bd);border-radius:4px;padding:10px 14px}
+.ch h4{margin:0 0 6px;font-size:14px}.ch small{color:var(--mut);font-weight:400}.ch div{position:relative;height:260px}
+.top{display:flex;gap:12px;align-items:center;margin-bottom:12px}
+@media(max-width:520px){.charts{grid-template-columns:1fr}}
+</style>
+<div class="top"><h2 style="margin:0">대시보드</h2>
+<select onchange="location.href='/dashboard?watch='+this.value">{% for w in watches %}<option value="{{ w.id }}" {{ 'selected' if w.id==watch }}>{{ w.name }} ({{ w.n }})</option>{% endfor %}</select></div>
+{% if not data.total %}<div class="card mut">이 바이러스에는 아직 반영된 유전체가 없습니다. 큐레이션 페이지에서 승인 후 적용하면 차트가 채워집니다.</div>{% else %}
+<div class="cards" id="kpis"></div>
+<div class="charts">
+ <div class="ch"><h4>월별 신규 등록 <small>release_date</small></h4><div><canvas id="c_monthly"></canvas></div></div>
+ <div class="ch"><h4>수집 연도별 <small>collection_date</small></h4><div><canvas id="c_year"></canvas></div></div>
+ <div class="ch"><h4>국가별 상위 15 <small>클릭하면 유전체 목록 필터</small></h4><div><canvas id="c_country"></canvas></div></div>
+ <div class="ch"><h4>숙주별 <small>클릭하면 유전체 목록 필터</small></h4><div><canvas id="c_host"></canvas></div></div>
+ <div class="ch"><h4>서열 길이 분포 <small>bp</small></h4><div><canvas id="c_hist"></canvas></div></div>
+ <div class="ch"><h4>메타데이터 완성도 <small>값이 채워진 비율 (%)</small></h4><div><canvas id="c_fill"></canvas></div></div>
+</div>
+<script type="application/json" id="dd">{{ data|tojson }}</script>
+<script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.1/dist/chart.umd.min.js"></script>
+<script>
+const D=JSON.parse(document.getElementById('dd').textContent);
+const css=n=>getComputedStyle(document.documentElement).getPropertyValue(n).trim();
+const acc=css('--acc'),fg=css('--fg'),bd=css('--bd');
+const pal=['#2f79b5','#e08a1e','#3a9d6e','#c4524f','#8a6bbd','#4aa3b8','#b5a02f','#7c8a99','#d4709c'];
+const fmt=n=>Number(n).toLocaleString();
+const provTot=Object.values(D.prov).reduce((a,b)=>a+b,0)||1;
+const prov=Object.entries(D.prov).map(([k,v])=>k+' '+Math.round(100*v/provTot)+'%').join(' · ')||'-';
+document.getElementById('kpis').innerHTML=[[fmt(D.total),'전체 유전체'],[D.complete_pct+'%','완전 유전체 비율'],[fmt(D.avg_len)+' bp','평균 길이'],
+ [D.pending,'승인 대기 changeset'],[(D.last_checked||'-').replace('T',' '),'마지막 확인']].map(([a,b])=>`<div class="kpi"><b>${a}</b><span>${b}</span></div>`).join('')
+ +`<div class="kpi" style="grid-column:span 2"><b style="font-size:15px;padding:6px 0">${prov}</b><span>필드 값 출처 비중</span></div>`;
+if(typeof Chart==='undefined'){document.querySelector('.charts').innerHTML='<div class="card mut">Chart.js를 불러오지 못했습니다. 인터넷 연결을 확인하세요.</div>'}else{
+Chart.defaults.color=fg;Chart.defaults.borderColor=bd;Chart.defaults.font.family='"Segoe UI","Malgun Gothic",sans-serif';
+const base=(extra={})=>({responsive:true,maintainAspectRatio:false,plugins:{legend:{display:false}},...extra});
+const mk=(id,type,labels,values,opt={},color=acc)=>new Chart(document.getElementById(id),{type,data:{labels,datasets:[{data:values,backgroundColor:color,borderRadius:2}]},options:opt});
+const go=(key)=>(e,els,chart)=>{if(!els.length)return;const l=chart.data.labels[els[0].index];if(l==='기타'||l==='(없음)')return;location.href='/genomes?f='+encodeURIComponent(key+':'+l)};
+mk('c_monthly','bar',D.monthly.labels,D.monthly.values,base());
+mk('c_year','bar',D.year.labels,D.year.values,base());
+mk('c_country','bar',D.country.labels,D.country.values,base({indexAxis:'y',onClick:go('isolation_country'),onHover:(e,a)=>e.native.target.style.cursor=a.length?'pointer':'default'}));
+new Chart(document.getElementById('c_host'),{type:'doughnut',data:{labels:D.host.labels,datasets:[{data:D.host.values,backgroundColor:pal,borderWidth:0}]},
+ options:{responsive:true,maintainAspectRatio:false,onClick:go('host_name'),plugins:{legend:{position:'right'}}}});
+mk('c_hist','bar',D.hist.labels,D.hist.values,base(),'#3a9d6e');
+mk('c_fill','bar',D.fill.labels,D.fill.values,base({indexAxis:'y',scales:{x:{max:100}}}),'#e08a1e');
+}
+</script>
+{% endif %}{% endblock %}
