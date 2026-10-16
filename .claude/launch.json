@@ -1,0 +1,11 @@
+{
+  "version": "0.0.1",
+  "configurations": [
+    {
+      "name": "genomecurator",
+      "runtimeExecutable": "python",
+      "runtimeArgs": ["-m", "genomecurator", "serve", "--port", "8000"],
+      "port": 8000
+    }
+  ]
+}

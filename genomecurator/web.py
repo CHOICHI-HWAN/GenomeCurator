@@ -115,6 +115,6 @@ def create_app(scheduler: bool = True) -> FastAPI:
 
         sched = BackgroundScheduler()
         sched.add_job(job, "interval", hours=config.CHECK_INTERVAL_HOURS, id="check")
-        app.add_event_handler("startup", sched.start)
-        app.add_event_handler("shutdown", lambda: sched.shutdown(wait=False))
+        sched.start()
+        app.router.on_shutdown.append(lambda: sched.shutdown(wait=False))
     return app
