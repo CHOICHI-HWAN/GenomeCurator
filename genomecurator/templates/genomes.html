@@ -1,7 +1,10 @@
 {% extends "base.html" %}{% block body %}
-<h2>로컬 유전체 ({{ genomes|length }})</h2>
-<table><tr><th>genome_id</th><th>accession</th><th>name / strain</th><th>status</th><th>length</th><th>host</th><th>country</th><th>collected</th><th>md5</th></tr>
-{% for g in genomes %}<tr><td>{{ g.genome_id }}</td><td><code>{{ g.accession }}.{{ g.accession_version }}</code></td><td>{{ g.genome_name }} <span class="mut">{{ g.strain or "" }}</span></td>
-<td>{{ g.genome_status }}</td><td>{{ g.genome_length }}</td><td>{{ g.host_name or "" }}</td><td>{{ g.isolation_country or "" }}</td><td>{{ g.collection_date or "" }}</td><td><code>{{ (g.md5 or "")[:8] }}</code></td></tr>
-{% else %}<tr><td colspan="9" class="mut">아직 반영된 유전체가 없습니다. 큐레이션 페이지에서 승인 후 적용하세요.</td></tr>{% endfor %}</table>
+<style>main{max-width:none}.sheet{overflow:auto;max-height:75vh;border:1px solid var(--bd)}
+.sheet table{border:0;white-space:nowrap}.sheet th{position:sticky;top:0;background:var(--card)}</style>
+<h2>로컬 유전체 ({{ genomes|length }}) <a href="/genomes.tsv" style="font-size:13px">TSV 다운로드 (엑셀에서 열기)</a></h2>
+<input id="q" placeholder="검색" oninput="document.querySelectorAll('#t tbody tr').forEach(r=>r.style.display=r.innerText.toLowerCase().includes(this.value.toLowerCase())?'':'none')" size="30" style="margin-bottom:8px">
+<div class="sheet"><table id="t"><thead><tr><th>genome_id</th><th>accession</th><th>genome_name</th><th>strain</th><th>status</th><th>length</th><th>host_name</th><th>country</th><th>geographic_location</th><th>collection_date</th><th>isolation_source</th><th>bvbrc_id</th><th>md5</th></tr></thead><tbody>
+{% for g in genomes %}<tr><td>{{ g.genome_id }}</td><td><code>{{ g.accession }}.{{ g.accession_version }}</code></td><td>{{ g.genome_name }}</td><td>{{ g.strain or "" }}</td>
+<td>{{ g.genome_status }}</td><td>{{ g.genome_length }}</td><td>{{ g.host_name or "" }}</td><td>{{ g.isolation_country or "" }}</td><td>{{ g.geographic_location or "" }}</td><td>{{ g.collection_date or "" }}</td><td>{{ g.isolation_source or "" }}</td><td>{{ g.bvbrc_genome_id or "" }}</td><td><code>{{ (g.md5 or "")[:8] }}</code></td></tr>
+{% else %}<tr><td colspan="13" class="mut">아직 반영된 유전체가 없습니다. 큐레이션 페이지에서 승인 후 적용하세요.</td></tr>{% endfor %}</tbody></table></div>
 {% endblock %}
