@@ -159,9 +159,13 @@ def create_app(scheduler: bool = True) -> FastAPI:
         cs = _rows("SELECT c.*, w.name wname FROM changeset c JOIN watchlist w ON w.id=c.watch_id WHERE c.id=?", cid)[0]
         rows = []
         for i in _rows("SELECT * FROM changeset_item WHERE changeset_id=? ORDER BY kind, accession", cid):
-            r = {k: v for k, v in json.loads(i["new_record_json"] or "{}").items() if v is not None}
-            r.update(id=i["id"], kind=i["kind"], decision=i["decision"], accession=i["accession"],
-                     _diff=json.loads(i["diff_json"] or "{}"))
+            r = {k: v for k, v in json.loads(i["new_record_json"] or "{}").items()
+                 if v is not None and k not in ("taxon_lineage_ids", "taxon_lineage_names")}
+            if isinstance(r.get("submitter"), str):
+                r["submitter"] = r["submitter"][:120]
+            r.update(id=i["id"], kind=i["kind"], decision=i["decision"], accession=i["accession"])
+            if i["kind"] == "changed":
+                r["_diff"] = json.loads(i["diff_json"] or "{}")
             rows.append(r)
         data = {"rows": rows, "selectable": True, "name": f"changeset_{cid}",
                 "cols": [{"k": k, "label": l, "on": on, "cls": c} for k, l, on, c in CS_COLS],
@@ -214,6 +218,8 @@ def create_app(scheduler: bool = True) -> FastAPI:
             prov.setdefault(p["genome_id"], {})[p["field"]] = p["source"]
         lineage = (rows[0].get("taxon_lineage_names") or "").split(",") if rows else []
         for n, r in enumerate(rows):
+            r.pop("taxon_lineage_ids", None)
+            r.pop("taxon_lineage_names", None)
             r["id"] = n
             r["genbank"] = f"{r['accession']}.{r['accession_version']}" if r.get("accession_version") else r["accession"]
             r["_prov"] = prov.get(r["genome_id"], {})

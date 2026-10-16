@@ -1,27 +1,33 @@
 {% extends "base.html" %}{% block body %}
-<h2>Changeset #{{ cs.id }} · {{ cs.wname }} <span class="pill {{ cs.status }}">{{ cs.status }}</span></h2>
-<div class="card"><span class="mut">신규 <b>{{ summary.new }}</b> · 변경 <b>{{ summary.changed }}</b> · 삭제 <b>{{ summary.removed }}</b> · 소스 {{ summary.sources }}
-{% for n in summary.notes %} · ⚠ {{ n }}{% endfor %}</span>
-<details style="margin-top:6px" {% if cs.status == 'BLOCKED' %}open{% endif %}><summary>Dry-run 결과 ({{ 'OK' if cs.status == 'READY' else cs.status }})</summary>
-<table style="margin-top:6px">{% for c in dry.checks %}<tr><td>{{ c.name }}</td><td class="{{ 'READY' if c.ok else 'BLOCKED' }}">{{ 'OK' if c.ok else 'FAIL' }}</td><td>{{ c.detail }}</td></tr>{% endfor %}</table>
-<form method="post" action="/changeset/{{ cs.id }}/dryrun" style="margin-top:6px"><button>Dry-run 다시 실행</button></form></details></div>
-
+<div class="bvh"><div class="ico">Δ</div><div><small>Changeset View</small>
+ <div class="crumb"><b>{{ cs.wname }}</b> · Changeset #{{ cs.id }} <span class="pill {{ cs.status }}">{{ cs.status }}</span>
+  <em>— 신규 <b style="color:var(--ok)">{{ summary.new }}</b> · 변경 <b style="color:var(--warn)">{{ summary.changed }}</b> · 삭제 <b style="color:var(--bad)">{{ summary.removed }}</b>
+  · 소스 {% for s, n in summary.sources.items() %}{{ s }} {{ n }}{{ ', ' if not loop.last }}{% endfor %}</em></div></div></div>
+<div class="tabs"><a href="/dashboard">Overview</a><a href="/genomes">Genomes</a><a class="on">Changes</a><a href="/history">History</a></div>
+<details class="card" style="margin:0;border-top:0;border-radius:0" {% if cs.status == 'BLOCKED' %}open{% endif %}>
+ <summary>Dry-run: <b class="{{ 'READY' if cs.status == 'READY' else 'BLOCKED' }}">{{ 'OK' if cs.status == 'READY' else cs.status }}</b>
+ {% for n in summary.notes %}<span class="mut"> · ⚠ {{ n }}</span>{% endfor %}</summary>
+ <table style="margin-top:6px">{% for c in dry.checks %}<tr><td>{{ c.name }}</td><td class="{{ 'READY' if c.ok else 'BLOCKED' }}">{{ 'OK' if c.ok else 'FAIL' }}</td><td>{{ c.detail }}</td></tr>{% endfor %}</table>
+ <form method="post" action="/changeset/{{ cs.id }}/dryrun" style="margin-top:6px"><button>Dry-run 다시 실행</button></form></details>
 <form method="post" id="df" action="/changeset/{{ cs.id }}/decide"><input type="hidden" name="action" id="act"><div id="ids"></div></form>
-{% set actions %}
-<button type="button" onclick="G.selectFiltered()">필터 결과 전체 선택</button>
-<button type="button" onclick="dec('approved')">승인</button><button type="button" onclick="dec('rejected')">거절</button><button type="button" onclick="dec('hold')">보류</button>
-<button type="button" class="p" {% if cs.status != 'READY' %}disabled{% endif %} onclick="aa()">승인분 적용</button>
+{% set toolbar_extra %}
+<span style="width:1px;background:var(--bd);align-self:stretch;margin:0 6px"></span>
+<button class="tbn" onclick="G.selectFiltered()"><i>☑</i>Select all</button>
+<button class="tbn" style="color:var(--ok)" onclick="dec('approved')"><i>✔</i>Approve</button>
+<button class="tbn" style="color:var(--bad)" onclick="dec('rejected')"><i>✖</i>Reject</button>
+<button class="tbn" style="color:var(--warn)" onclick="dec('hold')"><i>⏸</i>Hold</button>
+<button class="tbn" {% if cs.status != 'READY' %}disabled style="opacity:.4"{% endif %} onclick="aa()"><i>⬆</i>Apply</button>
 {% endset %}
 <script type="application/json" id="gdata">{{ data|tojson }}</script>
-{% include "grid.html" %}
+{% include "bvgrid.html" %}
 <script>
-function send(action,url){const ids=G.selected();if(!ids.length&&action!=='approve_all'){alert('선택된 항목이 없습니다.');return}
- const f=document.getElementById('df');f.action=url||f.action;document.getElementById('act').value=action;
- document.getElementById('ids').innerHTML=ids.map(i=>`<input type="hidden" name="item" value="${i}">`).join('');f.submit()}
-function dec(a){send(a)}
-function aa(){const ids=G.selected();if(ids.length){if(!confirm(ids.length+'건을 승인하고 로컬에 적용할까요?'))return;
- const f=document.getElementById('df');f.action='/changeset/{{ cs.id }}/approve_apply';document.getElementById('act').value='x';
- document.getElementById('ids').innerHTML=ids.map(i=>`<input type="hidden" name="item" value="${i}">`).join('');runJob(f)}
- else{if(confirm('선택이 없습니다. 이미 승인된 항목만 적용할까요?')){const f=document.getElementById('df');f.action='/changeset/{{ cs.id }}/apply';runJob(f)}}}
+function ids(){return G.selected()}
+function dec(a){const s=ids();if(!s.length){alert('선택된 항목이 없습니다. 체크박스로 고르거나 Select all을 누르세요.');return}
+ const f=document.getElementById('df');document.getElementById('act').value=a;
+ document.getElementById('ids').innerHTML=s.map(i=>`<input type="hidden" name="item" value="${i}">`).join('');f.submit()}
+function aa(){const s=ids(),f=document.getElementById('df');
+ if(s.length){if(!confirm(s.length+'건을 승인하고 로컬에 적용할까요?'))return;f.action='/changeset/{{ cs.id }}/approve_apply';
+  document.getElementById('ids').innerHTML=s.map(i=>`<input type="hidden" name="item" value="${i}">`).join('');runJob(f)}
+ else if(confirm('선택이 없습니다. 이미 승인된 항목만 적용할까요?')){f.action='/changeset/{{ cs.id }}/apply';runJob(f)}}
 </script>
 {% endblock %}
