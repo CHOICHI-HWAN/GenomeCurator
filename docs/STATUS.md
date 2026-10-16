@@ -24,7 +24,7 @@ Windows에서 `git`이 PATH에 없으면 `C:\Program Files\Git\cmd\git.exe`로 �
 - BV-BRC `genome/?eq(taxon_lineage_ids,3052225)` 동작 (445건).
 - Henipavirus nipahense taxon_id = 3052225.
 - check → dry-run → 승인 → apply (442건) → 재확인(변경 없음), 버전/메타데이터/삭제 감지.
-- Pathoplexus(LAPIS)에는 Nipah organism이 없음 → 자동 건너뜀. 다른 organism 필드 매핑은 미검증.
+- Pathoplexus(LAPIS): organism 목록 API가 없어 `sources.PPX_KNOWN`의 slug(mpox, ebola-zaire, dengue 등, 실호출로 확인)를 NCBI taxon으로 자동 탐색한다. 필터는 `ncbiVirusTaxId`(없으면 `ncbiVirusName`). Monkeypox(10244) → `mpox` 연결 확인, 10,437건 join. Nipah/Henipavirus는 organism 없음 → 자동 건너뜀. 새 organism이 생기면 `PPX_KNOWN`에 slug 추가.
 
 ## 미완료 / 다음 작업
 - 웹에서 `전체 승인 + 적용` 실제 클릭 검증 (코드 경로는 CLI로 검증됨)

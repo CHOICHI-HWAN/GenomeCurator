@@ -184,41 +184,72 @@ def fetch_bvbrc(taxon_id: int | None) -> dict[str, dict]:
 
 
 # --------------------------------------------------------------- Pathoplexus
-_PPX_MAP = {
-    "genome_name": ["displayName"], "strain": ["strain", "isolateName"],
-    "host_name": ["hostNameScientific", "hostNameCommon"],
-    "isolation_country": ["geoLocCountry"],
-    "collection_date": ["sampleCollectionDate"],
-    "isolation_source": ["anatomicalPart", "bodyProduct"],
-    "submitter": ["authorAffiliations"],
-    "release_date": ["earliestReleaseDate"],
-}
+# LAPIS has no organism list endpoint; these slugs were verified live (2026-10).
+PPX_KNOWN = ["mpox", "ebola-zaire", "ebola-sudan", "marburg", "cchf", "west-nile", "hmpv", "rsv-a", "rsv-b",
+             "measles", "dengue", "zika", "chikungunya", "yellow-fever"]
+_PPX_FIELDS = ["insdcAccessionFull", "insdcAccessionBase", "accessionVersion", "specimenCollectorSampleId",
+               "hostNameScientific", "hostNameCommon", "geoLocCountry", "geoLocAdmin1", "sampleCollectionDate",
+               "clade", "lineage", "authorAffiliations", "earliestReleaseDate", "anatomicalPart", "bodyProduct"]
+_PPX_FILTER = {"versionStatus": "LATEST_VERSION", "isRevocation": "false"}
+_ppx_cache: dict[tuple, tuple | None] = {}
 
 
-def fetch_pathoplexus(watch_name: str) -> dict[str, dict]:
-    organism = config.PATHOPLEXUS_ORGANISMS.get(watch_name)
-    if not organism:
+def pathoplexus_resolve(watch_name: str, taxon: str, taxon_id: int | None):
+    """-> (slug, filter) or None. Config override wins; otherwise probe known organisms by NCBI taxon."""
+    key = (watch_name, taxon_id)
+    if key in _ppx_cache:
+        return _ppx_cache[key]
+    base = {**_PPX_FILTER}
+    found = None
+    slug = config.PATHOPLEXUS_ORGANISMS.get(watch_name)
+    cands = [(slug, None)] if slug else [(s, None) for s in PPX_KNOWN]
+    with _client() as c:
+        for s, _ in cands:
+            for flt in ([{"ncbiVirusTaxId": taxon_id}] if taxon_id else []) + [{"ncbiVirusName": taxon}]:
+                try:
+                    r = c.get(f"{config.PATHOPLEXUS_BASE}/{s}/sample/aggregated", params={**base, **flt})
+                    if r.status_code == 200 and r.json()["data"][0]["count"] > 0:
+                        found = (s, {**base, **flt})
+                        break
+                except Exception:
+                    pass
+            if found:
+                break
+        if not found and slug:  # forced organism with no taxon match: take everything
+            found = (slug, base)
+    _ppx_cache[key] = found
+    return found
+
+
+def fetch_pathoplexus(watch_name: str, taxon: str = "", taxon_id: int | None = None) -> dict[str, dict]:
+    res = pathoplexus_resolve(watch_name, taxon or watch_name, taxon_id)
+    if not res:
         return {}
+    slug, flt = res
     out: dict[str, dict] = {}
     with _client() as c:
-        r = c.get(f"{config.PATHOPLEXUS_BASE}/{organism}/sample/details", params={"limit": 100000})
+        r = c.get(f"{config.PATHOPLEXUS_BASE}/{slug}/sample/details",
+                  params={**flt, "fields": ",".join(_PPX_FIELDS), "limit": 200000}, timeout=300)
         r.raise_for_status()
         for row in r.json().get("data", []):
-            acc = row.get("insdcAccessionBase") or row.get("insdcAccessionFull")
-            if not acc:
-                continue
-            rec = {"pathoplexus_accession": row.get("accessionVersion")}
-            for field, cands in _PPX_MAP.items():
-                for cand in cands:
-                    if row.get(cand):
-                        rec[field] = row[cand]
-                        break
-            out[split_version(acc)[0]] = rec
-            ver = row.get("insdcAccessionFull")
-            if ver and split_version(ver)[1] is not None:
-                out[split_version(acc)[0]]["accession_version"] = split_version(ver)[1]
+            full = row.get("insdcAccessionFull") or row.get("insdcAccessionBase")
+            if not full:
+                continue  # Pathoplexus-native sequence without INSDC accession: cannot join
+            base, ver = split_version(full)
+            geo = ", ".join(x for x in (row.get("geoLocCountry"), row.get("geoLocAdmin1")) if x)
+            rec = {"accession_version": ver,
+                   "pathoplexus_accession": row.get("accessionVersion"),
+                   "strain": row.get("specimenCollectorSampleId"),
+                   "host_name": row.get("hostNameScientific") or row.get("hostNameCommon"),
+                   "isolation_country": row.get("geoLocCountry"),
+                   "geographic_location": geo or None,
+                   "collection_date": row.get("sampleCollectionDate"),
+                   "genotype": row.get("clade"), "subtype": row.get("lineage"),
+                   "isolation_source": row.get("anatomicalPart") or row.get("bodyProduct"),
+                   "submitter": row.get("authorAffiliations"),
+                   "release_date": row.get("earliestReleaseDate")}
+            out[base] = {k: v for k, v in rec.items() if v not in (None, "", "None")}
     return out
-
 
 def fetch_all(watch_name: str, taxon: str, taxon_id: int | None, filters: dict | None, progress=None):
     """Returns ({source: {acc: rec}}, notes). Pathoplexus/BV-BRC failures are non-fatal."""
@@ -226,7 +257,7 @@ def fetch_all(watch_name: str, taxon: str, taxon_id: int | None, filters: dict |
     p = progress or (lambda *a: None)
     p(8, "NCBI Virus 메타데이터 가져오는 중…")
     res = {"ncbi": fetch_ncbi(taxon, filters)}
-    for name, fn, pct, label in (("pathoplexus", lambda: fetch_pathoplexus(watch_name), 45, "Pathoplexus 확인 중…"),
+    for name, fn, pct, label in (("pathoplexus", lambda: fetch_pathoplexus(watch_name, taxon, taxon_id), 45, "Pathoplexus 확인 중…"),
                                  ("bvbrc", lambda: fetch_bvbrc(taxon_id), 55, "BV-BRC 메타데이터 가져오는 중…")):
         p(pct, label)
         try:
