@@ -63,6 +63,10 @@ const st={f:{},q:'',sort:null,dir:1,pg:0,ps:100,vis:new Set(cols.filter(c=>c.on)
 const $=id=>document.getElementById(id),esc=s=>String(s??'').replace(/[&<>"]/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c]));
 const val=(r,k)=>{const v=r[k];return v===null||v===undefined||v===''?'(없음)':String(v)};
 const label=k=>(cols.find(c=>c.k===k)||{label:k}).label;
+const LINKS={genbank:a=>'https://www.ncbi.nlm.nih.gov/nuccore/'+a,sra_accession:a=>'https://www.ncbi.nlm.nih.gov/sra/'+a,
+ bioproject_accession:a=>'https://www.ncbi.nlm.nih.gov/bioproject/'+a,biosample_accession:a=>'https://www.ncbi.nlm.nih.gov/biosample/'+a};
+const cell=(k,r)=>{const v=r[k];if(!LINKS[k]||!v)return esc(v);
+ return String(v).split(/[;,]\s*/).filter(Boolean).map(a=>`<a href="${esc(LINKS[k](a.replace(/\.\d+$/,'')))}" target="_blank" rel="noopener" onclick="event.stopPropagation()">${esc(a)}</a>`).join(', ')};
 function match(r,skip){for(const k in st.f){if(k===skip||!st.f[k].size)continue;if(!st.f[k].has(val(r,k)))return false}
  if(st.q){const q=st.q.toLowerCase();if(!cols.some(c=>String(r[c.k]??'').toLowerCase().includes(q)))return false}return true}
 let view=[];
@@ -82,13 +86,13 @@ function rp(){const el=$('rp');if(!st.panel){el.style.display='none';return}el.s
  const r=st.cur;if(r&&r._diff&&r.kind==='changed'){h+='<table><tr><td colspan=2><b>변경 내용</b></td></tr>'+Object.entries(r._diff).map(([k,v])=>`<tr><td>${esc(label(k))}</td><td><s class="old">${esc(v[0]??'∅')}</s> → <b>${esc(v[1]??'∅')}</b></td></tr>`).join('')+'</table>'}
  if(r){const keys=cols.map(c=>c.k).concat(['taxon_id','taxon_lineage_names','accession','sequence_md5','sequence_hash','pathoplexus_accession','submitter','publication','segment','genotype','subtype']);
   h+='<table>'+[...new Set(keys)].filter(k=>r[k]!==null&&r[k]!==undefined&&r[k]!=='').map(k=>{const s=r._prov&&r._prov[k];
-   return `<tr><td>${esc(label(k))}</td><td>${esc(r[k])}${s?`<span class="src ${s}">${s}</span>`:''}</td></tr>`}).join('')+'</table>'}
+   return `<tr><td>${esc(label(k))}</td><td>${cell(k,r)}${s?`<span class="src ${s}">${s}</span>`:''}</td></tr>`}).join('')+'</table>'}
  el.innerHTML=h}
 function table(){const vc=cols.filter(c=>st.vis.has(c.k));
  $('gh').innerHTML='<tr><th><input type="checkbox" id="gall"></th>'+vc.map(c=>`<th data-s="${c.k}" class="${st.sort===c.k?'s '+(st.dir<0?'d':''):''}">${esc(c.label)}</th>`).join('')+'</tr>';
  const pages=Math.max(1,Math.ceil(view.length/st.ps));st.pg=Math.min(st.pg,pages-1);const sl=view.slice(st.pg*st.ps,(st.pg+1)*st.ps);
  $('gb').innerHTML=sl.map(r=>`<tr data-id="${r.id}" class="${st.cur&&st.cur.id===r.id?'cur':''}"><td><input type="checkbox" ${st.sel.has(r.id)?'checked':''}></td>`
-  +vc.map(c=>{const d=r.kind==='changed'&&r._diff&&r._diff[c.k];if(d)return `<td class="chg" title="이전 값 → 새 값"><i>${esc(d[0]??'∅')}</i>${esc(d[1]??'∅')}</td>`;return `<td class="${c.k==='genome_name'?'nm':''} ${(c.k==='genome_status'||c.cls)?esc(r[c.k]):''}" title="${esc(r[c.k])}">${esc(r[c.k])}</td>`}).join('')+'</tr>').join('');
+  +vc.map(c=>{const d=r.kind==='changed'&&r._diff&&r._diff[c.k];if(d)return `<td class="chg" title="이전 값 → 새 값"><i>${esc(d[0]??'∅')}</i>${esc(d[1]??'∅')}</td>`;return `<td class="${c.k==='genome_name'?'nm':''} ${(c.k==='genome_status'||c.cls)?esc(r[c.k]):''}" title="${esc(r[c.k])}">${cell(c.k,r)}</td>`}).join('')+'</tr>').join('');
  const a=view.length?st.pg*st.ps+1:0,b=Math.min(view.length,(st.pg+1)*st.ps);
  $('gres').textContent=`${a.toLocaleString()} - ${b.toLocaleString()} of ${view.length.toLocaleString()} results`;
  $('gcount').textContent=view.length!==rows.length?`${view.length.toLocaleString()} / ${rows.length.toLocaleString()} 필터됨`:'';

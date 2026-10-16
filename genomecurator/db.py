@@ -58,6 +58,11 @@ def connect() -> sqlite3.Connection:
     con.execute("PRAGMA journal_mode=WAL")
     con.execute("PRAGMA foreign_keys=ON")
     con.executescript(SCHEMA)
+    have = {r[1] for r in con.execute("PRAGMA table_info(genome)")}
+    for col in ("sra_accession", "bioproject_accession", "biosample_accession", "assembly_method", "sequencing_platform"):
+        if col not in have:
+            con.execute(f"ALTER TABLE genome ADD COLUMN {col} TEXT")
+    con.commit()
     return con
 
 

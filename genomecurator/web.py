@@ -56,18 +56,24 @@ CS_COLS = [("kind", "종류", True, True), ("decision", "결정", True, True), (
            ("strain", "Strain", True, False), ("host_name", "Host", True, False),
            ("isolation_country", "Country", True, False), ("geographic_location", "Geographic Location", False, False),
            ("collection_date", "Collection Date", True, False), ("isolation_source", "Isolation Source", False, False),
+           ("sra_accession", "SRA Accession", True, False), ("bioproject_accession", "BioProject", False, False),
+           ("biosample_accession", "BioSample", False, False), ("sequencing_platform", "Sequencing Platform", False, False),
+           ("assembly_method", "Assembly Method", False, False), ("has_sra", "SRA", False, False),
            ("submitter", "Submitter", False, False), ("bvbrc_genome_id", "BV-BRC ID", False, False),
            ("release_date", "Release Date", False, False)]
 CS_FACETS = [("kind", "종류"), ("decision", "결정"), ("genome_status", "Genome Status"), ("host_name", "Host"),
-             ("isolation_country", "Country"), ("collection_year", "Collection Year")]
+             ("isolation_country", "Country"), ("collection_year", "Collection Year"), ("has_sra", "SRA")]
 GN_COLS = [("genome_name", "Genome Name", True), ("strain", "Strain", True), ("genbank", "GenBank Accessions", True),
            ("genome_length", "Size", True), ("genome_status", "Genome Status", True), ("collection_date", "Collection Date", True),
            ("isolation_country", "Isolation Country", True), ("host_name", "Host Name", True),
            ("geographic_location", "Geographic Location", False), ("isolation_source", "Isolation Source", False),
+           ("sra_accession", "SRA Accession", True), ("bioproject_accession", "BioProject", False),
+           ("biosample_accession", "BioSample", False), ("sequencing_platform", "Sequencing Platform", False),
+           ("assembly_method", "Assembly Method", False), ("has_sra", "SRA Available", False),
            ("genome_quality", "Genome Quality", False), ("genome_id", "Genome ID", False), ("bvbrc_genome_id", "BV-BRC ID", False),
            ("gc_content", "GC %", False), ("release_date", "Release Date", False), ("date_modified", "Modified", False)]
 GN_FACETS = [("genome_status", "Genome Status"), ("host_name", "Host"), ("isolation_country", "Country"),
-             ("collection_year", "Collection Year"), ("genome_quality", "Quality")]
+             ("collection_year", "Collection Year"), ("has_sra", "SRA"), ("genome_quality", "Quality")]
 
 
 def pending_total() -> int:
@@ -100,7 +106,8 @@ def dashboard_data(g: list[dict], prov: list[dict], last_checked) -> dict:
             hist["labels"].append(f"{lo + i * step:,}")
             hist["values"].append(bins.get(i, 0))
     fields = ["host_name", "isolation_country", "collection_date", "isolation_source", "strain",
-              "geographic_location", "genotype", "subtype", "genome_quality", "publication"]
+              "geographic_location", "genotype", "subtype", "genome_quality", "publication",
+              "sra_accession", "bioproject_accession", "biosample_accession"]
     n = len(g) or 1
     fill = sorted(({"f": f, "pct": round(100 * sum(1 for r in g if r.get(f)) / n, 1)} for f in fields),
                   key=lambda x: x["pct"])
@@ -179,7 +186,8 @@ def create_app(scheduler: bool = True) -> FastAPI:
                  if v is not None and k not in ("taxon_lineage_ids", "taxon_lineage_names")}
             if isinstance(r.get("submitter"), str):
                 r["submitter"] = r["submitter"][:120]
-            r.update(id=i["id"], kind=i["kind"], decision=i["decision"], accession=i["accession"])
+            r.update(id=i["id"], kind=i["kind"], decision=i["decision"], accession=i["accession"],
+                     has_sra="Yes" if r.get("sra_accession") else "No")
             if i["kind"] == "changed":
                 r["_diff"] = json.loads(i["diff_json"] or "{}")
             rows.append(r)
@@ -242,6 +250,7 @@ def create_app(scheduler: bool = True) -> FastAPI:
             r["id"] = n
             r["genbank"] = f"{r['accession']}.{r['accession_version']}" if r.get("accession_version") else r["accession"]
             r["_prov"] = prov.get(r["genome_id"], {})
+            r["has_sra"] = "Yes" if r.get("sra_accession") else "No"
         data = {"rows": rows, "name": "genomes", "watch": cur and cur["name"], "lineage": lineage,
                 "cols": [{"k": k, "label": l, "on": on} for k, l, on in GN_COLS],
                 "facets": [{"k": k, "label": l} for k, l in GN_FACETS]}

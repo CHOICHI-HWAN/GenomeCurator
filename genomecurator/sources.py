@@ -126,6 +126,9 @@ def normalize_ncbi(rep: dict) -> tuple[str, dict]:
         "isolation_source": iso.get("source"),
         "submitter": sub.get("affiliation"),
         "sequence_hash": (rep.get("nucleotide") or {}).get("sequence_hash"),
+        "sra_accession": "; ".join(rep.get("sra_accessions") or []),
+        "bioproject_accession": "; ".join(rep.get("bioprojects") or []),
+        "biosample_accession": rep.get("biosample"),
         "release_date": (rep.get("release_date") or "")[:10] or None,
         "update_date": (rep.get("update_date") or "")[:10] or None,
     }
@@ -210,6 +213,11 @@ def fetch_bvbrc(taxon_id: int | None) -> dict[str, dict]:
                     "segment": g.get("segment"),
                     "publication": g.get("publication"),
                     "genome_quality": g.get("genome_quality"),
+                    "sra_accession": g.get("sra_accession"),
+                    "bioproject_accession": g.get("bioproject_accession"),
+                    "biosample_accession": g.get("biosample_accession"),
+                    "assembly_method": g.get("assembly_method"),
+                    "sequencing_platform": g.get("sequencing_platform"),
                     "taxon_id": g.get("taxon_id"),
                     "taxon_lineage_ids": ",".join(g.get("taxon_lineage_ids") or []) or None,
                     "taxon_lineage_names": ",".join(g.get("taxon_lineage_names") or []) or None,
@@ -230,7 +238,8 @@ PPX_KNOWN = ["mpox", "ebola-zaire", "ebola-sudan", "marburg", "cchf", "west-nile
              "measles", "dengue", "zika", "chikungunya", "yellow-fever"]
 _PPX_FIELDS = ["insdcAccessionFull", "insdcAccessionBase", "accessionVersion", "specimenCollectorSampleId",
                "hostNameScientific", "hostNameCommon", "geoLocCountry", "geoLocAdmin1", "sampleCollectionDate",
-               "clade", "lineage", "authorAffiliations", "earliestReleaseDate", "anatomicalPart", "bodyProduct"]
+               "clade", "lineage", "authorAffiliations", "earliestReleaseDate", "anatomicalPart", "bodyProduct",
+               "bioprojectAccession", "biosampleAccession", "insdcRawReadsAccession"]
 _PPX_FILTER = {"versionStatus": "LATEST_VERSION", "isRevocation": "false"}
 _ppx_cache: dict[tuple, tuple | None] = {}
 
@@ -289,7 +298,10 @@ def fetch_pathoplexus(watch_name: str, taxon: str = "", taxon_id: int | None = N
                    "genotype": row.get("clade"), "subtype": row.get("lineage"),
                    "isolation_source": row.get("anatomicalPart") or row.get("bodyProduct"),
                    "submitter": row.get("authorAffiliations"),
-                   "release_date": row.get("earliestReleaseDate")}
+                   "release_date": row.get("earliestReleaseDate"),
+                   "bioproject_accession": row.get("bioprojectAccession"),
+                   "biosample_accession": row.get("biosampleAccession"),
+                   "sra_accession": row.get("insdcRawReadsAccession")}
             out[base] = {k: v for k, v in rec.items() if v not in (None, "", "None")}
     return out
 
