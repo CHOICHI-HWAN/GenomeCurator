@@ -30,4 +30,6 @@ python -m genomecurator serve                           # http://127.0.0.1:8000
 python scripts/build_static.py      # 로컬 DB에서 docs/index.html 재생성
 ```
 
+로컬 앱을 실행 중이면 http://127.0.0.1:8000/public (상단 "공개 보기")에서 같은 화면을 현재 DB 기준으로 바로 볼 수 있다. `docs/index.html`은 파일을 더블클릭해서 열어도 된다.
+
 GitHub Pages로 공개하려면 저장소 Settings → Pages → Source를 `main` 브랜치의 `/docs`로 지정한다. 차트는 CDN(Chart.js)을 쓰므로 보는 쪽에 인터넷이 필요하다.

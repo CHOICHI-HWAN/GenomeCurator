@@ -4,7 +4,7 @@ import uuid
 from pathlib import Path
 
 from fastapi import FastAPI, Form, Request
-from fastapi.responses import JSONResponse, RedirectResponse, Response
+from fastapi.responses import HTMLResponse, JSONResponse, RedirectResponse, Response
 from fastapi.templating import Jinja2Templates
 
 from . import config, curate
@@ -284,6 +284,15 @@ def create_app(scheduler: bool = True) -> FastAPI:
         last = _rows("SELECT last_checked FROM watchlist WHERE id=?", watch)
         return render(request, "dashboard.html", nav="dash", watches=watches, watch=watch,
                       data=dashboard_data(g, prov, last[0]["last_checked"] if last else None))
+
+    @app.get("/public")
+    def public_view():
+        """The same read-only page as docs/index.html, built live from the local database."""
+        from .static_site import build_html
+        try:
+            return HTMLResponse(build_html("https://github.com/CHOICHI-HWAN/GenomeCurator"))
+        except ValueError as e:
+            return HTMLResponse(f"<p>{e}</p>", status_code=404)
 
     @app.get("/history")
     def history(request: Request, msg: str = ""):

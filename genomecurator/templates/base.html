@@ -33,7 +33,7 @@ button.p{background:var(--acc);color:#fff;border-color:var(--acc)}
 </style></head><body>
 <header><span class="logo">Genome<i>Curator</i></span>
 <a href="/" class="{{ 'on' if nav=='cur' }}">큐레이션{% if badge %}<span class="badge">{{ badge }}</span>{% endif %}</a>
-<a href="/dashboard{{ '?watch=' ~ watch if watch }}" class="{{ 'on' if nav=='dash' }}">대시보드</a><a href="/genomes{{ '?watch=' ~ watch if watch }}" class="{{ 'on' if nav=='gen' }}">유전체</a><a href="/history" class="{{ 'on' if nav=='his' }}">이력</a></header>
+<a href="/dashboard{{ '?watch=' ~ watch if watch }}" class="{{ 'on' if nav=='dash' }}">대시보드</a><a href="/genomes{{ '?watch=' ~ watch if watch }}" class="{{ 'on' if nav=='gen' }}">유전체</a><a href="/history" class="{{ 'on' if nav=='his' }}">이력</a><a href="/public" target="_blank" rel="noopener" style="margin-left:auto" title="공개용 읽기 전용 화면">공개 보기 ↗</a></header>
 <main>{% if msg %}<div class="msg">{{ msg }}</div>{% endif %}{% block body %}{% endblock %}</main>
 <div id="toast"><span class="x" onclick="this.parentNode.style.display='none'">✕</span><b id="tmsg"></b><div class="bar"><i id="tbar"></i></div><span class="mut" id="tpct"></span></div>
 <script>
