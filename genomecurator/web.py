@@ -122,6 +122,26 @@ def dashboard_data(g: list[dict], prov: list[dict], last_checked) -> dict:
     }
 
 
+def _ppx_slug(watch_id: int, rows: list[dict]) -> str | None:
+    """Pathoplexus organism of a watch; discovered once from a joined accession and then stored."""
+    cur = _rows("SELECT pathoplexus_organism FROM watchlist WHERE id=?", watch_id)
+    if cur and cur[0]["pathoplexus_organism"]:
+        return cur[0]["pathoplexus_organism"]
+    acc = next((r["pathoplexus_accession"] for r in rows if r.get("pathoplexus_accession")), None)
+    if not acc:
+        return None
+    from . import sources
+    slug = sources.pathoplexus_slug_for(acc)
+    if slug:
+        con = connect()
+        try:
+            con.execute("UPDATE watchlist SET pathoplexus_organism=? WHERE id=?", (slug, watch_id))
+            con.commit()
+        finally:
+            con.close()
+    return slug
+
+
 def create_app(scheduler: bool = True) -> FastAPI:
     app = FastAPI(title="GenomeCurator")
 
@@ -153,6 +173,15 @@ def create_app(scheduler: bool = True) -> FastAPI:
                       watches=_rows("SELECT w.*, (SELECT COUNT(*) FROM genome g WHERE g.watch_id=w.id) n_genomes FROM watchlist w"),
                       changesets=_rows("SELECT c.*, w.name wname FROM changeset c JOIN watchlist w ON w.id=c.watch_id "
                                        "WHERE c.status!='DISCARDED' ORDER BY c.id DESC LIMIT 30"))
+
+    @app.get("/api/lookup")
+    def api_lookup(q: str = ""):
+        """Check a typed virus name against ICTV, NCBI Virus, BV-BRC and Pathoplexus (read-only)."""
+        from .lookup import lookup_virus
+        try:
+            return lookup_virus(q)
+        except ValueError as e:
+            return JSONResponse({"error": str(e)}, 400)
 
     @app.post("/watch")
     def watch_add(name: str = Form(...), taxon: str = Form("")):
@@ -251,7 +280,8 @@ def create_app(scheduler: bool = True) -> FastAPI:
             r["genbank"] = f"{r['accession']}.{r['accession_version']}" if r.get("accession_version") else r["accession"]
             r["_prov"] = prov.get(r["genome_id"], {})
             r["has_sra"] = "Yes" if r.get("sra_accession") else "No"
-        data = {"rows": rows, "name": "genomes", "watch": cur and cur["name"], "lineage": lineage,
+        ppx = _ppx_slug(watch, rows)
+        data = {"rows": rows, "name": "genomes", "watch": cur and cur["name"], "lineage": lineage, "ppx": ppx,
                 "cols": [{"k": k, "label": l, "on": on} for k, l, on in GN_COLS],
                 "facets": [{"k": k, "label": l} for k, l in GN_FACETS]}
         return render(request, "genomes.html", data=data, nav="gen", watches=watches, watch=watch)

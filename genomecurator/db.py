@@ -62,6 +62,9 @@ def connect() -> sqlite3.Connection:
     for col in ("sra_accession", "bioproject_accession", "biosample_accession", "assembly_method", "sequencing_platform"):
         if col not in have:
             con.execute(f"ALTER TABLE genome ADD COLUMN {col} TEXT")
+    wcols = {r[1] for r in con.execute("PRAGMA table_info(watchlist)")}
+    if "pathoplexus_organism" not in wcols:
+        con.execute("ALTER TABLE watchlist ADD COLUMN pathoplexus_organism TEXT")
     con.commit()
     return con
 

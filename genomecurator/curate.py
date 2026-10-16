@@ -86,6 +86,9 @@ def check(watch_name: str, progress=None) -> int | None:
         per_source, notes = sources.fetch_all(w["name"], w["taxon"], w["taxon_id"],
                                               json.loads(w["filters_json"] or "{}"), progress=p)
         notes = notes0 + notes
+        ppx = sources.pathoplexus_resolve(w["name"], w["taxon"], w["taxon_id"])
+        if ppx and ppx[0] != w["pathoplexus_organism"]:
+            con.execute("UPDATE watchlist SET pathoplexus_organism=? WHERE id=?", (ppx[0], w["id"]))
         p(75, "로컬 데이터와 비교 중…")
         if not per_source["ncbi"]:
             raise SystemExit(f"NCBI returned no records for '{w['taxon']}' (taxon {w['taxon_id']}); check that the watch is a virus taxon. "

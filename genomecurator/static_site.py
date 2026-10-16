@@ -15,6 +15,7 @@ FIELDS = [
     "collection_date", "isolation_country", "geographic_location", "host_name", "isolation_source",
     "sra_accession", "bioproject_accession", "biosample_accession", "sequencing_platform", "assembly_method",
     "genome_quality", "bvbrc_genome_id", "release_date", "taxon_id", "genotype", "subtype", "segment", "publication",
+    "pathoplexus_accession",
 ]
 
 
@@ -43,7 +44,7 @@ def snapshot(repo: str = "") -> dict:
                 out.append(d)
             names = rows[0]["taxon_lineage_names"]
             viruses.append({"id": w["id"], "name": w["name"], "taxon": w["taxon"], "taxon_id": w["taxon_id"],
-                            "lineage": names.split(",") if names else [w["name"]], "rows": out})
+                            "lineage": names.split(",") if names else [w["name"]], "ppx": w["pathoplexus_organism"], "rows": out})
         return {"generated": date.today().isoformat(), "repo": repo, "viruses": viruses}
     finally:
         con.close()

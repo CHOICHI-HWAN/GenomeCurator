@@ -303,6 +303,19 @@ def pathoplexus_resolve(watch_name: str, taxon: str, taxon_id: int | None):
     return found
 
 
+def pathoplexus_slug_for(accession_version: str) -> str | None:
+    """Which Pathoplexus organism holds this accession (e.g. PP_006WPN1.1)? Probes the known organisms."""
+    with _client() as c:
+        for slug in PPX_KNOWN:
+            try:
+                r = _get(c, f"{config.PATHOPLEXUS_BASE}/{slug}/sample/aggregated", params={"accessionVersion": accession_version})
+                if r.status_code == 200 and r.json()["data"][0]["count"] > 0:
+                    return slug
+            except Exception:
+                continue
+    return None
+
+
 def fetch_pathoplexus(watch_name: str, taxon: str = "", taxon_id: int | None = None) -> dict[str, dict]:
     res = pathoplexus_resolve(watch_name, taxon or watch_name, taxon_id)
     if not res:

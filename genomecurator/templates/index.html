@@ -4,8 +4,36 @@
 {% for w in watches %}<tr><td>{{ w.name }}</td><td>{{ w.taxon }} <span class="mut">({{ w.taxon_id }})</span></td><td>{{ w.n_genomes }}</td><td>{{ w.last_checked or "-" }}</td>
 <td><form method="post" action="/watch/{{ w.name }}/check" onsubmit="runJob(this);return false"><button>지금 확인</button></form></td></tr>
 {% else %}<tr><td colspan="5" class="mut">등록된 바이러스가 없습니다.</td></tr>{% endfor %}</table>
-<form method="post" action="/watch" style="margin:12px 0"><input name="name" placeholder="예: Henipavirus nipahense" required size="30">
-<input name="taxon" placeholder="NCBI taxon (비우면 이름과 동일)" size="28"> <button class="p">추가</button></form>
+<div class="card" id="addbox">
+ <b>바이러스 추가</b> <span class="mut">— 이름을 입력하면 ICTV · NCBI Virus · BV-BRC · Pathoplexus에서 먼저 확인하고, 필요하면 공식 이름을 제안합니다.</span>
+ <form id="lkf" style="margin-top:8px;display:flex;gap:8px;flex-wrap:wrap" onsubmit="lookup();return false">
+  <input id="lkq" placeholder="예: Monkeypox virus, Andes virus, Nipah" size="40" autocomplete="off" required>
+  <button class="p" id="lkb">확인</button></form>
+ <div id="lkres" style="margin-top:10px"></div>
+ <form id="addf" method="post" action="/watch" style="display:none"><input name="name" id="addname"><input name="taxon" id="addtaxon"></form>
+</div>
+<style>.lk{width:100%;border-collapse:collapse;margin-top:6px}.lk td{padding:5px 10px;border-bottom:1px solid var(--bd);vertical-align:top}.lk td:first-child{width:140px;font-weight:600;white-space:nowrap}
+.lk .ok{color:var(--ok)}.lk .warn{color:var(--warn)}.lk .none,.lk .error{color:var(--bad)}.lk ul{margin:0;padding-left:16px}
+.sugg{display:flex;gap:8px;flex-wrap:wrap;align-items:center;margin-top:10px}.spin{display:inline-block;width:12px;height:12px;border:2px solid var(--bd);border-top-color:var(--acc);border-radius:50%;animation:sp .8s linear infinite;vertical-align:-2px}@keyframes sp{to{transform:rotate(360deg)}}</style>
+<script>
+const E=s=>String(s??'').replace(/[&<>"]/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c]));
+const ICON={ok:'✔ 확인됨',warn:'⚠ 주의',none:'✖ 없음',error:'✖ 오류'};
+function addAs(name,taxon){document.getElementById('addname').value=name;document.getElementById('addtaxon').value=taxon;document.getElementById('addf').submit()}
+async function lookup(){const q=document.getElementById('lkq').value.trim();if(!q)return;const box=document.getElementById('lkres'),b=document.getElementById('lkb');
+ b.disabled=true;box.innerHTML='<span class="spin"></span> <span class="mut">ICTV → NCBI Virus → BV-BRC → Pathoplexus 순서로 확인 중… (요청 간 300ms 간격이라 10~20초 걸릴 수 있습니다)</span>';
+ let r;try{const resp=await fetch('/api/lookup?q='+encodeURIComponent(q));r=await resp.json();if(!resp.ok){box.innerHTML='<span class="mut">'+E(r.error||'오류')+'</span>';b.disabled=false;return}}
+ catch(e){box.innerHTML='<span style="color:var(--bad)">조회 실패: '+E(e)+'</span>';b.disabled=false;return}
+ b.disabled=false;
+ const order=['ictv','ncbi','bvbrc','pathoplexus'],names={ictv:'ICTV',ncbi:'NCBI Virus',bvbrc:'BV-BRC',pathoplexus:'Pathoplexus'};
+ let h='<table class="lk">'+order.map(k=>{const s=r.sources[k];if(!s)return '';return `<tr><td>${names[k]}<br><span class="${s.status}" style="font-weight:400;font-size:12px">${ICON[s.status]||''}</span></td><td><ul>${s.lines.map(l=>'<li>'+E(l)+'</li>').join('')}</ul></td></tr>`}).join('')+'</table>';
+ if(r.note)h+=`<div class="msg" style="margin-top:10px">${E(r.note)}</div>`;
+ if(r.add){h+='<div class="sugg">';
+  for(const s of r.suggestions)h+=`<button class="p" onclick="addAs(${E(JSON.stringify(s.name)).replace(/&quot;/g,'&#34;')},${E(JSON.stringify(r.add.taxon)).replace(/&quot;/g,'&#34;')})" title="${E(s.reason)}">제안된 이름으로 추가: ${E(s.name)}</button><span class="mut" style="font-size:12px;margin-right:10px">${E(s.reason)}</span>`;
+  h+=`<button onclick="addAs(${E(JSON.stringify(q)).replace(/&quot;/g,'&#34;')},${E(JSON.stringify(r.add.taxon)).replace(/&quot;/g,'&#34;')})">입력한 이름 그대로 추가: ${E(q)}</button></div>`;
+  h+=`<div class="mut" style="font-size:12px;margin-top:6px">수집 기준 분류군: ${E(r.add.taxon)} (NCBI taxon ${E(r.add.taxon_id)}). 이름은 화면에 표시되는 라벨이며 수집 범위는 이 분류군이 결정합니다.</div>`}
+ else h+='<div class="msg" style="margin-top:10px;border-left-color:var(--bad)">NCBI Virus에서 바이러스 분류군을 찾지 못해 추가할 수 없습니다. 철자나 학명(예: Orthohantavirus andesense)으로 다시 입력해 보세요.</div>';
+ box.innerHTML=h}
+</script>
 <h2>변경 사항 (changeset)</h2>
 <table><tr><th>#</th><th>바이러스</th><th>생성</th><th>상태</th><th>신규/변경/삭제</th><th></th></tr>
 {% for c in changesets %}

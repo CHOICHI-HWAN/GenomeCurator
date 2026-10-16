@@ -43,6 +43,15 @@ main{max-width:none;padding:10px 14px}
 #gbox.max{position:fixed;inset:0;z-index:60;background:var(--bg);display:flex;flex-direction:column;padding:8px 10px}
 #gbox.max .wrap{flex:1;min-height:0}#gbox.max .gm{display:flex;flex-direction:column}
 #gbox.max .gs{flex:1;max-height:none}#gbox.max #rp{max-height:none;height:100%}
+
+.ppx{border-top:1px solid var(--bd);margin-top:6px}.ppx h6{margin:0;padding:6px 12px;font-size:12px;background:var(--th);text-transform:uppercase;letter-spacing:.04em}
+.ppx .pb{padding:6px 12px;font-size:12px}.ppx .btns{display:flex;gap:6px;flex-wrap:wrap;margin:4px 0 8px}.ppx .btns a,.ppx .btns button{font-size:12px;padding:3px 8px;border:1px solid var(--bd);border-radius:3px;background:var(--card);color:var(--acc);text-decoration:none;cursor:pointer}
+.ppx table{margin:0 0 6px}.ppx .mut-g{margin:3px 0;line-height:1.7}.ppx .mut-g b{color:var(--fg)}
+.ppx .chip2{display:inline-block;background:var(--chip);border-radius:3px;padding:0 5px;margin:1px 2px 1px 0;font-family:Consolas,monospace;font-size:11.5px}
+#ppxdrawer{position:fixed;top:0;right:0;bottom:0;width:min(920px,82vw);z-index:70;background:var(--card);border-left:1px solid var(--bd);box-shadow:-8px 0 24px rgba(0,0,0,.3);display:none;flex-direction:column}
+#ppxdrawer.on{display:flex}#ppxdrawer .dh{display:flex;gap:10px;align-items:center;padding:8px 12px;background:var(--bvg);color:#fff;font-weight:600}
+#ppxdrawer .dh a,#ppxdrawer .dh button{color:#fff;background:none;border:1px solid #fff8;border-radius:3px;padding:2px 8px;font-size:12px;text-decoration:none;cursor:pointer}
+#ppxdrawer iframe{flex:1;border:0;width:100%;background:#fff}#ppxdrawer .dn{padding:6px 12px;font-size:12px;color:var(--mut)}
 </style>
 <div id="gbox">
 <div class="tool">
@@ -86,6 +95,42 @@ function facetsHtml(){let h='';for(const f of facets){const cnt={};rows.forEach(
  h+=`<div class="fg"><b>${esc(f.label)}</b>`+sh.map(([v,n])=>`<div class="fv ${act.has(v)?'on':''}" data-k="${esc(f.k)}" data-v="${esc(v)}"><span title="${esc(v)}">${esc(v)}</span><span class="n">${n}</span></div>`).join('')
  +'</div>'}
  return h}
+
+/* ---- Pathoplexus: variants straight from the public LAPIS API (CORS-enabled) + page viewer ---- */
+const PPXB='https://lapis.pathoplexus.org',ppxCache={};
+async function ppxFetch(slug,acc){if(ppxCache[acc])return ppxCache[acc];
+ const base=`${PPXB}/${slug}/sample`,q='accessionVersion='+encodeURIComponent(acc),j=u=>fetch(u).then(r=>{if(!r.ok)throw new Error('HTTP '+r.status);return r.json()});
+ const [d,nm,am,ni]=await Promise.all([j(`${base}/details?${q}&fields=clade,lineage,totalSnps,totalDeletedNucs,totalInsertedNucs,totalAmbiguousNucs,totalUnknownNucs,totalFrameShifts,totalStopCodons,frameShifts,completeness`),
+  j(`${base}/nucleotideMutations?${q}&minProportion=0`),j(`${base}/aminoAcidMutations?${q}&minProportion=0`),j(`${base}/nucleotideInsertions?${q}`)]);
+ return ppxCache[acc]={d:(d.data||[])[0]||{},nm:nm.data||[],am:am.data||[],ni:ni.data||[]}}
+function ppxHtml(x){
+ const d=x.d,f=(k,l)=>d[k]!==undefined&&d[k]!==null&&d[k]!==''?`<tr><td>${l}</td><td>${esc(d[k])}</td></tr>`:'';
+ let h='<table>'+f('clade','Clade')+f('lineage','Lineage')+f('totalSnps','SNPs')+f('totalDeletedNucs','Deleted nt')+f('totalInsertedNucs','Inserted nt')+f('totalAmbiguousNucs','Ambiguous (N)')+f('totalFrameShifts','Frame shifts')+f('totalStopCodons','Stop codons')
+  +(d.completeness!=null?`<tr><td>Completeness</td><td>${(100*d.completeness).toFixed(1)}%</td></tr>`:'')+'</table>';
+ const subs=x.nm.filter(m=>m.mutationTo!=='-'&&m.mutationTo!=='N'&&m.mutationFrom!=='N'),dels=x.nm.filter(m=>m.mutationTo==='-').map(m=>m.position).sort((a,b)=>a-b);
+ const ranges=[];for(const p of dels){const l=ranges[ranges.length-1];if(l&&p===l[1]+1)l[1]=p;else ranges.push([p,p])}
+ if(!x.nm.length&&!x.am.length)return h+'<div class="mut">이 서열은 참조 서열 대비 변이 정보가 없습니다 (정렬되지 않았거나 지원하지 않는 organism).</div>';
+ const chips=(a,n)=>a.slice(0,n).map(t=>`<span class="chip2">${esc(t)}</span>`).join('')+(a.length>n?` <span class="mut">…외 ${a.length-n}개</span>`:'');
+ const genes={};x.am.forEach(m=>{(genes[m.sequenceName||'?']=genes[m.sequenceName||'?']||[]).push(m.mutationFrom+m.position+m.mutationTo)});
+ h+=`<div class="mut-g"><b>아미노산 변이 ${x.am.length}개</b></div>`+Object.entries(genes).sort().slice(0,40).map(([g,a])=>`<div class="mut-g"><b>${esc(g)}</b> ${chips(a,12)}</div>`).join('')+(Object.keys(genes).length>40?'<div class="mut">…유전자 일부만 표시</div>':'');
+ h+=`<div class="mut-g"><b>염기 치환 ${subs.length}개</b> ${chips(subs.map(m=>m.mutationFrom+m.position+m.mutationTo),40)}</div>`;
+ h+=`<div class="mut-g"><b>결실 ${dels.length}nt (${ranges.length}구간)</b> ${chips(ranges.map(r=>r[0]===r[1]?r[0]:r[0]+'–'+r[1]+' ('+(r[1]-r[0]+1)+'nt)'),12)}</div>`;
+ if(x.ni.length)h+=`<div class="mut-g"><b>삽입 ${x.ni.length}개</b> ${chips(x.ni.map(i=>'ins_'+i.position+':'+(i.insertedSymbols||'').slice(0,20)+((i.insertedSymbols||'').length>20?'…':'')),8)}</div>`;
+ return h}
+function ppxSection(slug,acc){return `<div class="ppx"><h6>Pathoplexus · ${esc(acc)}</h6><div class="pb"><div class="btns"><a href="https://pathoplexus.org/seq/${esc(acc)}" target="_blank" rel="noopener">새 탭에서 열기 ↗</a>`
+ +`<button type="button" onclick="ppxOpen('${esc(acc)}')">페이지 보기 ▸</button></div><div id="ppxbox" data-acc="${esc(acc)}"><span class="mut">변이 정보 불러오는 중…</span></div></div></div>`}
+async function ppxLoad(slug,acc){const box=document.getElementById('ppxbox');if(!box)return;
+ try{const x=await ppxFetch(slug,acc);const b=document.getElementById('ppxbox');if(b&&b.dataset.acc===acc)b.innerHTML=ppxHtml(x)}
+ catch(e){const b=document.getElementById('ppxbox');if(b&&b.dataset.acc===acc)b.innerHTML='<span class="mut">Pathoplexus에서 변이 정보를 가져오지 못했습니다 ('+esc(e.message||e)+')</span>'}}
+function ppxOpen(acc){let d=document.getElementById('ppxdrawer');
+ if(!d){d=document.createElement('div');d.id='ppxdrawer';document.body.appendChild(d)}
+ const url='https://pathoplexus.org/seq/'+encodeURIComponent(acc);
+ d.innerHTML=`<div class="dh"><span style="flex:1">Pathoplexus · ${esc(acc)}</span><a href="${url}" target="_blank" rel="noopener">새 탭 ↗</a><button type="button" onclick="document.getElementById('ppxdrawer').classList.remove('on')">닫기 ✕</button></div>`
+  +`<div class="dn">Pathoplexus 사이트를 그대로 불러옵니다. 로딩이 느리거나 비어 있으면 &quot;새 탭&quot;을 사용하세요.</div><iframe src="${url}" referrerpolicy="no-referrer" loading="lazy"></iframe>`;
+ d.classList.add('on')}
+document.addEventListener('keydown',e=>{if(e.key==='Escape'){const d=document.getElementById('ppxdrawer');if(d&&d.classList.contains('on'))d.classList.remove('on')}});
+
+window.ppxOpen=ppxOpen;
 function rp(){const el=$('rp');$('b_rp').textContent=st.rpHide?'«':'»';if(st.rpHide){el.style.display='none';return}el.style.display='';
  const n=st.sel.size;
  if(!n&&!st.cur){el.innerHTML='<h5>Nothing selected.</h5><div class="hint">표에서 행을 클릭하면 상세 정보와 값의 출처(Pathoplexus / NCBI / BV-BRC)가 여기에 표시됩니다. 체크박스로 여러 건을 선택하면 일괄 다운로드할 수 있습니다.</div>';return}
@@ -94,8 +139,9 @@ function rp(){const el=$('rp');$('b_rp').textContent=st.rpHide?'«':'»';if(st.r
  const r=st.cur;if(r&&r._diff&&r.kind==='changed'){h+='<table><tr><td colspan=2><b>변경 내용</b></td></tr>'+Object.entries(r._diff).map(([k,v])=>`<tr><td>${esc(label(k))}</td><td><s class="old">${esc(v[0]??'∅')}</s> → <b>${esc(v[1]??'∅')}</b></td></tr>`).join('')+'</table>'}
  if(r){const keys=cols.map(c=>c.k).concat(['taxon_id','taxon_lineage_names','accession','sequence_md5','sequence_hash','pathoplexus_accession','submitter','publication','segment','genotype','subtype']);
   h+='<table>'+[...new Set(keys)].filter(k=>r[k]!==null&&r[k]!==undefined&&r[k]!=='').map(k=>{const s=r._prov&&r._prov[k];
-   return `<tr><td>${esc(label(k))}</td><td>${cell(k,r)}${s?`<span class="src ${s}">${s}</span>`:''}</td></tr>`}).join('')+'</table>'}
- el.innerHTML=h}
+   return `<tr><td>${esc(label(k))}</td><td>${cell(k,r)}${s?`<span class="src ${s}">${s}</span>`:''}</td></tr>`}).join('')+'</table>';
+  if(D.ppx&&r.pathoplexus_accession)h+=ppxSection(D.ppx,r.pathoplexus_accession)}
+ el.innerHTML=h;if(r&&D.ppx&&r.pathoplexus_accession)ppxLoad(D.ppx,r.pathoplexus_accession)}
 function table(){const vc=cols.filter(c=>st.vis.has(c.k));
  $('gh').innerHTML='<tr><th><input type="checkbox" id="gall"></th>'+vc.map(c=>`<th data-s="${c.k}" class="${st.sort===c.k?'s '+(st.dir<0?'d':''):''}">${esc(c.label)}</th>`).join('')+'</tr>';
  const pages=Math.max(1,Math.ceil(view.length/st.ps));st.pg=Math.min(st.pg,pages-1);const sl=view.slice(st.pg*st.ps,(st.pg+1)*st.ps);
