@@ -178,7 +178,7 @@ def create_app(scheduler: bool = True) -> FastAPI:
     async def decide(request: Request, cid: int):
         form = await request.form()
         ids = [int(x) for x in form.getlist("item")]
-        action = form.get("action")
+        action = form.get("decision")
         if action in ("approved", "rejected", "hold"):
             curate.decide(ids, action)
         return RedirectResponse(f"/changeset/{cid}", 303)

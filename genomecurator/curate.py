@@ -226,20 +226,27 @@ def apply(changeset_id: int, progress=None) -> dict:
         stage.mkdir(parents=True, exist_ok=True)
 
         recs = {i["accession"]: json.loads(i["new_record_json"]) for i in items if i["kind"] != "removed"}
-        seqs = sources.download_ncbi_fasta(
-            [_versioned(a, r) for a, r in recs.items()],
-            lambda i, n: p(5 + 65 * i // max(n, 1), f"서열 다운로드 중… {i}/{n}")) if recs else {}
+        meta: dict[str, dict] = {}  # staged files only; sequences are never all held in memory
+        todo = [(a, _versioned(a, r)) for a, r in recs.items()]
+        for start in range(0, len(todo), 100):
+            batch = todo[start:start + 100]
+            p(5 + 65 * start // max(len(todo), 1), f"서열 다운로드 중… {start}/{len(todo)}")
+            got = sources.download_ncbi_fasta([v for _, v in batch])
+            for a, v in batch:
+                s = got.get(v)
+                if not s or (recs[a].get("genome_length") and len(s) != recs[a]["genome_length"]):
+                    raise SystemExit(f"sequence verification failed for {v}; nothing applied")
+                f = stage / f"{a}.fna"
+                f.write_text(f">{v} {recs[a].get('genome_name', '')}\n" +
+                             "\n".join(s[i:i + 70] for i in range(0, len(s), 70)) + "\n")
+                meta[a] = {"md5": hashlib.md5(s.encode()).hexdigest(), "len": len(s), "gc": _gc(s), "file": f}
         p(72, "서열 검증 완료, 파일·DB 기록 중…")
-        for a, r in recs.items():
-            s = seqs.get(_versioned(a, r))
-            if not s or (r.get("genome_length") and len(s) != r["genome_length"]):
-                raise SystemExit(f"sequence verification failed for {a}; nothing applied")
-
         taxon_dir = config.DATA_DIR / "genomes" / (w["name"].replace(" ", "_"))
         taxon_dir.mkdir(parents=True, exist_ok=True)
         snap.mkdir(parents=True, exist_ok=True)
         now = datetime.now().isoformat(timespec="seconds")
         con.execute("BEGIN")
+        next_n: dict = {}
         for it in items:
             acc, rec = it["accession"], json.loads(it["new_record_json"])
             old = con.execute("SELECT * FROM genome WHERE accession=?", (acc,)).fetchone()
@@ -253,18 +260,17 @@ def apply(changeset_id: int, progress=None) -> dict:
                 gid = old["genome_id"]
             else:
                 tid = rec.get("taxon_id") or w["taxon_id"] or 0
-                n = con.execute("SELECT COUNT(*) FROM genome WHERE genome_id LIKE ?", (f"{tid}.%",)).fetchone()[0]
-                gid = f"{tid}.{n + 1}"
-                while con.execute("SELECT 1 FROM genome WHERE genome_id=?", (gid,)).fetchone():
-                    n += 1
-                    gid = f"{tid}.{n + 1}"
-            seq = seqs[_versioned(acc, rec)]
-            md5 = hashlib.md5(seq.encode()).hexdigest()
-            rec["sequence_md5"] = md5
+                if tid not in next_n:
+                    nums = [int(r[0].split(".", 1)[1]) for r in con.execute(
+                        "SELECT genome_id FROM genome WHERE taxon_id=? OR genome_id LIKE ?", (tid, f"{tid}.%"))
+                        if r[0].split(".", 1)[1].isdigit()]
+                    next_n[tid] = max(nums, default=0)
+                next_n[tid] += 1
+                gid = f"{tid}.{next_n[tid]}"
+            m = meta[acc]
+            md5 = rec["sequence_md5"] = m["md5"]
             path = taxon_dir / f"{gid}.fna"
-            tmp = stage / f"{gid}.fna.tmp"
-            tmp.write_text(f">{_versioned(acc, rec)} {rec.get('genome_name', '')}\n" +
-                           "\n".join(seq[i:i + 70] for i in range(0, len(seq), 70)) + "\n")
+            tmp = m["file"]
             if path.exists():
                 bak = snap / path.name
                 shutil.copy2(path, bak)
@@ -282,7 +288,7 @@ def apply(changeset_id: int, progress=None) -> dict:
                             f" VALUES(?,?,?,{','.join('?' * len(cols))},?,?)",
                             [gid, w["id"], acc] + vals + [now, now])
             con.execute("INSERT OR REPLACE INTO genome_sequence(accession,genome_id,version,length,gc_content,md5,file_path)"
-                        " VALUES(?,?,?,?,?,?,?)", (acc, gid, rec.get("accession_version"), len(seq), _gc(seq), md5, str(path)))
+                        " VALUES(?,?,?,?,?,?,?)", (acc, gid, rec.get("accession_version"), m["len"], m["gc"], md5, str(path)))
             for f, s in json.loads(it["provenance_json"] or "{}").items():
                 con.execute("INSERT OR REPLACE INTO field_provenance(genome_id,field,source) VALUES(?,?,?)", (gid, f, s))
         con.execute("UPDATE changeset_item SET decision='applied' WHERE changeset_id=? AND decision='approved'", (changeset_id,))

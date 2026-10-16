@@ -148,7 +148,7 @@ def fetch_bvbrc(taxon_id: int | None) -> dict[str, dict]:
     offset, page = 0, 1000
     with _client() as c:
         while True:
-            r = c.get(f"{config.BVBRC_BASE}?eq(taxon_lineage_ids,{taxon_id})&limit({page},{offset})",
+            r = c.get(f"{config.BVBRC_BASE}?eq(taxon_lineage_ids,{taxon_id})&sort(+genome_id)&limit({page},{offset})",
                       headers={"Accept": "application/json"})
             r.raise_for_status()
             rows = r.json()

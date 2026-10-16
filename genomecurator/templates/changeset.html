@@ -9,7 +9,7 @@
  {% for n in summary.notes %}<span class="mut"> · ⚠ {{ n }}</span>{% endfor %}</summary>
  <table style="margin-top:6px">{% for c in dry.checks %}<tr><td>{{ c.name }}</td><td class="{{ 'READY' if c.ok else 'BLOCKED' }}">{{ 'OK' if c.ok else 'FAIL' }}</td><td>{{ c.detail }}</td></tr>{% endfor %}</table>
  <form method="post" action="/changeset/{{ cs.id }}/dryrun" style="margin-top:6px"><button>Dry-run 다시 실행</button></form></details>
-<form method="post" id="df" action="/changeset/{{ cs.id }}/decide"><input type="hidden" name="action" id="act"><div id="ids"></div></form>
+<form method="post" id="df" action="/changeset/{{ cs.id }}/decide"><input type="hidden" name="decision" id="act"><div id="ids"></div></form>
 {% set toolbar_extra %}
 <span style="width:1px;background:var(--bd);align-self:stretch;margin:0 6px"></span>
 <button class="tbn" onclick="G.selectFiltered()"><i>☑</i>Select all</button>
