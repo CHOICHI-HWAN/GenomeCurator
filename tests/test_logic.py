@@ -137,3 +137,37 @@ def test_pathoplexus_slugs_are_discovered_from_the_site(monkeypatch):
     slugs = sources.pathoplexus_organisms()
     assert "ebola-bdbv" in slugs and "andv" in slugs and "mpox" in slugs   # site links + built-in fallback list
     assert "about" not in slugs
+
+
+def test_backup_roundtrip(tmp_path, monkeypatch):
+    from genomecurator import backup, config
+    from genomecurator.db import connect
+    src = tmp_path / "src"
+    monkeypatch.setattr(config, "DATA_DIR", src)
+    monkeypatch.setattr(config, "DB_PATH", src / "g.db")
+    con = connect()
+    con.execute("INSERT INTO watchlist(id,name,taxon,taxon_id) VALUES(1,'V','V',9)")
+    con.execute("INSERT INTO genome(genome_id,watch_id,accession) VALUES('9.1',1,'AB1')")
+    con.execute("INSERT INTO changeset(id,watch_id) VALUES(5,1)")
+    con.execute("INSERT INTO changeset_item(changeset_id,accession,kind,decision) VALUES(5,'AB1','new','rejected'),(5,'AB2','new','pending')")
+    con.execute("INSERT INTO source_record(source,accession,watch_id,payload_json) VALUES('ncbi','AB1',1,'{}')")
+    fa = src / "genomes" / "V" / "9.1.fna"
+    fa.parent.mkdir(parents=True)
+    fa.write_text(">AB1.1\nACGT\n", encoding="utf-8")
+    con.execute("INSERT INTO genome_sequence(accession,genome_id,file_path) VALUES('AB1','9.1','genomes/V/9.1.fna')")
+    con.commit()
+    con.close()
+    info = backup.export_backup(tmp_path / "b.zip")
+    assert info["fasta_files"] == 1 and info["tables"]["genome"] == 1
+    dst = tmp_path / "dst"
+    monkeypatch.setattr(config, "DATA_DIR", dst)
+    monkeypatch.setattr(config, "DB_PATH", dst / "g.db")
+    backup.restore_backup(tmp_path / "b.zip")
+    db = connect()
+    assert db.execute("SELECT COUNT(*) FROM genome").fetchone()[0] == 1
+    assert [r[0] for r in db.execute("SELECT decision FROM changeset_item")] == ["rejected"]   # decisions kept, pending dropped
+    assert db.execute("SELECT COUNT(*) FROM source_record").fetchone()[0] == 0                   # re-downloadable data is not backed up
+    assert config.data_path("genomes/V/9.1.fna").read_text(encoding="utf-8") == ">AB1.1\nACGT\n"
+    import pytest
+    with pytest.raises(FileExistsError):
+        backup.restore_backup(tmp_path / "b.zip")

@@ -48,3 +48,12 @@ python scripts/build_static.py      # 로컬 DB에서 docs/index.html 재생성
 로컬 앱을 실행 중이면 http://127.0.0.1:8000/public (상단 "공개 보기")에서 같은 화면을 현재 DB 기준으로 바로 볼 수 있다. `docs/index.html`은 파일을 더블클릭해서 열어도 된다.
 
 GitHub Pages로 공개하려면 저장소 Settings → Pages → Source를 `main` 브랜치의 `/docs`로 지정한다. 차트는 CDN(Chart.js)을 쓰므로 보는 쪽에 인터넷이 필요하다.
+
+## 백업 / 복원 (PC 교체·OS 변경)
+`data/`(수집 DB·FASTA)는 용량이 커서 git에 넣지 않습니다. 옮기거나 보관할 때는 압축 백업을 만드세요.
+
+```bash
+python -m genomecurator backup my-backup.zip      # 큐레이션 결과·결정 이력·FASTA만 담는 압축 파일 (원본 응답·대기 중 항목은 제외)
+python -m genomecurator restore my-backup.zip     # 새 환경의 data 폴더로 복원 (기존 DB가 있으면 --force 필요)
+```
+백업은 `/` 경로와 UTF-8만 써서 Windows·macOS·Linux 어디서나 복원됩니다. 제외된 원본 응답·대기 중 항목은 다음 "지금 확인"에서 다시 만들어집니다.

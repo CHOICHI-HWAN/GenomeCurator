@@ -34,6 +34,11 @@ def main(argv=None):
     ap = sub.add_parser("apply", help="apply approved items of a READY changeset")
     ap.add_argument("changeset", type=int)
     ap.add_argument("--approve-all", action="store_true", help="CLI shortcut; the web page is the intended review path")
+    bk = sub.add_parser("backup", help="write a portable backup (curated data + FASTA) to a .zip")
+    bk.add_argument("path", nargs="?", default="genomecurator-backup.zip")
+    rs = sub.add_parser("restore", help="restore a backup .zip into the data folder")
+    rs.add_argument("path")
+    rs.add_argument("--force", action="store_true", help="replace an existing database")
     s = sub.add_parser("serve", help="run the web UI")
     s.add_argument("--host", default="127.0.0.1")
     s.add_argument("--port", type=int, default=8000)
@@ -60,6 +65,17 @@ def main(argv=None):
                 "SELECT id FROM changeset_item WHERE changeset_id=? AND decision='pending'", (args.changeset,))]
             curate.decide(ids, "approved")
         print(curate.apply(args.changeset))
+    elif args.cmd == "backup":
+        from . import backup
+        r = backup.export_backup(args.path)
+        print(f"backup written: {r['path']} ({r['size_mb']} MB) - tables {r['tables']}, FASTA files {r['fasta_files']}")
+    elif args.cmd == "restore":
+        from . import backup
+        try:
+            r = backup.restore_backup(args.path, force=args.force)
+        except (FileExistsError, ValueError, RuntimeError) as e:
+            raise SystemExit(str(e))
+        print(f"restored backup from {r['created']}: tables {r['tables']}, FASTA files {r['fasta_files']} -> {config.DATA_DIR}")
     elif args.cmd == "serve":
         import uvicorn
         from .web import create_app
