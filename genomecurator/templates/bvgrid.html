@@ -13,8 +13,9 @@ main{max-width:none;padding:10px 14px}
 .tbn i{font-style:normal;font-size:20px;line-height:22px}.tbn:hover{color:var(--bvg)}
 .kw{display:flex;flex-direction:column;font-size:10px;letter-spacing:.05em;color:var(--mut);text-transform:uppercase;margin:0 10px}.kw input{width:260px}
 .wrap{display:flex;background:var(--card);border:1px solid var(--bd);border-top:0}
-#fp{width:230px;flex:none;border-right:1px solid var(--bd);max-height:72vh;overflow:auto;font-size:12.5px}
-#fp .fg{padding:6px 10px;border-bottom:1px solid var(--bd)}#fp .fg>b{display:block;font-size:11px;color:var(--mut);text-transform:uppercase;margin:2px 0 4px}
+#fp{display:flex;overflow-x:auto;background:var(--card);border:1px solid var(--bd);border-top:0;font-size:12.5px}
+#fp .fg{flex:0 0 200px;max-height:150px;overflow-y:auto;padding:6px 10px;border-right:1px solid var(--bd)}#fp .fg>b{display:block;position:sticky;top:-6px;background:var(--card);font-size:11px;color:var(--mut);text-transform:uppercase;margin:0 0 4px;padding:2px 0}
+#rail{flex:none;width:22px;background:var(--bvg);display:flex;align-items:flex-start;justify-content:center;padding-top:8px}#rail button{background:none;border:0;color:#fff;font-size:16px;font-weight:700;padding:2px;cursor:pointer;line-height:1}
 .fv{display:flex;justify-content:space-between;gap:6px;padding:1px 4px;border-radius:2px;cursor:pointer}.fv:hover{background:var(--hover)}.fv.on{background:var(--bvg);color:#fff}
 .fv span:first-child{overflow:hidden;text-overflow:ellipsis;white-space:nowrap}.fv .n{opacity:.7}.more{font-size:11.5px;color:var(--acc);cursor:pointer;padding:2px 4px}
 .gm{flex:1;min-width:0}.chips{display:flex;gap:6px;flex-wrap:wrap;padding:5px 8px;border-bottom:1px solid var(--bd)}
@@ -35,13 +36,13 @@ main{max-width:none;padding:10px 14px}
 .pg .pn{cursor:pointer;color:var(--acc);padding:0 4px}.pg .pn.on{font-weight:700;color:var(--fg);text-decoration:underline}
 .cm{position:absolute;background:var(--card);border:1px solid var(--bd);padding:8px;box-shadow:0 4px 12px rgba(0,0,0,.2);z-index:5;display:none;max-height:300px;overflow:auto;text-align:left;text-transform:none;letter-spacing:0}
 .cm label{display:block;font-size:12.5px;color:var(--fg)}.cm.open{display:block}
-@media(max-width:1000px){ #rp{display:none}}@media(max-width:700px){ #fp{display:none}}
+@media(max-width:1000px){ #rp,#rail{display:none}}
 .gt td.chg{background:rgba(210,153,34,.22)}.gt td.chg i{display:block;font-size:11px;text-decoration:line-through;color:var(--bad);font-style:normal}
 .new,.approved,.applied{color:var(--ok)}.removed,.rejected{color:var(--bad)}.changed,.hold,.pending{color:var(--warn)}
 #rp s.old{color:var(--bad)}
 #gbox.max{position:fixed;inset:0;z-index:60;background:var(--bg);display:flex;flex-direction:column;padding:8px 10px}
 #gbox.max .wrap{flex:1;min-height:0}#gbox.max .gm{display:flex;flex-direction:column}
-#gbox.max .gs{flex:1;max-height:none}#gbox.max #fp,#gbox.max #rp{max-height:none;height:100%}
+#gbox.max .gs{flex:1;max-height:none}#gbox.max #rp{max-height:none;height:100%}
 </style>
 <div id="gbox">
 <div class="tool">
@@ -53,9 +54,10 @@ main{max-width:none;padding:10px 14px}
  <button class="tbn" id="b_max" onclick="G.max()" title="표를 전체 화면으로 (Esc로 복귀)"><i>⤢</i>Maximize</button>
  {{ toolbar_extra|default('')|safe }}
  <span style="flex:1"></span><span class="mut" id="gcount" style="font-size:12px"></span></div>
-<div class="wrap"><aside id="fp"></aside>
+<div id="fp"></div>
+<div class="wrap">
  <div class="gm"><div class="chips" id="chips" style="display:none"></div><div class="gs"><table class="gt"><thead id="gh"></thead><tbody id="gb"></tbody></table></div></div>
- <aside id="rp"></aside></div>
+ <aside id="rp"></aside><div id="rail"><button type="button" id="b_rp" title="Genome detail 숨기기/보이기" onclick="G.toggleRp()">»</button></div></div>
 <div class="pg"><span id="gres"></span><span style="flex:1"></span><span class="pn" onclick="G.page(-1)">◀</span><span id="gpages"></span><span class="pn" onclick="G.page(1)">▶</span>
  <select id="gps" onchange="G.size(this.value)"><option>25</option><option>50</option><option selected>100</option><option>250</option></select> 행</div>
 </div>
@@ -65,7 +67,7 @@ main{max-width:none;padding:10px 14px}
 const G=(()=>{
 const D=JSON.parse(document.getElementById('gdata').textContent),rows=D.rows,cols=D.cols,facets=D.facets;
 rows.forEach(r=>{r.collection_year=(r.collection_date||'').slice(0,4)||'(없음)'});
-const st={f:{},q:'',sort:null,dir:1,pg:0,ps:100,vis:new Set(cols.filter(c=>c.on).map(c=>c.k)),cur:null,sel:new Set(),panel:true};
+const st={f:{},q:'',sort:null,dir:1,pg:0,ps:100,vis:new Set(cols.filter(c=>c.on).map(c=>c.k)),cur:null,sel:new Set(),panel:true,rpHide:(()=>{try{return localStorage.getItem('gcRp')==='0'}catch(e){return false}})()};
 const $=id=>document.getElementById(id),esc=s=>String(s??'').replace(/[&<>"]/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c]));
 const val=(r,k)=>{const v=r[k];return v===null||v===undefined||v===''?'(없음)':String(v)};
 const label=k=>(cols.find(c=>c.k===k)||{label:k}).label;
@@ -80,11 +82,11 @@ function filt(){view=rows.filter(r=>match(r));if(st.sort){const k=st.sort,d=st.d
  const nx=parseFloat(x),ny=parseFloat(y);if(!isNaN(nx)&&!isNaN(ny)&&String(nx)==String(x))return(nx-ny)*d;return String(x).localeCompare(String(y))*d})}}
 function facetsHtml(){let h='';for(const f of facets){const cnt={};rows.forEach(r=>{if(match(r,f.k)){const v=val(r,f.k);cnt[v]=(cnt[v]||0)+1}});
  const act=st.f[f.k]||new Set();act.forEach(v=>{if(!(v in cnt))cnt[v]=0});const e=Object.entries(cnt).sort((a,b)=>b[1]-a[1]||a[0].localeCompare(b[0]));if(!e.length)continue;
- const open=st['m'+f.k],sh=open?e:e.slice(0,8);
+ const sh=e;
  h+=`<div class="fg"><b>${esc(f.label)}</b>`+sh.map(([v,n])=>`<div class="fv ${act.has(v)?'on':''}" data-k="${esc(f.k)}" data-v="${esc(v)}"><span title="${esc(v)}">${esc(v)}</span><span class="n">${n}</span></div>`).join('')
- +(e.length>8?`<div class="more" data-more="${esc(f.k)}">${open?'접기':`+${e.length-8}개 더 보기`}</div>`:'')+'</div>'}
+ +'</div>'}
  return h}
-function rp(){const el=$('rp');if(!st.panel){el.style.display='none';return}el.style.display='';
+function rp(){const el=$('rp');$('b_rp').textContent=st.rpHide?'«':'»';if(st.rpHide){el.style.display='none';return}el.style.display='';
  const n=st.sel.size;
  if(!n&&!st.cur){el.innerHTML='<h5>Nothing selected.</h5><div class="hint">표에서 행을 클릭하면 상세 정보와 값의 출처(Pathoplexus / NCBI / BV-BRC)가 여기에 표시됩니다. 체크박스로 여러 건을 선택하면 일괄 다운로드할 수 있습니다.</div>';return}
  let h=`<h5>${n?n+' genome'+(n>1?'s':'')+' selected':'Genome detail'}</h5>`;
@@ -125,7 +127,8 @@ new URLSearchParams(location.search).getAll('f').forEach(s=>{const i=s.indexOf('
 document.addEventListener('keydown',e=>{if(e.key==='Escape'&&document.getElementById('gbox').classList.contains('max'))G.max()});
 draw();
 const dl=(name,text,type)=>{const a=document.createElement('a');a.href=URL.createObjectURL(new Blob([text],{type}));a.download=name;a.click()};
-return{max(){const b=document.getElementById('gbox'),on=b.classList.toggle('max');document.body.style.overflow=on?'hidden':'';
+return{toggleRp(){st.rpHide=!st.rpHide;try{localStorage.setItem('gcRp',st.rpHide?'0':'1')}catch(e){}rp()},
+ max(){const b=document.getElementById('gbox'),on=b.classList.toggle('max');document.body.style.overflow=on?'hidden':'';
   document.getElementById('b_max').innerHTML=on?'<i>⤡</i>Restore':'<i>⤢</i>Maximize'},
  clear(){st.f={};st.q='';$('gq').value='';st.pg=0;draw()},page(d){st.pg=Math.max(0,st.pg+d);table()},size(v){st.ps=+v;st.pg=0;table()},
  togglePanel(){st.panelF=st.panelF===false;draw()},
