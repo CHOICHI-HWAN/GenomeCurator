@@ -20,3 +20,19 @@ jobs:
       - run: python -m pytest -q
       - name: CLI smoke test
         run: python -m genomecurator --help
+  conda-env:
+    # the environment.yml that the README tells people to use must actually build and pass the tests
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        shell: bash -el {0}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: conda-incubator/setup-miniconda@v3
+        with:
+          environment-file: environment.yml
+          activate-environment: genomecurator
+          miniforge-version: latest
+      - run: python -m pytest -q
+      - run: python -m genomecurator --help
+
