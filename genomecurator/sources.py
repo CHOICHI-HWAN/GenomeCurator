@@ -15,7 +15,7 @@ _last_call = 0.0
 
 
 def _client() -> httpx.Client:
-    return httpx.Client(timeout=60, follow_redirects=True,
+    return httpx.Client(timeout=180, follow_redirects=True,
                         headers={"User-Agent": "GenomeCurator/0.1"})
 
 

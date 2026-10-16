@@ -208,6 +208,17 @@ def _gc(seq: str) -> float:
     return round(100 * sum(seq.count(b) for b in "GCgc") / len(seq), 3) if seq else 0.0
 
 
+def _read_staged(f, versioned: str):
+    """Sequence from a staged FASTA written by apply(), or None if missing/mismatched."""
+    try:
+        lines = f.read_text().splitlines()
+    except OSError:
+        return None
+    if not lines or not lines[0].startswith(">" + versioned + " ") and lines[0][1:] != versioned:
+        return None
+    return "".join(lines[1:])
+
+
 def apply(changeset_id: int, progress=None) -> dict:
     """Apply approved items atomically: files first (with backups), then one DB transaction."""
     p = progress or (lambda *a: None)
@@ -229,28 +240,52 @@ def apply(changeset_id: int, progress=None) -> dict:
 
         recs = {i["accession"]: json.loads(i["new_record_json"]) for i in items if i["kind"] != "removed"}
         meta: dict[str, dict] = {}  # staged files only; sequences are never all held in memory
-        todo = [(a, _versioned(a, r)) for a, r in recs.items()]
+        failed: dict[str, str] = {}
+        todo = []
+        for a, r in recs.items():  # resume: reuse files staged by an interrupted run if they still verify
+            v = _versioned(a, r)
+            f = stage / f"{a}.fna"
+            seq = _read_staged(f, v)
+            if seq is not None and (not r.get("genome_length") or len(seq) == r["genome_length"]):
+                meta[a] = {"md5": hashlib.md5(seq.encode()).hexdigest(), "len": len(seq), "gc": _gc(seq), "file": f}
+            else:
+                todo.append((a, v))
         for start in range(0, len(todo), 100):
             batch = todo[start:start + 100]
             p(5 + 65 * start // max(len(todo), 1), f"서열 다운로드 중… {start}/{len(todo)}")
-            got = sources.download_ncbi_fasta([v for _, v in batch])
+            try:
+                got = sources.download_ncbi_fasta([v for _, v in batch])
+            except Exception as e:  # one bad batch must not lose the whole run
+                for a, v in batch:
+                    failed[a] = f"download error: {e}"
+                continue
             for a, v in batch:
                 s = got.get(v)
-                if not s or (recs[a].get("genome_length") and len(s) != recs[a]["genome_length"]):
-                    raise SystemExit(f"sequence verification failed for {v}; nothing applied")
+                exp = recs[a].get("genome_length")
+                if not s:
+                    failed[a] = "not returned by NCBI"
+                    continue
+                if exp and len(s) != exp:
+                    failed[a] = f"length {len(s)} != expected {exp}"
+                    continue
                 f = stage / f"{a}.fna"
                 f.write_text(f">{v} {recs[a].get('genome_name', '')}\n" +
                              "\n".join(s[i:i + 70] for i in range(0, len(s), 70)) + "\n")
                 meta[a] = {"md5": hashlib.md5(s.encode()).hexdigest(), "len": len(s), "gc": _gc(s), "file": f}
-        p(72, "서열 검증 완료, 파일·DB 기록 중…")
+        if failed and not meta and recs:
+            raise SystemExit(f"all downloads failed, e.g. {next(iter(failed.items()))}")
+        p(72, f"서열 검증 완료 ({len(failed)}건 실패), 파일·DB 기록 중…")
         taxon_dir = config.DATA_DIR / "genomes" / (w["name"].replace(" ", "_"))
         taxon_dir.mkdir(parents=True, exist_ok=True)
         snap.mkdir(parents=True, exist_ok=True)
         now = datetime.now().isoformat(timespec="seconds")
         con.execute("BEGIN")
         next_n: dict = {}
+        done_ids = []
         for it in items:
             acc, rec = it["accession"], json.loads(it["new_record_json"])
+            if acc in failed:
+                continue
             rec = {k: ("; ".join(map(str, v)) if isinstance(v, list) else v) for k, v in rec.items()}
             old = con.execute("SELECT * FROM genome WHERE accession=?", (acc,)).fetchone()
             if old:
@@ -258,6 +293,7 @@ def apply(changeset_id: int, progress=None) -> dict:
                             (old["genome_id"], json.dumps(dict(old)), changeset_id))
             if it["kind"] == "removed":
                 con.execute("UPDATE genome SET genome_status='Removed', date_modified=? WHERE accession=?", (now, acc))
+                done_ids.append(it["id"])
                 continue
             if old:
                 gid = old["genome_id"]
@@ -294,16 +330,21 @@ def apply(changeset_id: int, progress=None) -> dict:
                         " VALUES(?,?,?,?,?,?,?)", (acc, gid, rec.get("accession_version"), m["len"], m["gc"], md5, str(path)))
             for f, s in json.loads(it["provenance_json"] or "{}").items():
                 con.execute("INSERT OR REPLACE INTO field_provenance(genome_id,field,source) VALUES(?,?,?)", (gid, f, s))
-        con.execute("UPDATE changeset_item SET decision='applied' WHERE changeset_id=? AND decision='approved'", (changeset_id,))
-        left = con.execute("SELECT COUNT(*) FROM changeset_item WHERE changeset_id=? AND decision IN ('pending','hold')",
+            done_ids.append(it["id"])
+        for i in range(0, len(done_ids), 500):
+            chunk = done_ids[i:i + 500]
+            con.execute(f"UPDATE changeset_item SET decision='applied' WHERE id IN ({','.join('?' * len(chunk))})", chunk)
+        left = con.execute("SELECT COUNT(*) FROM changeset_item WHERE changeset_id=? AND decision IN ('pending','hold','approved')",
                            (changeset_id,)).fetchone()[0]
         if not left:
             con.execute("UPDATE changeset SET status='APPLIED', applied_at=? WHERE id=?", (now, changeset_id))
-        audit(con, "apply", f"changeset {changeset_id}: {len(items)} items")
+        audit(con, "apply", f"changeset {changeset_id}: {len(done_ids)} applied, {len(failed)} failed"
+              + (f" e.g. {list(failed.items())[:3]}" if failed else ""))
         con.commit()
-        shutil.rmtree(stage, ignore_errors=True)
+        if not failed:
+            shutil.rmtree(stage, ignore_errors=True)
         p(100, "완료")
-        return {"applied": len(items), "remaining": left}
+        return {"applied": len(done_ids), "failed": failed, "remaining": left}
     except BaseException:
         con.rollback()
         for path, bak in backups:  # restore files

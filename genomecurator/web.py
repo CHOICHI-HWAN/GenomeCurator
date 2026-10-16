@@ -186,7 +186,11 @@ def create_app(scheduler: bool = True) -> FastAPI:
     def _apply_job(cid: int):
         def work(p):
             res = curate.apply(cid, progress=p)
-            return f"/history?msg={res['applied']}건 적용 완료"
+            msg = f"{res['applied']}건 적용 완료"
+            if res.get("failed"):
+                first = next(iter(res["failed"].items()))
+                msg += f", {len(res['failed'])}건 실패 (예: {first[0]} - {first[1]}). 실패 항목은 승인 상태로 남아 있으니 Apply를 다시 누르면 재시도합니다"
+            return f"/history?msg={msg}"
         return start_job(work)
 
     @app.post("/changeset/{cid}/approve_apply")

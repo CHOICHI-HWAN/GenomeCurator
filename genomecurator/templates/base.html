@@ -37,10 +37,16 @@ button.p{background:var(--acc);color:#fff;border-color:var(--acc)}
 <main>{% if msg %}<div class="msg">{{ msg }}</div>{% endif %}{% block body %}{% endblock %}</main>
 <div id="toast"><span class="x" onclick="this.parentNode.style.display='none'">✕</span><b id="tmsg"></b><div class="bar"><i id="tbar"></i></div><span class="mut" id="tpct"></span></div>
 <script>
-async function runJob(form){const T=document.getElementById("toast");T.className="";T.style.display="block";
- const set=(p,m)=>{document.getElementById("tbar").style.width=p+"%";document.getElementById("tmsg").textContent=m;document.getElementById("tpct").textContent=Math.round(p)+"%"};
- set(1,"요청 중…");let r;try{r=await (await fetch(form.action,{method:"POST",body:new URLSearchParams(new FormData(form))})).json()}catch(e){T.className="err";set(100,"요청 실패: "+e);return}
- const tick=async()=>{const j=await (await fetch("/api/job/"+r.job)).json();
-  if(j.error){T.className="err";set(100,"실패: "+j.error);return}
-  set(j.pct,j.msg);if(j.done){T.className="ok";set(100,"완료");setTimeout(()=>location.href=j.redirect,500)}else setTimeout(tick,500)};tick()}
+const TJ=document.getElementById("toast");
+const tset=(p,m)=>{document.getElementById("tbar").style.width=p+"%";document.getElementById("tmsg").textContent=m;document.getElementById("tpct").textContent=Math.round(p)+"%"};
+const store=(v)=>{try{v?localStorage.setItem("gcJob",v):localStorage.removeItem("gcJob")}catch(e){}};
+async function pollJob(id){TJ.className="";TJ.style.display="block";
+ const tick=async()=>{let j;try{const r=await fetch("/api/job/"+id);j=await r.json();if(r.status===404)j={error:"작업 정보를 찾을 수 없습니다. 서버가 재시작되어 작업이 중단되었을 수 있습니다. 다시 시도하세요. (이미 받은 서열은 이어받습니다)",done:true}}
+  catch(e){TJ.className="err";tset(100,"서버에 연결할 수 없습니다. 서버가 꺼졌는지 확인하세요.");store(null);return}
+  if(j.error){TJ.className="err";tset(100,"실패: "+j.error);store(null);return}
+  tset(j.pct,j.msg);if(j.done){TJ.className="ok";tset(100,"완료");store(null);setTimeout(()=>location.href=j.redirect,500)}else setTimeout(tick,1000)};tick()}
+async function runJob(form){TJ.className="";TJ.style.display="block";tset(1,"요청 중…");let r;
+ try{r=await (await fetch(form.getAttribute("action"),{method:"POST",body:new URLSearchParams(new FormData(form))})).json()}catch(e){TJ.className="err";tset(100,"요청 실패: "+e);return}
+ store(r.job);pollJob(r.job)}
+try{const j=localStorage.getItem("gcJob");if(j)pollJob(j)}catch(e){}
 </script></body></html>
