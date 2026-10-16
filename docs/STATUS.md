@@ -61,3 +61,7 @@ Windows에서 `git`이 PATH에 없으면 `C:\Program Files\Git\cmd\git.exe`로 �
 - `curate._needs_sequence()`: 신규(new)는 항상 FASTA를 받고, 변경(changed)은 `accession_version`/`genome_length`/`sequence_hash`가 바뀌었거나 로컬 파일이 없을 때만 받는다. 그 외 메타데이터만 바뀐 항목은 표만 갱신하고 기존 FASTA·md5를 그대로 둔다.
 - dry-run은 다운로드가 필요한 건수와 용량만 계산하고 샘플 검증하며(`sequence_plan` 항목에 건수 표시), apply 결과 메시지에 "서열을 다시 받지 않은" 건수를 알려 준다.
 - 소스가 더 이상 주지 않는 값은 changed 항목 적용 시 비워진다(그렇지 않으면 같은 변경이 매번 다시 올라온다).
+
+## 메타데이터만 먼저 반영 / 서열 나중에 받기
+- 큐레이션 화면의 **서열(FASTA)도 받기** 체크를 끄고 Apply하면 신규 항목은 `genome` 표에만 들어가고 FASTA·`genome_sequence`는 만들지 않는다(`curate.apply(fetch_sequences=False)`). 서열이 바뀌어야 하는 변경 항목은 승인 상태로 남겨 둔다.
+- 유전체 화면의 **Get FASTA**(`/genomes/sequences`)가 FASTA가 없는 유전체(선택한 것, 없으면 필터에 보이는 전체)를 받는다(`curate.fetch_missing_sequences`). 100건씩 받아 배치마다 커밋하므로 중단돼도 남은 것만 이어서 받는다. `FASTA` 필터/열(Yes/No)로 상태를 볼 수 있다.

@@ -257,8 +257,11 @@ def _read_staged(f, versioned: str):
     return "".join(lines[1:])
 
 
-def apply(changeset_id: int, progress=None) -> dict:
-    """Apply approved items atomically: files first (with backups), then one DB transaction."""
+def apply(changeset_id: int, progress=None, fetch_sequences: bool = True) -> dict:
+    """Apply approved items atomically: files first (with backups), then one DB transaction.
+
+    fetch_sequences=False applies metadata only: new records are added without a FASTA (fetch later with
+    fetch_missing_sequences) and changes that need a new sequence stay approved for a later run."""
     p = progress or (lambda *a: None)
     p(3, "적용 준비 중…")
     con = connect()
@@ -276,8 +279,11 @@ def apply(changeset_id: int, progress=None) -> dict:
         snap = config.DATA_DIR / "snapshots" / f"cs{changeset_id}-{datetime.now():%Y%m%d-%H%M%S}"
         stage.mkdir(parents=True, exist_ok=True)
 
-        recs = {i["accession"]: json.loads(i["new_record_json"]) for i in items if _needs_sequence(con, i)}
-        metaonly = {i["accession"] for i in items if i["kind"] == "changed" and i["accession"] not in recs}
+        need = {i["accession"] for i in items if _needs_sequence(con, i)}
+        recs = {i["accession"]: json.loads(i["new_record_json"]) for i in items if i["accession"] in need} if fetch_sequences else {}
+        no_fasta = {i["accession"] for i in items if i["kind"] == "new"} if not fetch_sequences else set()
+        deferred = {i["accession"] for i in items if i["kind"] == "changed" and i["accession"] in need} if not fetch_sequences else set()
+        metaonly = {i["accession"] for i in items if i["kind"] == "changed" and i["accession"] not in need}
         meta: dict[str, dict] = {}  # staged files only; sequences are never all held in memory
         failed: dict[str, str] = {}
         todo = []
@@ -323,7 +329,7 @@ def apply(changeset_id: int, progress=None) -> dict:
         done_ids = []
         for it in items:
             acc, rec = it["accession"], json.loads(it["new_record_json"])
-            if acc in failed:
+            if acc in failed or acc in deferred:
                 continue
             rec = {k: ("; ".join(map(str, v)) if isinstance(v, list) else v) for k, v in rec.items()}
             if it["kind"] == "changed":  # a value the sources no longer report is cleared, not kept forever
@@ -349,6 +355,15 @@ def apply(changeset_id: int, progress=None) -> dict:
                     next_n[tid] = max(nums, default=0)
                 next_n[tid] += 1
                 gid = f"{tid}.{next_n[tid]}"
+            if acc in no_fasta:  # metadata first; the FASTA can be fetched later
+                ncols = [c for c in GENOME_COLS if c in rec]
+                con.execute(f"INSERT INTO genome(genome_id,watch_id,accession,{','.join(ncols)},date_inserted,date_modified)"
+                            f" VALUES(?,?,?,{','.join('?' * len(ncols))},?,?)",
+                            [gid, w["id"], acc] + [rec[c] for c in ncols] + [now, now])
+                for f, src in json.loads(it["provenance_json"] or "{}").items():
+                    con.execute("INSERT OR REPLACE INTO field_provenance(genome_id,field,source) VALUES(?,?,?)", (gid, f, src))
+                done_ids.append(it["id"])
+                continue
             if acc in metaonly and old:
                 mcols = [c for c in GENOME_COLS if c in rec]
                 con.execute(f"UPDATE genome SET {','.join(c + '=?' for c in mcols)}, date_modified=? WHERE accession=?",
@@ -395,7 +410,8 @@ def apply(changeset_id: int, progress=None) -> dict:
         if not failed:
             shutil.rmtree(stage, ignore_errors=True)
         p(100, "완료")
-        return {"applied": len(done_ids), "failed": failed, "remaining": left, "metadata_only": len(metaonly - set(failed))}
+        return {"applied": len(done_ids), "failed": failed, "remaining": left, "metadata_only": len(metaonly - set(failed)),
+                "no_fasta": len(no_fasta - set(failed)), "deferred": len(deferred)}
     except BaseException:
         con.rollback()
         for path, bak in backups:  # restore files
@@ -404,5 +420,64 @@ def apply(changeset_id: int, progress=None) -> dict:
             elif os.path.exists(path):
                 os.remove(path)
         raise
+    finally:
+        con.close()
+
+
+
+def fetch_missing_sequences(watch_id: int, genome_ids: list[str] | None = None, progress=None) -> dict:
+    """Download FASTA for genomes that were applied metadata-only. Committed per batch, so an
+    interrupted run simply continues with what is still missing."""
+    p = progress or (lambda *a: None)
+    con = connect()
+    try:
+        w = con.execute("SELECT * FROM watchlist WHERE id=?", (watch_id,)).fetchone()
+        rows = con.execute(
+            "SELECT g.genome_id, g.accession, g.accession_version, g.genome_name, g.genome_length FROM genome g "
+            "LEFT JOIN genome_sequence s ON s.accession=g.accession WHERE g.watch_id=? "
+            "AND IFNULL(g.genome_status,'')!='Removed' AND (s.file_path IS NULL OR s.file_path='') ORDER BY g.genome_id",
+            (watch_id,)).fetchall()
+        if genome_ids:
+            wanted = set(genome_ids)
+            rows = [r for r in rows if r["genome_id"] in wanted]
+        if not rows:
+            return {"fetched": 0, "failed": {}, "total": 0}
+        taxon_dir = config.DATA_DIR / "genomes" / w["name"].replace(" ", "_")
+        taxon_dir.mkdir(parents=True, exist_ok=True)
+        failed: dict[str, str] = {}
+        fetched = 0
+        for start in range(0, len(rows), 100):
+            batch = rows[start:start + 100]
+            p(5 + 90 * start // len(rows), f"서열 다운로드 중… {start}/{len(rows)}")
+            ver = {r["accession"]: _versioned(r["accession"], {"accession_version": r["accession_version"]}) for r in batch}
+            try:
+                got = sources.download_ncbi_fasta(list(ver.values()))
+            except Exception as e:
+                for r in batch:
+                    failed[r["accession"]] = f"download error: {e}"
+                continue
+            for r in batch:
+                a = r["accession"]
+                s = got.get(ver[a])
+                if not s:
+                    failed[a] = "not returned by NCBI"
+                    continue
+                if r["genome_length"] and len(s) != r["genome_length"]:
+                    failed[a] = f"length {len(s)} != expected {r['genome_length']}"
+                    continue
+                path = taxon_dir / f"{r['genome_id']}.fna"
+                tmp = path.with_suffix(".fna.tmp")
+                tmp.write_text(f">{ver[a]} {r['genome_name'] or ''}\n" + "\n".join(s[i:i + 70] for i in range(0, len(s), 70)) + "\n")
+                os.replace(tmp, path)
+                md5 = hashlib.md5(s.encode()).hexdigest()
+                con.execute("INSERT OR REPLACE INTO genome_sequence(accession,genome_id,version,length,gc_content,md5,file_path)"
+                            " VALUES(?,?,?,?,?,?,?)", (a, r["genome_id"], r["accession_version"], len(s), _gc(s), md5, str(path)))
+                con.execute("UPDATE genome SET sequence_md5=? WHERE accession=?", (md5, a))
+                fetched += 1
+            con.commit()
+        audit(con, "fetch_sequences", f"{w['name']}: {fetched} fetched, {len(failed)} failed")
+        con.commit()
+        p(100, "완료")
+        return {"fetched": fetched, "failed": failed, "total": len(rows)}
     finally:
         con.close()

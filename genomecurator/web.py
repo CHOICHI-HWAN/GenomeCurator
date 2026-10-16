@@ -69,11 +69,11 @@ GN_COLS = [("genome_name", "Genome Name", True), ("strain", "Strain", True), ("g
            ("geographic_location", "Geographic Location", False), ("isolation_source", "Isolation Source", False),
            ("sra_accession", "SRA Accession", True), ("bioproject_accession", "BioProject", False),
            ("biosample_accession", "BioSample", False), ("sequencing_platform", "Sequencing Platform", False),
-           ("assembly_method", "Assembly Method", False), ("has_sra", "SRA Available", False),
+           ("assembly_method", "Assembly Method", False), ("has_sra", "SRA Available", False), ("has_fasta", "FASTA", False),
            ("genome_quality", "Genome Quality", False), ("genome_id", "Genome ID", False), ("bvbrc_genome_id", "BV-BRC ID", False),
            ("gc_content", "GC %", False), ("release_date", "Release Date", False), ("date_modified", "Modified", False)]
 GN_FACETS = [("genome_status", "Genome Status"), ("host_name", "Host"), ("isolation_country", "Country"),
-             ("collection_year", "Collection Year"), ("has_sra", "SRA"), ("genome_quality", "Quality")]
+             ("collection_year", "Collection Year"), ("has_sra", "SRA"), ("has_fasta", "FASTA"), ("genome_quality", "Quality")]
 
 
 def pending_total() -> int:
@@ -236,10 +236,14 @@ def create_app(scheduler: bool = True) -> FastAPI:
             curate.decide(ids, action)
         return RedirectResponse(f"/changeset/{cid}", 303)
 
-    def _apply_job(cid: int):
+    def _apply_job(cid: int, fetch: bool = True):
         def work(p):
-            res = curate.apply(cid, progress=p)
+            res = curate.apply(cid, progress=p, fetch_sequences=fetch)
             msg = f"{res['applied']}건 적용 완료"
+            if res.get("no_fasta"):
+                msg += f" (신규 {res['no_fasta']}건은 메타데이터만 — 유전체 화면의 'Get FASTA'로 서열을 나중에 받을 수 있음)"
+            if res.get("deferred"):
+                msg += f", 서열이 바뀐 {res['deferred']}건은 서열이 필요해 승인 상태로 남김"
             if res.get("metadata_only"):
                 msg += f" (메타데이터만 변경 {res['metadata_only']}건은 서열을 다시 받지 않음)"
             if res.get("failed"):
@@ -252,11 +256,28 @@ def create_app(scheduler: bool = True) -> FastAPI:
     async def approve_apply(request: Request, cid: int):
         form = await request.form()
         curate.decide([int(x) for x in form.getlist("item")], "approved")
-        return _apply_job(cid)
+        return _apply_job(cid, form.get("fetch_sequences", "1") != "0")
 
     @app.post("/changeset/{cid}/apply")
-    def do_apply(cid: int):
-        return _apply_job(cid)
+    async def do_apply(request: Request, cid: int):
+        form = await request.form()
+        return _apply_job(cid, form.get("fetch_sequences", "1") != "0")
+
+    @app.post("/genomes/sequences")
+    async def genomes_sequences(request: Request):
+        """Fetch FASTA for genomes that were applied metadata-only."""
+        form = await request.form()
+        watch = int(form.get("watch", 0))
+        ids = [i for i in str(form.get("ids", "")).split(",") if i]
+
+        def work(p):
+            res = curate.fetch_missing_sequences(watch, ids or None, progress=p)
+            msg = f"서열 {res['fetched']}건 다운로드 완료"
+            if res["failed"]:
+                first = next(iter(res["failed"].items()))
+                msg += f", {len(res['failed'])}건 실패 (예: {first[0]} - {first[1]})"
+            return f"/genomes?watch={watch}&msg={msg}"
+        return start_job(work)
 
     @app.post("/changeset/{cid}/dryrun")
     def rerun(cid: int):
@@ -264,7 +285,7 @@ def create_app(scheduler: bool = True) -> FastAPI:
         return RedirectResponse(f"/changeset/{cid}", 303)
 
     @app.get("/genomes")
-    def genomes(request: Request, watch: int = 0):
+    def genomes(request: Request, watch: int = 0, msg: str = ""):
         watches = _rows("SELECT w.id, w.name, w.taxon_id, (SELECT COUNT(*) FROM genome g WHERE g.watch_id=w.id) n FROM watchlist w")
         watch = current_watch(request, watch, watches)
         cur = next((w for w in watches if w["id"] == watch), None)
@@ -282,11 +303,12 @@ def create_app(scheduler: bool = True) -> FastAPI:
             r["genbank"] = f"{r['accession']}.{r['accession_version']}" if r.get("accession_version") else r["accession"]
             r["_prov"] = prov.get(r["genome_id"], {})
             r["has_sra"] = "Yes" if r.get("sra_accession") else "No"
+            r["has_fasta"] = "Yes" if r.get("md5") else "No"
         ppx = _ppx_slug(watch, rows)
         data = {"rows": rows, "name": "genomes", "watch": cur and cur["name"], "lineage": lineage, "ppx": ppx,
                 "cols": [{"k": k, "label": l, "on": on} for k, l, on in GN_COLS],
                 "facets": [{"k": k, "label": l} for k, l in GN_FACETS]}
-        return render(request, "genomes.html", data=data, nav="gen", watches=watches, watch=watch)
+        return render(request, "genomes.html", data=data, nav="gen", watches=watches, watch=watch, msg=msg)
 
     @app.post("/genomes/fasta")
     async def genomes_fasta(request: Request):
