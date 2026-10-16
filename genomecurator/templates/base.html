@@ -33,7 +33,7 @@ button.p{background:var(--acc);color:#fff;border-color:var(--acc)}
 </style></head><body>
 <header><span class="logo">Genome<i>Curator</i></span>
 <a href="/" class="{{ 'on' if nav=='cur' }}">큐레이션{% if badge %}<span class="badge">{{ badge }}</span>{% endif %}</a>
-<a href="/dashboard{{ '?watch=' ~ watch if watch }}" class="{{ 'on' if nav=='dash' }}">대시보드</a><a href="/genomes{{ '?watch=' ~ watch if watch }}" class="{{ 'on' if nav=='gen' }}">유전체</a><a href="/history" class="{{ 'on' if nav=='his' }}">이력</a><a href="/public" target="_blank" rel="noopener" style="margin-left:auto" title="공개용 읽기 전용 화면">공개 보기 ↗</a></header>
+<a href="/dashboard{{ '?watch=' ~ watch if watch }}" class="{{ 'on' if nav=='dash' }}">대시보드</a><a href="/genomes{{ '?watch=' ~ watch if watch }}" class="{{ 'on' if nav=='gen' }}">유전체</a><a href="/history" class="{{ 'on' if nav=='his' }}">이력</a><a href="/public" target="_blank" rel="noopener" style="margin-left:auto" title="공개용 읽기 전용 화면">공개 보기 ↗</a><button id="deploybtn" type="button" onclick="deploy()" title="현재 데이터를 공개 사이트(GitHub Pages)에 게시" style="background:#76a72b;border-color:#76a72b;color:#fff;margin-left:6px">배포하기</button></header>
 <main>{% if msg %}<div class="msg">{{ msg }}</div>{% endif %}{% block body %}{% endblock %}</main>
 <div id="toast"><span class="x" onclick="this.parentNode.style.display='none'">✕</span><b id="tmsg"></b><div class="bar"><i id="tbar"></i></div><span class="mut" id="tpct"></span></div>
 <script>
@@ -49,4 +49,21 @@ async function runJob(form){TJ.className="";TJ.style.display="block";tset(1,"요
  try{r=await (await fetch(form.getAttribute("action"),{method:"POST",body:new URLSearchParams(new FormData(form))})).json()}catch(e){TJ.className="err";tset(100,"요청 실패: "+e);return}
  store(r.job);pollJob(r.job)}
 try{const j=localStorage.getItem("gcJob");if(j)pollJob(j)}catch(e){}
+async function deploy(){const b=document.getElementById("deploybtn");b.disabled=true;let p;
+ try{p=await (await fetch("/api/deploy/preview")).json()}catch(e){alert("미리보기 실패: "+e);b.disabled=false;return}
+ b.disabled=false;if(p.error){alert(p.error);return}
+ if(!p.changed){alert("이미 최신 상태입니다. 마지막 게시 이후 바뀐 데이터가 없습니다.
+
+"+p.names.join("
+"));return}
+ if(!confirm("공개 사이트에 게시합니다 (누구나 볼 수 있습니다).
+
+바이러스 "+p.viruses+"종 · 유전체 "+p.genomes+"건
+"+p.names.join("
+")+"
+
+게시 위치: "+(p.pages_url||"GitHub Pages")+"
+
+계속할까요?"))return;
+ const f=document.createElement("form");f.action="/deploy";f.method="post";runJob(f)}
 </script></body></html>

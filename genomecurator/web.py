@@ -315,6 +315,28 @@ def create_app(scheduler: bool = True) -> FastAPI:
         return render(request, "dashboard.html", nav="dash", watches=watches, watch=watch,
                       data=dashboard_data(g, prov, last[0]["last_checked"] if last else None))
 
+    @app.get("/api/deploy/preview")
+    def deploy_preview():
+        from . import deploy
+        try:
+            return deploy.preview()
+        except Exception as e:
+            return JSONResponse({"error": str(e)}, 400)
+
+    @app.post("/deploy")
+    def deploy_now(request: Request):
+        """Build docs/index.html from the local DB, commit it and push (GitHub Pages)."""
+        from urllib.parse import urlparse
+
+        from . import deploy
+        origin = request.headers.get("origin")
+        if origin and urlparse(origin).netloc != request.headers.get("host"):
+            return JSONResponse({"error": "cross-site request refused"}, 403)
+
+        def work(p):
+            return "/?msg=" + deploy.publish(p)
+        return start_job(work)
+
     @app.get("/public")
     def public_view():
         """The same read-only page as docs/index.html, built live from the local database."""
