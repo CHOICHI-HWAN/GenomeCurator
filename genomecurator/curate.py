@@ -38,6 +38,8 @@ def merge(per_source: dict[str, dict[str, dict]]) -> dict[str, tuple[dict, dict]
         rec, prov = {}, {}
         for src in config.SOURCE_PRIORITY:
             for k, v in per_source.get(src, {}).get(acc, {}).items():
+                if isinstance(v, (list, tuple, set)):  # sources occasionally return arrays (e.g. segment)
+                    v = "; ".join(str(x) for x in v)
                 if k not in rec and v not in (None, ""):
                     rec[k], prov[k] = v, src
         merged[acc] = (rec, prov)
@@ -249,6 +251,7 @@ def apply(changeset_id: int, progress=None) -> dict:
         next_n: dict = {}
         for it in items:
             acc, rec = it["accession"], json.loads(it["new_record_json"])
+            rec = {k: ("; ".join(map(str, v)) if isinstance(v, list) else v) for k, v in rec.items()}
             old = con.execute("SELECT * FROM genome WHERE accession=?", (acc,)).fetchone()
             if old:
                 con.execute("INSERT INTO genome_version(genome_id,snapshot_json,changeset_id) VALUES(?,?,?)",

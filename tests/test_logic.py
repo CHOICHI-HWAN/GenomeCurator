@@ -29,3 +29,9 @@ def test_diff_detects_version_and_metadata():
     d = curate._diff(old, new)
     assert d["accession_version"] == [1, 2] and "strain" in d and "host_name" not in d
     assert curate._diff(old, dict(old)) == {}
+
+
+def test_merge_coerces_list_values():
+    per = {"ncbi": {"A1": {}}, "bvbrc": {"A1": {"segment": ["L"], "strain": "x"}}}
+    rec, _ = curate.merge(per)["A1"]
+    assert rec["segment"] == "L" and rec["strain"] == "x"
