@@ -44,6 +44,6 @@ def test_base_template_script_has_no_broken_string_literals():
     t = (Path(curate.__file__).parent / "templates" / "base.html").read_text(encoding="utf-8")
     js = re.findall(r"<script>(.*?)</script>", t, re.S)[-1]
     for n, line in enumerate(js.splitlines(), 1):
-        assert len(re.findall(r'(?<!\)"', line)) % 2 == 0, f"unbalanced quotes in base.html script line {n}: {line[:80]}"
+        assert len(re.findall(r'(?<!\\)"', line)) % 2 == 0, f"unbalanced quotes in base.html script line {n}: {line[:80]}"
     for name in ("runJob", "pollJob", "deploy"):
         assert f"function {name}(" in js
