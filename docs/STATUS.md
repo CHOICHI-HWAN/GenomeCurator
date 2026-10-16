@@ -26,10 +26,14 @@ Windows에서 `git`이 PATH에 없으면 `C:\Program Files\Git\cmd\git.exe`로 �
 - check → dry-run → 승인 → apply (442건) → 재확인(변경 없음), 버전/메타데이터/삭제 감지.
 - Pathoplexus(LAPIS): organism 목록 API가 없어 `sources.PPX_KNOWN`의 slug(mpox, ebola-zaire, dengue 등, 실호출로 확인)를 NCBI taxon으로 자동 탐색한다. 필터는 `ncbiVirusTaxId`(없으면 `ncbiVirusName`). Monkeypox(10244) → `mpox` 연결 확인, 10,437건 join. Nipah/Henipavirus는 organism 없음 → 자동 건너뜀. 새 organism이 생기면 `PPX_KNOWN`에 slug 추가.
 
+## 검증된 것 (2026-10-16, Linux, conda 환경 `genomecurator`, Python 3.12)
+- `mamba create -n genomecurator -c conda-forge python=3.12 pip` 후 `pip install -e ".[dev]"`. pytest 12건 통과.
+- 웹 클릭 검증: 바이러스 추가(조회 약 48초) → 지금 확인 → 전체 선택 → 승인 → Apply로 442건 적용, 유전체 화면 표시 정상.
+- 스케줄러 동작 확인(간격 18초로 시험, audit_log에 check 기록). 백업→복원→재확인은 "no changes".
+- mpox check: Pathoplexus `mpox` 연결, NCBI 13,462 / Pathoplexus 13,436 / BV-BRC 13,647건.
+- 백업 버그 수정: 마이그레이션으로 추가된 열(assembly_method, sequencing_platform, clade 등)이 백업에서 빠지던 문제(`db.migrate`).
+
 ## 미완료 / 다음 작업
-- 웹에서 `전체 승인 + 적용` 실제 클릭 검증 (코드 경로는 CLI로 검증됨)
-- 스케줄러(`GC_CHECK_INTERVAL_HOURS`) 실동작 확인
-- 웹 UI 화면 스크린샷 확인 (스프레드시트형으로 변경 후 미확인)
 - Pathoplexus 대상 바이러스 추가 시 `config.PATHOPLEXUS_ORGANISMS` 설정과 필드 매핑 검증
 - genome_feature(주석), 재개 가능한 다운로드, 로깅
 

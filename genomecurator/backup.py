@@ -24,6 +24,7 @@ def _compact_db(dest: Path) -> dict:
         dest.unlink()
     out = sqlite3.connect(dest)
     out.executescript(db.SCHEMA)
+    db.migrate(out)
     out.execute("ATTACH DATABASE ? AS src", (str(config.DB_PATH),))
     counts = {}
     for t in KEEP_TABLES:

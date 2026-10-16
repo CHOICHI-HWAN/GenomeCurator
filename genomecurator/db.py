@@ -51,6 +51,18 @@ CREATE TABLE IF NOT EXISTS audit_log(
 """
 
 
+def migrate(con: sqlite3.Connection) -> None:
+    """Add columns introduced after the base SCHEMA (also used to build backup copies)."""
+    have = {r[1] for r in con.execute("PRAGMA table_info(genome)")}
+    for col in ("sra_accession", "bioproject_accession", "biosample_accession", "assembly_method", "sequencing_platform",
+                "clade", "lineage", "serotype", "outbreak"):
+        if col not in have:
+            con.execute(f"ALTER TABLE genome ADD COLUMN {col} TEXT")
+    wcols = {r[1] for r in con.execute("PRAGMA table_info(watchlist)")}
+    if "pathoplexus_organism" not in wcols:
+        con.execute("ALTER TABLE watchlist ADD COLUMN pathoplexus_organism TEXT")
+
+
 def connect() -> sqlite3.Connection:
     config.DATA_DIR.mkdir(parents=True, exist_ok=True)
     con = sqlite3.connect(config.DB_PATH, timeout=30)
@@ -61,14 +73,7 @@ def connect() -> sqlite3.Connection:
         pass
     con.execute("PRAGMA foreign_keys=ON")
     con.executescript(SCHEMA)
-    have = {r[1] for r in con.execute("PRAGMA table_info(genome)")}
-    for col in ("sra_accession", "bioproject_accession", "biosample_accession", "assembly_method", "sequencing_platform",
-                "clade", "lineage", "serotype", "outbreak"):
-        if col not in have:
-            con.execute(f"ALTER TABLE genome ADD COLUMN {col} TEXT")
-    wcols = {r[1] for r in con.execute("PRAGMA table_info(watchlist)")}
-    if "pathoplexus_organism" not in wcols:
-        con.execute("ALTER TABLE watchlist ADD COLUMN pathoplexus_organism TEXT")
+    migrate(con)
     con.commit()
     return con
 

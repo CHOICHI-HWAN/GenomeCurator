@@ -147,7 +147,7 @@ def test_backup_roundtrip(tmp_path, monkeypatch):
     monkeypatch.setattr(config, "DB_PATH", src / "g.db")
     con = connect()
     con.execute("INSERT INTO watchlist(id,name,taxon,taxon_id) VALUES(1,'V','V',9)")
-    con.execute("INSERT INTO genome(genome_id,watch_id,accession) VALUES('9.1',1,'AB1')")
+    con.execute("INSERT INTO genome(genome_id,watch_id,accession,assembly_method,clade) VALUES('9.1',1,'AB1','spades','Ia')")
     con.execute("INSERT INTO changeset(id,watch_id) VALUES(5,1)")
     con.execute("INSERT INTO changeset_item(changeset_id,accession,kind,decision) VALUES(5,'AB1','new','rejected'),(5,'AB2','new','pending')")
     con.execute("INSERT INTO source_record(source,accession,watch_id,payload_json) VALUES('ncbi','AB1',1,'{}')")
@@ -165,6 +165,7 @@ def test_backup_roundtrip(tmp_path, monkeypatch):
     backup.restore_backup(tmp_path / "b.zip")
     db = connect()
     assert db.execute("SELECT COUNT(*) FROM genome").fetchone()[0] == 1
+    assert tuple(db.execute("SELECT assembly_method, clade FROM genome").fetchone()) == ("spades", "Ia")   # migrated columns survive
     assert [r[0] for r in db.execute("SELECT decision FROM changeset_item")] == ["rejected"]   # decisions kept, pending dropped
     assert db.execute("SELECT COUNT(*) FROM source_record").fetchone()[0] == 0                   # re-downloadable data is not backed up
     assert config.data_path("genomes/V/9.1.fna").read_text(encoding="utf-8") == ">AB1.1\nACGT\n"
