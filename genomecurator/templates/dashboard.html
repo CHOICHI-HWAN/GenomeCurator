@@ -1,15 +1,11 @@
 {% extends "base.html" %}{% block body %}
 <style>
-.cards{display:grid;grid-template-columns:repeat(auto-fit,minmax(170px,1fr));gap:12px;margin-bottom:14px}
-.kpi{background:var(--card);border:1px solid var(--bd);border-top:3px solid var(--acc);border-radius:4px;padding:10px 14px}
-.kpi b{display:block;font-size:26px;line-height:1.2}.kpi span{color:var(--mut);font-size:12.5px}
 .charts{display:grid;grid-template-columns:repeat(auto-fit,minmax(420px,1fr));gap:14px}
 .ch{background:var(--card);border:1px solid var(--bd);border-radius:4px;padding:10px 14px}
 .ch h4{margin:0 0 6px;font-size:14px}.ch small{color:var(--mut);font-weight:400}.ch div{position:relative;height:260px}
-.top{display:flex;gap:12px;align-items:center;margin-bottom:12px}
 @media(max-width:520px){.charts{grid-template-columns:1fr}}
 </style>
-<div class="top"><h2 style="margin:0">대시보드</h2>
+<div class="pagehead"><h2>대시보드</h2>
 <select onchange="location.href='/dashboard?watch='+this.value">{% for w in watches %}<option value="{{ w.id }}" {{ 'selected' if w.id==watch }}>{{ w.name }} ({{ w.n }})</option>{% endfor %}</select></div>
 {% if not data.total %}<div class="card mut">이 바이러스에는 아직 반영된 유전체가 없습니다. 큐레이션 페이지에서 승인 후 적용하면 차트가 채워집니다.</div>{% else %}
 <div class="cards" id="kpis"></div>

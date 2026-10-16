@@ -12,15 +12,22 @@ header .logo{font-weight:700;font-size:18px;margin-right:22px;letter-spacing:.2p
 header a{color:#cfe3f5;text-decoration:none;padding:14px 12px;font-size:14px;border-bottom:3px solid transparent}
 header a:hover{color:#fff}header a.on{color:#fff;border-bottom-color:#8fd0ff}
 .badge{background:var(--bad);color:#fff;border-radius:10px;padding:0 7px;font-size:12px;margin-left:4px}
-main{max-width:1500px;margin:0 auto;padding:18px 20px}
-h2{font-size:20px;font-weight:600;margin:4px 0 12px}h3{font-size:15px;margin:18px 0 8px}
+main{max-width:none;margin:0;padding:14px 18px}
+h1,h2{font-size:19px;font-weight:600;margin:2px 0 12px}h3{font-size:15px;font-weight:600;margin:20px 0 8px}
+.pagehead{display:flex;gap:12px;align-items:center;flex-wrap:wrap;margin:0 0 12px}.pagehead h2{margin:0}
+.cards{display:grid;grid-template-columns:repeat(auto-fit,minmax(190px,1fr));gap:12px;margin-bottom:14px}
+.kpi{background:var(--card);border:1px solid var(--bd);border-top:3px solid var(--acc);border-radius:4px;padding:10px 14px}
+.kpi b{display:block;font-size:26px;line-height:1.2;font-variant-numeric:tabular-nums}.kpi span,.kpi small{display:block;color:var(--mut);font-size:12.5px}
+.nw{white-space:nowrap}
 .card{background:var(--card);border:1px solid var(--bd);border-radius:4px;padding:12px 14px;margin-bottom:14px}
-table{width:100%;border-collapse:collapse;background:var(--card);border:1px solid var(--bd)}
+table{width:100%;border-collapse:collapse;background:var(--card);border:1px solid var(--bd);font-size:13px}
 th,td{padding:6px 10px;border-bottom:1px solid var(--bd);text-align:left;vertical-align:top}
 th{background:var(--th);font-weight:600;font-size:12.5px}
 .pill{border-radius:10px;padding:1px 9px;font-size:12px;border:1px solid currentColor;font-weight:600}
 .READY,.applied,.approved,.new,.Complete{color:var(--ok)}.BLOCKED,.rejected,.removed{color:var(--bad)}.hold,.changed,.pending{color:var(--warn)}
-button,input,select{font:inherit;padding:4px 11px;border:1px solid var(--bd);border-radius:3px;background:var(--card);color:var(--fg)}
+button,input,select{font:inherit;font-size:13px;height:30px;padding:0 11px;border:1px solid var(--bd);border-radius:3px;background:var(--card);color:var(--fg)}
+input[type=checkbox],input[type=radio]{height:auto;padding:0;margin:0 4px 0 0;accent-color:var(--acc)}
+button.tbn,.tbn{height:auto}
 button{cursor:pointer}button:hover{border-color:var(--acc)}button:disabled{opacity:.45;cursor:not-allowed}
 button.p{background:var(--acc);color:#fff;border-color:var(--acc)}
 .msg{padding:8px 12px;background:var(--chip);border-left:4px solid var(--acc);margin-bottom:12px}

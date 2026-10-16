@@ -1,5 +1,4 @@
 <style>
-main{max-width:none;padding:10px 14px}
 :root{--bvg:#76a72b}
 .bvh{display:flex;gap:10px;align-items:center;margin-bottom:6px}
 .bvh .ico{width:26px;height:26px;background:var(--bvg);color:#fff;border-radius:3px;display:flex;align-items:center;justify-content:center;font-weight:700}
@@ -14,9 +13,9 @@ main{max-width:none;padding:10px 14px}
 .kw{display:flex;flex-direction:column;font-size:10px;letter-spacing:.05em;color:var(--mut);text-transform:uppercase;margin:0 10px}.kw input{width:260px}
 .wrap{display:flex;background:var(--card);border:1px solid var(--bd);border-top:0}
 #fp{display:flex;overflow-x:auto;background:var(--card);border:1px solid var(--bd);border-top:0;font-size:12.5px}
-#fp .fg{flex:0 0 200px;max-height:150px;overflow-y:auto;padding:6px 10px;border-right:1px solid var(--bd)}#fp .fg>b{display:block;position:sticky;top:-6px;background:var(--card);font-size:11px;color:var(--mut);text-transform:uppercase;margin:0 0 4px;padding:2px 0}
+#fp .fg{flex:0 0 184px;max-height:96px;overflow-y:auto;padding:4px 8px;border-right:1px solid var(--bd)}#fp .fg>b{display:block;position:sticky;top:-4px;background:var(--card);font-size:11px;color:var(--mut);text-transform:uppercase;margin:0 0 2px;padding:1px 0}
 #rail{flex:none;width:22px;background:var(--bvg);display:flex;align-items:flex-start;justify-content:center;padding-top:8px}#rail button{background:none;border:0;color:#fff;font-size:16px;font-weight:700;padding:2px;cursor:pointer;line-height:1}
-.fv{display:flex;justify-content:space-between;gap:6px;padding:1px 4px;border-radius:2px;cursor:pointer}.fv:hover{background:var(--hover)}.fv.on{background:var(--bvg);color:#fff}
+.fv{display:flex;justify-content:space-between;gap:6px;padding:0 4px;line-height:1.35;border-radius:2px;cursor:pointer}.fv:hover{background:var(--hover)}.fv.on{background:var(--bvg);color:#fff}
 .fv span:first-child{overflow:hidden;text-overflow:ellipsis;white-space:nowrap}.fv .n{opacity:.7}.more{font-size:11.5px;color:var(--acc);cursor:pointer;padding:2px 4px}
 .gm{flex:1;min-width:0}.chips{display:flex;gap:6px;flex-wrap:wrap;padding:5px 8px;border-bottom:1px solid var(--bd)}
 .chip{background:var(--chip);border-radius:2px;padding:0 4px 0 8px;font-size:12px}.chip a{cursor:pointer;margin-left:4px;padding:0 4px}
@@ -26,7 +25,8 @@ main{max-width:none;padding:10px 14px}
 .gt td{padding:3px 8px;border-bottom:1px solid var(--bd);max-width:260px;overflow:hidden;text-overflow:ellipsis}
 .gt tbody tr{cursor:pointer}.gt tbody tr:hover{background:var(--hover)}.gt tr.cur{background:var(--chip)}
 .gt td.nm{color:var(--acc);font-weight:500}.Complete{color:var(--ok)}
-#rp{width:300px;flex:none;border-left:1px solid var(--bd);background:var(--stripe);font-size:12.5px;max-height:72vh;overflow:auto}
+#rp{width:var(--rpw,320px);min-width:200px;flex:none;border-left:1px solid var(--bd);background:var(--stripe);font-size:12.5px;max-height:72vh;overflow:auto}
+#rz{flex:none;width:7px;cursor:col-resize;background:var(--bd);position:relative;touch-action:none}#rz::after{content:'';position:absolute;left:2px;top:50%;height:36px;width:3px;margin-top:-18px;border-left:1px solid var(--mut);border-right:1px solid var(--mut);opacity:.6}#rz:hover,#rz.drag{background:var(--bvg)}#rz:hover::after,#rz.drag::after{border-color:#fff;opacity:1}
 #rp h5{margin:0;padding:8px 12px;font-size:13px;background:var(--bvg);color:#fff}
 #rp .hint{margin:12px;padding:10px;background:var(--card);border:1px solid var(--bd);border-radius:3px;color:var(--mut)}
 #rp table{border:0;font-size:12px}#rp td{padding:3px 10px;border-bottom:1px solid var(--bd);vertical-align:top;word-break:break-word}#rp td:first-child{color:var(--mut);width:42%}
@@ -36,7 +36,7 @@ main{max-width:none;padding:10px 14px}
 .pg .pn{cursor:pointer;color:var(--acc);padding:0 4px}.pg .pn.on{font-weight:700;color:var(--fg);text-decoration:underline}
 .cm{position:absolute;background:var(--card);border:1px solid var(--bd);padding:8px;box-shadow:0 4px 12px rgba(0,0,0,.2);z-index:5;display:none;max-height:300px;overflow:auto;text-align:left;text-transform:none;letter-spacing:0}
 .cm label{display:block;font-size:12.5px;color:var(--fg)}.cm.open{display:block}
-@media(max-width:1000px){ #rp,#rail{display:none}}
+@media(max-width:1000px){ #rp,#rail,#rz{display:none}}
 .gt td.chg{background:rgba(210,153,34,.22)}.gt td.chg i{display:block;font-size:11px;text-decoration:line-through;color:var(--bad);font-style:normal}
 .new,.approved,.applied{color:var(--ok)}.removed,.rejected{color:var(--bad)}.changed,.hold,.pending{color:var(--warn)}
 #rp s.old{color:var(--bad)}
@@ -66,7 +66,7 @@ main{max-width:none;padding:10px 14px}
 <div id="fp"></div>
 <div class="wrap">
  <div class="gm"><div class="chips" id="chips" style="display:none"></div><div class="gs"><table class="gt"><thead id="gh"></thead><tbody id="gb"></tbody></table></div></div>
- <aside id="rp"></aside><div id="rail"><button type="button" id="b_rp" title="Genome detail 숨기기/보이기" onclick="G.toggleRp()">»</button></div></div>
+ <div id="rz" title="드래그해서 상세 패널 너비 조절 · 더블클릭: 기본 너비"></div><aside id="rp"></aside><div id="rail"><button type="button" id="b_rp" title="Genome detail 숨기기/보이기" onclick="G.toggleRp()">»</button></div></div>
 <div class="pg"><span id="gres"></span><span style="flex:1"></span><span class="pn" onclick="G.page(-1)">◀</span><span id="gpages"></span><span class="pn" onclick="G.page(1)">▶</span>
  <select id="gps" onchange="G.size(this.value)"><option>25</option><option>50</option><option selected>100</option><option>250</option></select> 행</div>
 </div>
@@ -131,7 +131,7 @@ function ppxOpen(acc){let d=document.getElementById('ppxdrawer');
 document.addEventListener('keydown',e=>{if(e.key==='Escape'){const d=document.getElementById('ppxdrawer');if(d&&d.classList.contains('on'))d.classList.remove('on')}});
 
 window.ppxOpen=ppxOpen;
-function rp(){const el=$('rp');$('b_rp').textContent=st.rpHide?'«':'»';if(st.rpHide){el.style.display='none';return}el.style.display='';
+function rp(){const el=$('rp');$('rz').style.display=st.rpHide?'none':'';$('b_rp').textContent=st.rpHide?'«':'»';if(st.rpHide){el.style.display='none';return}el.style.display='';
  const n=st.sel.size;
  if(!n&&!st.cur){el.innerHTML='<h5>Nothing selected.</h5><div class="hint">표에서 행을 클릭하면 상세 정보와 값의 출처(Pathoplexus / NCBI / BV-BRC)가 여기에 표시됩니다. 체크박스로 여러 건을 선택하면 일괄 다운로드할 수 있습니다.</div>';return}
  let h=`<h5>${n?n+' genome'+(n>1?'s':'')+' selected':'Genome detail'}</h5>`;
@@ -183,4 +183,17 @@ return{toggleRp(){st.rpHide=!st.rpHide;try{localStorage.setItem('gcRp',st.rpHide
  selected:()=>[...st.sel],selectFiltered(){view.forEach(r=>st.sel.add(r.id));table();rp()},
  fasta(){$('fids').value=rows.filter(r=>st.sel.has(r.id)).map(r=>r.genome_id).join(',');$('ff').submit()}}})();
 </script>
-
+<script>
+(()=>{const box=document.getElementById('gbox'),rz=document.getElementById('rz'),rp=document.getElementById('rp'),KEY='gcRpW';
+ const clamp=w=>Math.max(200,Math.min(w,Math.floor(box.clientWidth*0.75)));
+ const set=w=>{box.style.setProperty('--rpw',clamp(w)+'px')};
+ try{const w=parseInt(localStorage.getItem(KEY));if(w)set(w)}catch(e){}
+ let sx=0,sw=0;
+ rz.addEventListener('pointerdown',e=>{sx=e.clientX;sw=rp.getBoundingClientRect().width;rz.setPointerCapture(e.pointerId);rz.classList.add('drag');document.body.style.userSelect='none';e.preventDefault()});
+ rz.addEventListener('pointermove',e=>{if(rz.classList.contains('drag'))set(sw+(sx-e.clientX))});
+ const end=e=>{if(!rz.classList.contains('drag'))return;rz.classList.remove('drag');document.body.style.userSelect='';
+  try{localStorage.setItem(KEY,String(Math.round(rp.getBoundingClientRect().width)))}catch(x){}};
+ rz.addEventListener('pointerup',end);rz.addEventListener('pointercancel',end);
+ rz.addEventListener('dblclick',()=>{box.style.removeProperty('--rpw');try{localStorage.removeItem(KEY)}catch(e){}});
+})();
+</script>

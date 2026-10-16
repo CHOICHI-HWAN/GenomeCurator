@@ -1,5 +1,7 @@
 {% extends "base.html" %}{% block body %}
-<h2>이력</h2>
-<table><tr><th>시각</th><th>작업</th><th>상세</th></tr>
-{% for l in log %}<tr><td>{{ l.ts }}</td><td>{{ l.action }}</td><td class="mut">{{ l.detail }}</td></tr>{% else %}<tr><td colspan="3" class="mut">없음</td></tr>{% endfor %}</table>
+<div class="pagehead"><h2>이력</h2><span class="mut">최근 200건</span></div>
+<table><tr><th class="nw">시각</th><th class="nw">작업</th><th>상세</th></tr>
+{% for l in log %}<tr><td class="nw">{{ l.ts }}</td><td class="nw">{{ l.action }}</td>
+<td class="mut">{% if l.detail and l.detail|length > 160 %}{{ l.detail[:160] }}… <details style="display:inline"><summary style="display:inline;cursor:pointer;color:var(--acc)">전체 보기 ({{ l.detail|length }}자)</summary>{{ l.detail }}</details>{% else %}{{ l.detail }}{% endif %}</td></tr>
+{% else %}<tr><td colspan="3" class="mut">없음</td></tr>{% endfor %}</table>
 {% endblock %}

@@ -111,3 +111,8 @@ Windows에서 `git`이 PATH에 없으면 `C:\Program Files\Git\cmd\git.exe`로 �
 - Dry-run에 `source_agreement` 항목(정보용, READY를 막지 않음)으로 불일치 건수와 예시를 남긴다.
 - 정합성 기준은 마지막 check의 `source_conflict`이므로 check 후 만들어진 changeset 기준으로 정확하다.
 
+## UI 일관성 / 상세 패널
+- 오른쪽 상세 패널(Genome detail)은 가운데 손잡이를 드래그해 너비를 조절한다(200px~창 너비의 75%, 더블클릭=기본값, localStorage `gcRpW`에 기억).
+- 필터(facet) 영역은 그룹당 높이 96px로 줄였다.
+- 모든 페이지가 같은 틀을 쓴다: 전체 너비·같은 여백(`main`), 제목+컨트롤 한 줄(`.pagehead`), 공통 KPI 카드(`.cards/.kpi`), 같은 입력·버튼 높이(30px), 표 글자 13px. 이력은 긴 상세를 160자로 줄이고 "전체 보기"로 펼친다.
+
