@@ -17,7 +17,7 @@ Python 3.10 이상과 git이 필요합니다. 저장소를 clone한 폴더에서
 직접 설치하려면 (모든 OS 공통):
 ```bash
 python -m venv .venv
-# Windows: .venv\Scriptsctivate     macOS/Linux: source .venv/bin/activate
+# Windows: .venv\Scripts\activate     macOS/Linux: source .venv/bin/activate
 pip install -e ".[dev]"
 python -m genomecurator watch-add "Henipavirus nipahense"
 python -m genomecurator serve --open          # http://127.0.0.1:8000
