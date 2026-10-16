@@ -131,11 +131,12 @@ Windows에서 `git`이 PATH에 없으면 `C:\Program Files\Git\cmd\git.exe`로 �
 ## 진행 모달
 - 오래 걸리는 작업(확인·적용·서열 검증·배포)은 화면 중앙 모달로 보여 준다: 큰 진행 막대와 퍼센트, 경과 시간, 그 아래 시각이 찍히는 로그. 작업 중에는 뒤쪽 조작을 막고(오류일 때만 닫기), 새로고침해도 이어서 보인다.
 
-## 로깅 점검 (2026-10-17) — 아직 미개선
-- 로깅 모듈 없음: `print` 1곳, 사용자 행위용 `audit_log` 12곳뿐. 레벨·파일·요청/작업 ID 없음.
-- 오류가 조용히 삼켜짐: Pathoplexus organism 발견·색인·탐색(`sources.py` 296/314/329/371/388행)과 NCBI 분류 조회(84/94/126행)가 `except: pass/continue`. 네트워크가 잠깐 끊겨도 "Pathoplexus: no records (skipped)"처럼 보이고, 그 상태로 병합하면 보강 필드가 사라져 '변경'으로 올라오고 적용 시 값이 비워질 수 있다(정합성 위험).
-- 웹 작업 오류는 메시지 문자열만 남고 traceback이 버려진다(`start_job`). 스케줄러 실패는 print 한 줄.
-- 외부 HTTP(`sources._get`)에 URL·상태코드·소요시간·재시도 기록 없음.
-- `audit()`는 호출자의 트랜잭션 안에서 쓰여 롤백되면 기록도 사라지고, 실패는 기록하지 않는다. `decide`는 항목 id 수천 개를 그대로 저장한다.
-- 모달 로그는 서버가 아닌 브라우저가 진행 메시지를 모은 것이라 새로고침하면 비워진다.
-
+## 로깅 (2026-10-17)
+- `genomecurator/log.py`: `data/logs/genomecurator.log`(5MB×5 회전, UTF-8) + 콘솔(WARNING 이상). 모든 줄에 맥락이 붙는다: `시각 레벨 모듈 [job=작업ID watch=바이러스 changeset=번호] 내용`. `GC_LOG_LEVEL`(파일, 기본 INFO), `GC_LOG_CONSOLE_LEVEL`(콘솔, 기본 WARNING). CLI·웹 시작 시 `log.setup()`.
+- 외부 HTTP는 `sources._get`이 매 시도마다 기록한다(URL은 api_key 마스킹, 상태코드, 크기, 소요 시간, 재시도·백오프). DEBUG=성공 호출, WARNING=재시도/4xx, ERROR=최종 실패.
+- 단계별 이정표(INFO): check(소스별 건수·소요 시간·대조 결과·changeset), apply(적용/실패/보류, 실패 accession별 WARNING), 서열 검증 계획·판정, 스케줄러 실행, 작업 시작·진행·완료 시간.
+- **조용히 삼키던 오류 제거**: Pathoplexus organism 색인·탐색, NCBI 계통/종 범위 조회가 실패하면 `SourceUnavailable`을 던진다. `fetch_all`은 소스가 실패하면 **확인 자체를 중단**한다(일부 소스만으로 병합하면 보강 필드가 비워질 수 있음): changeset·유전체에 아무것도 쓰지 않고 메시지와 로그만 남긴다. 소스가 단순히 비어 있는 경우만 "no records (skipped)" 노트. CLI는 traceback 대신 한 줄 오류.
+- 웹 작업(`start_job`): 작업별 로그를 서버가 보관해 모달이 그대로 보여 준다(새로고침해도 유지). 실패 시 traceback은 로그 파일에, 요약은 모달과 `audit_log`(`job_failed`)에 남는다.
+- `audit_log`: 상세는 600자로 줄이고, 실패 기록은 `audit_now`로 별도 트랜잭션에 써서 롤백돼도 남는다(`job_failed`, `scheduled_check_failed`, `command_failed`). `decide`는 id 목록 대신 건수와 범위만 저장.
+- 이력 화면 아래 **서버 로그** 보기(전체/경고 이상/오류만, 최근 N줄).
+- 알려진 점: Pathoplexus가 없는 바이러스(예: nipah)는 organism 탐색에 약 20초가 걸린다(색인 8초 + 이름 탐색 16회). 필요하면 색인 캐시를 디스크에 저장해 줄일 수 있다.

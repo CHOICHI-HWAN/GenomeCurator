@@ -60,8 +60,10 @@ const TJ=document.getElementById("toast");
 let _jt0=0,_jlast="",_jtimer=null;
 const jlog=(m,cls)=>{const l=document.getElementById("tlog"),d=document.createElement("div"),n=new Date(),z=x=>String(x).padStart(2,"0");
  d.innerHTML='<span class="t">'+z(n.getHours())+":"+z(n.getMinutes())+":"+z(n.getSeconds())+"</span>";const t=document.createElement("span");t.textContent=m;if(cls)t.className=cls;d.appendChild(t);l.appendChild(d);l.scrollTop=l.scrollHeight};
-const tset=(p,m)=>{document.getElementById("tbar").style.width=Math.max(p,3)+"%";document.getElementById("tmsg").textContent=m;document.getElementById("tpct").textContent=Math.round(p)+"%";
- if(m!==_jlast){_jlast=m;jlog(m+(p>=100||p<=1?"":"  ("+Math.round(p)+"%)"),TJ.className==="err"?"e":"")}};
+const tui=(p,m)=>{document.getElementById("tbar").style.width=Math.max(p,3)+"%";document.getElementById("tmsg").textContent=m;document.getElementById("tpct").textContent=Math.round(p)+"%"};
+const tset=(p,m)=>{tui(p,m);if(m!==_jlast){_jlast=m;jlog(m+(p>=100||p<=1?"":"  ("+Math.round(p)+"%)"),TJ.className==="err"?"e":"")}};
+const jrender=(lg)=>{const l=document.getElementById("tlog"),atEnd=l.scrollHeight-l.scrollTop-l.clientHeight<30;
+ l.innerHTML="";lg.forEach(x=>{const d=document.createElement("div"),t=document.createElement("span");t.className="t";t.textContent=x.t;const m=document.createElement("span");m.textContent=x.msg;if(x.level==="error")m.className="e";d.appendChild(t);d.appendChild(m);l.appendChild(d)});if(atEnd)l.scrollTop=l.scrollHeight};
 const jopen=()=>{TJ.className="";TJ.style.display="flex";document.getElementById("tlog").innerHTML="";_jlast="";_jt0=Date.now();clearInterval(_jtimer);
  _jtimer=setInterval(()=>{const s=Math.round((Date.now()-_jt0)/1000);document.getElementById("tel").textContent="경과 "+Math.floor(s/60)+"분 "+(s%60)+"초"},500)};
 const jclose=()=>{if(TJ.className==="err"){TJ.style.display="none";clearInterval(_jtimer)}};
@@ -69,8 +71,9 @@ const store=(v)=>{try{v?localStorage.setItem("gcJob",v):localStorage.removeItem(
 async function pollJob(id){jopen();
  const tick=async()=>{let j;try{const r=await fetch("/api/job/"+id);j=await r.json();if(r.status===404)j={error:"작업 정보를 찾을 수 없습니다. 서버가 재시작되어 작업이 중단되었을 수 있습니다. 다시 시도하세요. (이미 받은 서열은 이어받습니다)",done:true}}
   catch(e){TJ.className="err";tset(100,"서버에 연결할 수 없습니다. 서버가 꺼졌는지 확인하세요.");store(null);return}
-  if(j.error){TJ.className="err";tset(100,"실패: "+j.error);store(null);return}
-  tset(j.pct,j.msg);if(j.done){TJ.className="ok";tset(100,"완료");store(null);setTimeout(()=>location.href=j.redirect,500)}else setTimeout(tick,1000)};tick()}
+  if(j.log)jrender(j.log);
+  if(j.error){TJ.className="err";tui(100,"실패: "+j.error);store(null);return}
+  tui(j.pct,j.msg);if(j.done){TJ.className="ok";tui(100,"완료");store(null);setTimeout(()=>location.href=j.redirect,500)}else setTimeout(tick,1000)};tick()}
 async function runJob(form){jopen();tset(1,"요청 중…");let r;
  try{r=await (await fetch(form.getAttribute("action"),{method:"POST",body:new URLSearchParams(new FormData(form))})).json()}catch(e){TJ.className="err";tset(100,"요청 실패: "+e);return}
  store(r.job);pollJob(r.job)}

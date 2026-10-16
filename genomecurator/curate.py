@@ -6,7 +6,7 @@ import shutil
 from pathlib import Path
 from datetime import datetime
 
-from . import config, reconcile, seqcheck, sources
+from . import config, log, reconcile, seqcheck, sources
 from .db import audit, connect, tx
 
 GENOME_COLS = [
@@ -190,13 +190,13 @@ def delete_watch(watch_id: int) -> dict:
             if root in p.parents and p.is_file():
                 p.unlink()
                 removed += 1
-        except OSError:
-            pass
+        except OSError as e:
+            _log.warning("delete_watch: could not remove %s: %s", f, e)
     for d in {config.data_path(f).parent for f in files}:
         try:
             d.rmdir()  # only succeeds when empty
         except OSError:
-            pass
+            _log.debug("delete_watch: folder %s not empty, kept", d)
     return {**impact, "files_removed": removed}
 
 
@@ -216,6 +216,9 @@ def merge(per_source: dict[str, dict[str, dict]]) -> dict[str, tuple[dict, dict]
     return merged
 
 
+_log = log.get("curate")
+
+
 def _fingerprint(kind: str, acc: str, rec: dict) -> str:
     keep = {k: rec.get(k) for k in COMPARE}
     return hashlib.sha1(json.dumps([kind, acc, keep], sort_keys=True, default=str).encode()).hexdigest()
@@ -232,7 +235,7 @@ def _diff(old: dict | None, new: dict) -> dict:
 
 
 # ---------------------------------------------------------------------- check
-def check(watch_name: str, progress=None) -> int | None:
+def _check(watch_name: str, progress=None) -> int | None:
     """Fetch sources, diff against local DB, store a changeset (no local data change).
     Returns changeset id or None when nothing changed."""
     p = progress or (lambda *a: None)
@@ -256,8 +259,11 @@ def check(watch_name: str, progress=None) -> int | None:
         ppx = sources.pathoplexus_resolve(w["name"], w["taxon"], w["taxon_id"])
         if ppx and ppx[0] != w["pathoplexus_organism"]:
             con.execute("UPDATE watchlist SET pathoplexus_organism=? WHERE id=?", (ppx[0], w["id"]))
+        _log.info("check %r: sources %s", watch_name, {k: len(v) for k, v in per_source.items()})
         p(75, "소스 간 일치 여부 대조 중…")
         rep, conflict_rows = reconcile.analyze(per_source)
+        _log.info("check %r: reconcile cosmetic=%d conflict=%d, not in NCBI %s", watch_name, rep["totals"]["cosmetic"],
+                  rep["totals"]["conflict"], rep["coverage"]["not_in_ncbi"])
         reconcile.store(con, w["id"], rep, conflict_rows)
         con.commit()
         p(78, "로컬 데이터와 비교 중…")
@@ -303,6 +309,7 @@ def check(watch_name: str, progress=None) -> int | None:
                             " VALUES(?,?,?,?,?)", (src, acc, w["id"], json.dumps(rec), now))
         con.execute("UPDATE watchlist SET last_checked=? WHERE id=?", (now, w["id"]))
         if not fresh:
+            _log.info("check %r: no changes", watch_name)
             audit(con, "check", f"{watch_name}: no changes; {'; '.join(notes)}")
             con.commit()
             return None
@@ -323,6 +330,7 @@ def check(watch_name: str, progress=None) -> int | None:
         con.execute("UPDATE changeset SET summary_json=? WHERE id=?", (json.dumps(summary), cs))
         audit(con, "check", f"{watch_name}: changeset {cs} {summary}")
         con.commit()
+        _log.info("check %r: changeset %s created new=%d changed=%d removed=%d", watch_name, cs, summary["new"], summary["changed"], summary["removed"])
         return cs
     finally:
         con.close()
@@ -351,7 +359,7 @@ def _versioned(acc: str, rec: dict) -> str:
     return f"{acc}.{v}" if v else acc
 
 
-def dryrun(changeset_id: int, sample: int | None = None, progress=None) -> dict:
+def _dryrun(changeset_id: int, sample: int | None = None, progress=None) -> dict:
     p = progress or (lambda *a: None)
     p(92, "Dry-run: 링크·디스크 검사 중…")
     sample = sample if sample is not None else config.DRYRUN_SAMPLE_SIZE
@@ -416,7 +424,8 @@ def decide(item_ids: list[int], decision: str):
     with tx() as con:
         for i in item_ids:
             con.execute("UPDATE changeset_item SET decision=? WHERE id=? AND decision!='applied'", (decision, i))
-        audit(con, "decide", f"{decision}: {item_ids}")
+        audit(con, "decide", f"{decision}: {len(item_ids)}건" + (f" (id {min(item_ids)}~{max(item_ids)})" if item_ids else ""))
+    _log.info("decide: %d items -> %s", len(item_ids), decision)
 
 
 def _gc(seq: str) -> float:
@@ -440,7 +449,7 @@ def _read_staged(f, versioned: str):
     return "".join(lines[1:])
 
 
-def apply(changeset_id: int, progress=None, fetch_sequences: bool = True) -> dict:
+def _apply(changeset_id: int, progress=None, fetch_sequences: bool = True) -> dict:
     """Apply approved items atomically: files first (with backups), then one DB transaction.
 
     fetch_sequences=False applies metadata only: new records are added without a FASTA (fetch later with
@@ -484,6 +493,7 @@ def apply(changeset_id: int, progress=None, fetch_sequences: bool = True) -> dic
             try:
                 got = sources.download_ncbi_fasta([v for _, v in batch])
             except Exception as e:  # one bad batch must not lose the whole run
+                _log.warning("apply: sequence download failed for %d accessions (%s ... ): %s: %s", len(batch), batch[0][1], type(e).__name__, e)
                 for a, v in batch:
                     failed[a] = f"download error: {e}"
                 continue
@@ -589,12 +599,18 @@ def apply(changeset_id: int, progress=None, fetch_sequences: bool = True) -> dic
         audit(con, "apply", f"changeset {changeset_id}: {len(done_ids)} applied, {len(failed)} failed"
               + (f" e.g. {list(failed.items())[:3]}" if failed else ""))
         con.commit()
+        _log.info("apply: changeset %s: %d applied, %d failed, %d deferred", changeset_id, len(done_ids), len(failed), len(deferred))
+        for acc, why in list(failed.items())[:20]:
+            _log.warning("apply: %s failed: %s", acc, why)
+        if len(failed) > 20:
+            _log.warning("apply: ... and %d more failures", len(failed) - 20)
         if not failed:
             shutil.rmtree(stage, ignore_errors=True)
         p(100, "완료")
         return {"applied": len(done_ids), "failed": failed, "remaining": left, "metadata_only": len(metaonly - set(failed)),
                 "no_fasta": len(no_fasta - set(failed)), "deferred": len(deferred)}
-    except BaseException:
+    except BaseException as e:
+        _log.error("apply of changeset %s failed, rolling back %d files: %s: %s", changeset_id, len(backups), type(e).__name__, e, exc_info=True)
         con.rollback()
         for path, bak in backups:  # restore files
             if bak:
@@ -663,3 +679,28 @@ def fetch_missing_sequences(watch_id: int, genome_ids: list[str] | None = None, 
         return {"fetched": fetched, "failed": failed, "total": len(rows)}
     finally:
         con.close()
+
+
+def _logged(name: str, ctx_key: str, fn):
+    """Run fn with a log context, a start/finish line with duration, and a traceback on failure."""
+    import functools
+    import time
+
+    @functools.wraps(fn)
+    def run(first, *a, **kw):
+        with log.context(**{ctx_key: first}):
+            t0 = time.monotonic()
+            _log.info("%s start", name)
+            try:
+                r = fn(first, *a, **kw)
+            except BaseException as e:
+                _log.error("%s failed after %.1fs: %s: %s", name, time.monotonic() - t0, type(e).__name__, e, exc_info=not isinstance(e, SystemExit) and type(e).__name__ != "SourceUnavailable")
+                raise
+            _log.info("%s done in %.1fs", name, time.monotonic() - t0)
+            return r
+    return run
+
+
+check = _logged("check", "watch", _check)
+dryrun = _logged("dryrun", "changeset", _dryrun)
+apply = _logged("apply", "changeset", _apply)

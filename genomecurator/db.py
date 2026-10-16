@@ -133,6 +133,28 @@ def tx():
         con.close()
 
 
+AUDIT_MAX = 600
+
+
+def _short(detail: str) -> str:
+    return detail if len(detail) <= AUDIT_MAX else detail[:AUDIT_MAX] + f"… (+{len(detail) - AUDIT_MAX}자)"
+
+
 def audit(con, action: str, detail: str = ""):
-    con.execute("INSERT INTO audit_log(action, detail) VALUES(?,?)", (action, detail))
+    """Record a user-visible action inside the caller's transaction (it is rolled back with it)."""
+    con.execute("INSERT INTO audit_log(action, detail) VALUES(?,?)", (action, _short(detail)))
+
+
+def audit_now(action: str, detail: str = ""):
+    """Record immediately in its own transaction - for failures, which must survive the rollback of the failed work."""
+    try:
+        con = connect()
+        try:
+            con.execute("INSERT INTO audit_log(action, detail) VALUES(?,?)", (action, _short(detail)))
+            con.commit()
+        finally:
+            con.close()
+    except Exception:   # never let bookkeeping hide the original error
+        from . import log
+        log.get("db").exception("could not write audit_log (%s)", action)
 

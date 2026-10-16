@@ -17,8 +17,10 @@ def _utf8_console():
             pass
 
 
-def main(argv=None):
+def _main(argv=None):
     _utf8_console()
+    from . import log
+    log.setup()
     p = argparse.ArgumentParser(prog="genomecurator")
     sub = p.add_subparsers(dest="cmd", required=True)
     a = sub.add_parser("watch-add", help="register a virus (taxon name or id)")
@@ -101,6 +103,17 @@ def main(argv=None):
         if args.open:
             threading.Timer(1.5, lambda: webbrowser.open(f"http://{'127.0.0.1' if args.host in ('0.0.0.0', '::') else args.host}:{args.port}/")).start()
         uvicorn.run(create_app(scheduler=not args.no_scheduler), host=args.host, port=args.port)
+
+
+def main(argv=None):
+    from . import log, sources
+    from .db import audit_now
+    try:
+        return _main(argv)
+    except sources.SourceUnavailable as e:   # a source failed: nothing was changed; say so plainly instead of a traceback
+        log.get("cli").error("command failed: %s", e)
+        audit_now("command_failed", str(e))
+        raise SystemExit(f"오류: {e}\n(자세한 기록: {log.log_dir() / 'genomecurator.log'})") from e
 
 
 if __name__ == "__main__":

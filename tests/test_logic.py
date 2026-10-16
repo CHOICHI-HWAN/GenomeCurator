@@ -297,3 +297,50 @@ def test_seq_verdict_resolves_length_conflict(tmp_path, monkeypatch):
     ag = curate.source_agreement(1)
     assert ag["A1"]["conflict"] == {"strain"} and ag["A1"]["resolved"] == {"genome_length"} and ag["A1"]["seq"] == "same"
     assert ag["A2"]["conflict"] == {"genome_length"} and ag["A2"]["seq"] == "diff"
+
+
+def test_source_failure_stops_check_without_changes(tmp_path, monkeypatch):
+    import httpx
+    import pytest
+    from genomecurator import config, curate, sources
+    from genomecurator.db import connect
+    monkeypatch.setattr(config, "DATA_DIR", tmp_path)
+    monkeypatch.setattr(config, "DB_PATH", tmp_path / "g.db")
+    con = connect()
+    con.execute("INSERT INTO watchlist(id,name,taxon,taxon_id) VALUES(1,'V','V',9)")
+    con.commit()
+    con.close()
+    monkeypatch.setattr(sources, "ncbi_species_scope", lambda tid: None)
+    monkeypatch.setattr(sources, "fetch_ncbi", lambda taxon, filters=None: {"A1": {"genome_length": 5}})
+    def boom(*a, **k):
+        raise httpx.ConnectError("down")
+    monkeypatch.setattr(sources, "fetch_pathoplexus", boom)
+    monkeypatch.setattr(sources, "fetch_bvbrc", lambda tid: {})
+    with pytest.raises(sources.SourceUnavailable):
+        curate.check("V")
+    db = connect()
+    assert db.execute("SELECT COUNT(*) FROM changeset").fetchone()[0] == 0   # nothing was merged or recorded as changed
+    assert db.execute("SELECT COUNT(*) FROM genome").fetchone()[0] == 0
+
+
+def test_logging_context_masking_and_audit(tmp_path, monkeypatch):
+    import logging
+    from genomecurator import config, log, sources
+    from genomecurator.db import audit_now, connect
+    assert "api_key=***" in sources._mask({"api_key": "SECRET", "x": 1}) and "SECRET" not in sources._mask({"api_key": "SECRET"})
+    records = []
+    h = logging.Handler()
+    h.emit = lambda r: records.append((r, getattr(r, "ctx", None)))
+    h.addFilter(log._Context())
+    lg = logging.getLogger("genomecurator")
+    lg.addHandler(h)
+    lg.setLevel(logging.DEBUG)
+    with log.context(job="j1", watch="V"):
+        log.get("t").info("hello")
+    assert records[-1][1] == " [job=j1 watch=V]"
+    monkeypatch.setattr(config, "DATA_DIR", tmp_path)
+    monkeypatch.setattr(config, "DB_PATH", tmp_path / "g.db")
+    audit_now("x_failed", "d" * 1000)
+    detail = connect().execute("SELECT detail FROM audit_log").fetchone()[0]
+    assert len(detail) < 700 and "(+400자)" in detail
+    lg.removeHandler(h)

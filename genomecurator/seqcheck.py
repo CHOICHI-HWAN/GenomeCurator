@@ -11,11 +11,12 @@ import os
 from datetime import datetime
 from urllib.parse import quote
 
-from . import config, sources
+from . import config, log, sources
 from .db import connect
 
 SEQ_FIELDS = {"genome_length", "accession_version", "sequence_hash"}   # conflicts that may be a different sequence
 BATCH = 20
+_log = log.get("seqcheck")
 MAX_ACCESSIONS = int(os.environ.get("GC_SEQCHECK_MAX", "2000"))
 BVBRC_SEQ = "https://www.bv-brc.org/api/genome_sequence/"
 
@@ -229,6 +230,10 @@ def build_plan(watch_id: int, accessions: list[str] | None = None, progress=None
         con.commit()
     finally:
         con.close()
+    _log.info("plan watch=%s: %d accessions, states %s, download %.1f MB, %d requests, ~%ds, avoided %.0f MB", watch_id, len(accs),
+              summ["sources"], summ["bytes"] / 1e6, summ["requests"], summ["seconds"], summ["avoided_bytes"] / 1e6)
+    for src, msg in errs.items():
+        _log.error("plan: %s", msg)
     p(100, "계획 완료")
     return plan
 
@@ -255,6 +260,10 @@ def execute(watch_id: int, progress=None) -> dict:
 
     def add(acc, src, status, length=None, sha=None, ref_len=None, prefix=None, suffix=None, detail=""):
         rows.append((watch_id, acc, src, status, length, sha, ref_len, prefix, suffix, detail, now))
+        if status in ("error", "missing"):
+            _log.warning("verdict %s %s: %s %s", acc, src, status, detail)
+        elif status == "diff":
+            _log.info("verdict %s %s: diff (%s)", acc, src, detail[:160])
         if src != "ncbi":
             tally[status] += 1
 
@@ -287,16 +296,19 @@ def execute(watch_id: int, progress=None) -> dict:
         for i in range(0, len(todo), BATCH):
             batch = todo[i:i + BATCH]
             p(int(100 * i / max(len(todo), 1)), f"서열 내려받아 비교 중… {i}/{len(todo)}")
+            _log.debug("execute batch %d-%d of %d", i, i + len(batch), len(todo))
             ver = {a: items[a]["ncbi_version"] for a in batch}
             try:
                 ncbi = {k.rsplit(".", 1)[0]: _norm(s) for k, s in sources.download_ncbi_fasta([f"{a}.{v}" for a, v in ver.items()]).items()}
                 ncbi_err = ""
             except Exception as e:
+                _log.error("NCBI sequence download failed for %d accessions: %s: %s", len(batch), type(e).__name__, e, exc_info=True)
                 ncbi, ncbi_err = {}, f"NCBI 다운로드 실패: {str(e)[:120]}"
             bv_ids = {a: recs[a]["bvbrc"]["bvbrc_genome_id"] for a in batch if items[a]["sources"].get("bvbrc", {}).get("state") == "download"}
             try:
                 bv, bv_err = (_fetch_bvbrc(c, bv_ids) if bv_ids else {}), ""
             except Exception as e:
+                _log.error("BV-BRC sequence download failed for %d genomes: %s: %s", len(bv_ids), type(e).__name__, e, exc_info=True)
                 bv, bv_err = {}, f"BV-BRC 다운로드 실패: {str(e)[:120]}"
             for a in batch:
                 ref = ncbi.get(a)
@@ -327,6 +339,7 @@ def execute(watch_id: int, progress=None) -> dict:
                                         break
                             add(a, "pathoplexus", v["status"], v["length"], _sha(seq), v["ref_length"], v["prefix"], v["suffix"], v["detail"])
                     except Exception as e:
+                        _log.error("Pathoplexus sequence download failed for %s: %s: %s", a, type(e).__name__, e, exc_info=True)
                         add(a, "pathoplexus", "error", detail=f"Pathoplexus 다운로드 실패: {str(e)[:120]}")
     con = connect()
     try:
@@ -338,6 +351,7 @@ def execute(watch_id: int, progress=None) -> dict:
         con.commit()
     finally:
         con.close()
+    _log.info("execute watch=%s: %d accessions, %d downloaded, %s", watch_id, len(items), len(todo), tally)
     p(100, "서열 검증 완료")
     return {"checked": len(items), "downloaded": len(todo), **tally}
 

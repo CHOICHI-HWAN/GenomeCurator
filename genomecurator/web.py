@@ -1,5 +1,7 @@
 import json
 import threading
+import time
+import traceback
 import uuid
 from pathlib import Path
 
@@ -7,8 +9,10 @@ from fastapi import FastAPI, Form, Request
 from fastapi.responses import HTMLResponse, JSONResponse, RedirectResponse, Response
 from fastapi.templating import Jinja2Templates
 
-from . import config, curate
-from .db import connect
+from . import config, curate, log
+from .db import audit_now, connect
+
+_log = log.get("web")
 
 T = Jinja2Templates(directory=str(Path(__file__).parent / "templates"))
 JOBS: dict[str, dict] = {}
@@ -30,20 +34,45 @@ def _tsv(rows: list[dict], filename: str) -> Response:
                     headers={"Content-Disposition": f"attachment; filename={filename}"})
 
 
-def start_job(fn) -> JSONResponse:
-    """Run fn(progress) -> redirect_url in a thread; the page polls /api/job/<id> and shows a toast."""
+def start_job(fn, label: str = "job") -> JSONResponse:
+    """Run fn(progress) -> redirect_url in a thread; the page polls /api/job/<id> and shows the progress modal.
+    Each job keeps its own timestamped log (shown in the modal, so it survives a page reload); failures keep
+    their traceback in the log file and are recorded in the audit log."""
     jid = uuid.uuid4().hex[:8]
-    JOBS[jid] = {"pct": 0, "msg": "시작 중…", "done": False, "error": None, "redirect": "/"}
+    JOBS[jid] = {"pct": 0, "msg": "시작 중…", "done": False, "error": None, "redirect": "/", "label": label, "log": []}
+
+    def addlog(msg: str, level: str = "info"):
+        lg = JOBS[jid]["log"]
+        if len(lg) < 800:
+            lg.append({"t": time.strftime("%H:%M:%S"), "msg": msg, "level": level})
 
     def prog(pct, msg):
-        JOBS[jid].update(pct=pct, msg=msg)
+        j = JOBS[jid]
+        j.update(pct=pct, msg=msg)
+        if msg != j.get("last"):
+            j["last"] = msg
+            addlog(f"{msg}" + (f"  ({round(pct)}%)" if 1 < pct < 100 else ""))
+            _log.info("job %s progress %s%%: %s", label, round(pct), msg)
 
     def run():
+        log.set_context(job=jid)
+        t0 = time.monotonic()
+        _log.info("job %s started", label)
+        addlog(f"작업 시작: {label}")
         try:
             JOBS[jid]["redirect"] = fn(prog)
             JOBS[jid]["pct"] = 100
+            addlog("완료")
+            _log.info("job %s finished in %.1fs", label, time.monotonic() - t0)
         except BaseException as e:
-            JOBS[jid]["error"] = str(e) or e.__class__.__name__
+            msg = str(e) or e.__class__.__name__
+            JOBS[jid]["error"] = msg
+            tb = traceback.extract_tb(e.__traceback__)
+            where = f"{Path(tb[-1].filename).name}:{tb[-1].lineno} in {tb[-1].name}" if tb else ""
+            addlog(f"오류: {type(e).__name__}: {msg}" + (f"  [{where}]" if where else ""), "error")
+            addlog("자세한 내용(traceback)은 이력 화면의 서버 로그에 있습니다.", "error")
+            _log.error("job %s failed after %.1fs: %s: %s", label, time.monotonic() - t0, type(e).__name__, msg, exc_info=not isinstance(e, SystemExit) and type(e).__name__ != "SourceUnavailable")
+            audit_now("job_failed", f"{label} ({jid}): {type(e).__name__}: {msg}")
         JOBS[jid]["done"] = True
 
     threading.Thread(target=run, daemon=True).start()
@@ -179,6 +208,7 @@ def _item_ids(form) -> list[int]:
 
 
 def create_app(scheduler: bool = True) -> FastAPI:
+    log.setup()
     app = FastAPI(title="GenomeCurator")
 
     def pending_count():
@@ -259,7 +289,8 @@ def create_app(scheduler: bool = True) -> FastAPI:
         try:
             notes = curate.update_watch(wid, name, taxon, enabled == "1")
             msg = "저장했습니다: " + "; ".join(notes) if notes else "변경 사항이 없습니다."
-        except ValueError as e:
+        except Exception as e:
+            _log.warning("watch update failed: %s: %s", type(e).__name__, e)
             msg = f"수정 실패: {e}"
         return RedirectResponse(f"/?msg={msg}", 303)
 
@@ -305,7 +336,7 @@ def create_app(scheduler: bool = True) -> FastAPI:
                 return "/?msg=변경 사항 없음"
             curate.dryrun(cs, progress=p)
             return f"/changeset/{cs}"
-        return start_job(work)
+        return start_job(work, f"확인 {name}")
 
     @app.get("/api/job/{jid}")
     def job(jid: str):
@@ -460,7 +491,7 @@ def create_app(scheduler: bool = True) -> FastAPI:
         if not _same_origin(request):
             return JSONResponse({"error": "cross-site request refused"}, 403)
         from . import seqcheck
-        return start_job(lambda p: (seqcheck.build_plan(watch, None, progress=p), f"/integrity?watch={watch}#seq")[1])
+        return start_job(lambda p: (seqcheck.build_plan(watch, None, progress=p), f"/integrity?watch={watch}#seq")[1], "서열 검증 계획")
 
     @app.post("/integrity/seqcheck")
     def integrity_seqcheck(request: Request, watch: int = Form(0)):
@@ -468,7 +499,7 @@ def create_app(scheduler: bool = True) -> FastAPI:
         if not _same_origin(request):
             return JSONResponse({"error": "cross-site request refused"}, 403)
         from . import seqcheck
-        return start_job(lambda p: (seqcheck.execute(watch, progress=p), f"/integrity?watch={watch}#seq")[1])
+        return start_job(lambda p: (seqcheck.execute(watch, progress=p), f"/integrity?watch={watch}#seq")[1], "서열 검증 실행")
 
     @app.post("/changeset/{cid}/seqcheck")
     async def changeset_seqcheck(request: Request, cid: int):
@@ -483,7 +514,7 @@ def create_app(scheduler: bool = True) -> FastAPI:
             return JSONResponse({"error": "선택된 항목이 없습니다."}, 400)
         accs = [r["accession"] for r in _rows("SELECT accession FROM changeset_item WHERE changeset_id=? AND id IN (%s)" % ",".join("?" * len(ids)), cid, *ids)]
         wid = cs[0]["watch_id"]
-        return start_job(lambda p: (seqcheck.build_plan(wid, accs, progress=p), f"/integrity?watch={wid}#seq")[1])
+        return start_job(lambda p: (seqcheck.build_plan(wid, accs, progress=p), f"/integrity?watch={wid}#seq")[1], "선택 항목 서열 검증 계획")
 
     @app.get("/integrity")
     def integrity(request: Request, watch: int = 0, field: str = "", kind: str = "conflict", files: int = 0):
@@ -550,21 +581,24 @@ def create_app(scheduler: bool = True) -> FastAPI:
             return HTMLResponse(f"<p>{e}</p>", status_code=404)
 
     @app.get("/history")
-    def history(request: Request, msg: str = ""):
-        return render(request, "history.html", msg=msg, nav="his",
-                      log=_rows("SELECT * FROM audit_log ORDER BY id DESC LIMIT 200"))
+    def history(request: Request, msg: str = "", lvl: str = "", n: int = 200):
+        n = max(20, min(n, 2000))
+        return render(request, "history.html", msg=msg, nav="his", lvl=lvl, n=n, log_dir=str(log.log_dir()),
+                      log=_rows("SELECT * FROM audit_log ORDER BY id DESC LIMIT 200"), srv=log.tail(n, lvl))
 
     if scheduler:
         from apscheduler.schedulers.background import BackgroundScheduler
 
         def sched_job():
+            _log.info("scheduled check run (every %s h)", config.CHECK_INTERVAL_HOURS)
             for w in _rows("SELECT name FROM watchlist WHERE enabled=1"):
                 try:
                     cs = curate.check(w["name"])
                     if cs:
                         curate.dryrun(cs)
                 except BaseException as e:
-                    print("scheduled check failed:", w["name"], e)
+                    _log.error("scheduled check failed for %r: %s: %s", w["name"], type(e).__name__, e, exc_info=True)
+                    audit_now("scheduled_check_failed", f"{w['name']}: {type(e).__name__}: {e}")
 
         sched = BackgroundScheduler()
         sched.add_job(sched_job, "interval", hours=config.CHECK_INTERVAL_HOURS, id="check")

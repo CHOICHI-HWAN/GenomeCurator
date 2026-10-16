@@ -5,7 +5,8 @@ Read-only: nothing is written to the database or disk. Every source is isolated,
 service never hides the others."""
 from urllib.parse import quote
 
-from . import config, sources
+from . import config, sources, log
+_log = log.get("lookup")
 
 OLS_SEARCH = "https://www.ebi.ac.uk/ols4/api/search"
 
@@ -49,7 +50,8 @@ def _ncbi(q: str, ictv_species: list[str]) -> dict:
             try:
                 nodes = sources._ncbi_get(c, f"https://api.ncbi.nlm.nih.gov/datasets/v2/taxonomy/taxon/{quote(text)}").json().get("taxonomy_nodes", [])
                 return nodes[0].get("taxonomy") if nodes else None
-            except Exception:
+            except Exception as e:
+                _log.warning("lookup: NCBI taxonomy failed for %r: %s: %s", text, type(e).__name__, e)
                 return None
 
         found, tried = None, []
@@ -67,8 +69,8 @@ def _ncbi(q: str, ictv_species: list[str]) -> dict:
                          for x in sug.get("sci_name_and_ids", []) if x.get("group_name") == "viruses"][:5]
                 if hints:
                     found = node(str(hints[0][1]))
-            except Exception:
-                pass
+            except Exception as e:
+                _log.warning("lookup: NCBI taxon_suggest failed for %r: %s: %s", q, type(e).__name__, e)
         if not found:
             return _src("none", "NCBI Virus", ["NCBI Taxonomy에서 바이러스 분류군을 찾을 수 없음"] + [f"시도: {t}" for t in tried[:3]], taxon=None)
         tid, name, rank = int(found["tax_id"]), found["organism_name"], found.get("rank") or "no rank"
@@ -95,8 +97,8 @@ def _bvbrc(q: str, taxon_id: int | None) -> dict:
                              headers={"Accept": "application/json"})
             r.raise_for_status()
             tax = r.json()
-        except Exception:
-            pass
+        except Exception as e:
+            _log.warning("lookup: BV-BRC taxonomy failed for %r: %s: %s", q, type(e).__name__, e)
         count = None
         if taxon_id:
             r = sources._get(c, f"{config.BVBRC_BASE}?eq(taxon_lineage_ids,{taxon_id})&limit(1)&select(genome_id)",
