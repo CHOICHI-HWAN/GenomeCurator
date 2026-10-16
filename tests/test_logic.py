@@ -253,3 +253,19 @@ def test_verify_detects_problems(tmp_path, monkeypatch):
     assert res["수집일이 미래"]["count"] == 1
     assert res["FASTA 실제 길이 ≠ 기록 길이"]["count"] == 1 and res["FASTA md5 ≠ 기록 md5"]["count"] == 1
     assert res["watch가 없는 유전체"]["count"] == 0
+
+
+def test_source_agreement_marks_conflicting_items(tmp_path, monkeypatch):
+    from genomecurator import config, curate, reconcile
+    from genomecurator.db import connect
+    monkeypatch.setattr(config, "DATA_DIR", tmp_path)
+    monkeypatch.setattr(config, "DB_PATH", tmp_path / "g.db")
+    con = connect()
+    rep, rows = reconcile.analyze({"ncbi": {"A1": {"genome_length": 1, "collection_date": "2022"}, "A2": {"genome_length": 5}},
+                                   "bvbrc": {"A1": {"genome_length": 2, "collection_date": "2022-01"}, "A2": {"genome_length": 5}}})
+    reconcile.store(con, 1, rep, rows)
+    con.commit()
+    con.close()
+    ag = curate.source_agreement(1)
+    assert ag["A1"]["conflict"] == {"genome_length"} and ag["A1"]["cosmetic"] == {"collection_date"}
+    assert "A2" not in ag

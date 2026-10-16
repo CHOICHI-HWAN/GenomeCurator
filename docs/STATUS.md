@@ -105,3 +105,9 @@ Windows에서 `git`이 PATH에 없으면 `C:\Program Files\Git\cmd\git.exe`로 �
 - 실측(mpox, 2026-10-16): NCBI 13,462 / BV-BRC 13,647 / Pathoplexus 13,436. NCBI에 없어 수집 제외되는 레코드 233건(BV-BRC 208 = PDB 체인 등, Pathoplexus 25). 실제 불일치 약 2,000건(strain, genome_length, isolation_source, accession_version 156, 수집일 오타 `2202-07`/`1922-05-30`, 국가 DRC↔South Korea 등). nipah: 불일치 180건.
 - 다음 단계 후보: 불일치 해소 규칙(필드별 '더 구체적인 값' 채택), 버전 불일치 항목에서 Pathoplexus 보강 제외, Superset에 `source_conflict` 연결.
 
+## 검토 단계에서의 정합성 적용
+- changeset 화면: 상단 경고 배너(불일치 항목 수), **정합성**(일치/표기차이/불일치)·**불일치 필드** 열과 필터. 불일치만 골라 보류/거절할 수 있다.
+- 승인·Apply 시 선택 항목 중 불일치가 있으면 확인창에 건수를 보여 준다(차단은 아님, 사람이 판단).
+- Dry-run에 `source_agreement` 항목(정보용, READY를 막지 않음)으로 불일치 건수와 예시를 남긴다.
+- 정합성 기준은 마지막 check의 `source_conflict`이므로 check 후 만들어진 changeset 기준으로 정확하다.
+

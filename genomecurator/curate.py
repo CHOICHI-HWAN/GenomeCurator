@@ -51,6 +51,18 @@ def watch_impact(watch_id: int) -> dict:
         con.close()
 
 
+def source_agreement(watch_id: int) -> dict[str, dict]:
+    """{accession: {'conflict': {fields}, 'cosmetic': {fields}}} from the last check's cross-source comparison."""
+    con = connect()
+    try:
+        out: dict[str, dict] = {}
+        for acc, field, kind in con.execute("SELECT accession, field, kind FROM source_conflict WHERE watch_id=?", (watch_id,)):
+            out.setdefault(acc, {"conflict": set(), "cosmetic": set()})[kind].add(field)
+        return out
+    finally:
+        con.close()
+
+
 def changeset_impact(changeset_id: int) -> dict:
     con = connect()
     try:
@@ -335,6 +347,13 @@ def dryrun(changeset_id: int, sample: int | None = None, progress=None) -> dict:
         items = con.execute("SELECT * FROM changeset_item WHERE changeset_id=? AND kind IN ('new','changed')",
                             (changeset_id,)).fetchall()
         checks = []
+        wid = con.execute("SELECT watch_id FROM changeset WHERE id=?", (changeset_id,)).fetchone()[0]
+        agree = source_agreement(wid)
+        bad = sorted(i["accession"] for i in items if agree.get(i["accession"], {}).get("conflict"))
+        # informational: a disagreement between sources never blocks, but the reviewer must see it before approving
+        checks.append({"name": "source_agreement", "ok": True,
+                       "detail": (f"소스 간 불일치가 있는 항목 {len(bad)}건 (예: {', '.join(bad[:5])}) — 정합성 탭에서 확인 후 승인하세요"
+                                  if bad else "소스 간 불일치 없음")})
         need_dl = [i for i in items if _needs_sequence(con, i)]
         meta_only = len(items) - len(need_dl)
         recs = {i["accession"]: json.loads(i["new_record_json"]) for i in need_dl}

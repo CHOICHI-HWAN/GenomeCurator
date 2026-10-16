@@ -4,6 +4,7 @@
   <em>— 신규 <b style="color:var(--ok)">{{ summary.new }}</b> · 변경 <b style="color:var(--warn)">{{ summary.changed }}</b> · 삭제 <b style="color:var(--bad)">{{ summary.removed }}</b>
   · 소스 {% for s, n in summary.sources.items() %}{{ s }} {{ n }}{{ ', ' if not loop.last }}{% endfor %}</em></div></div></div>
 <div class="tabs"><a href="/dashboard?watch={{ watch }}">Overview</a><a href="/genomes?watch={{ watch }}">Genomes</a><a class="on">Changes</a><a href="/history">History</a></div>
+{% if n_conf %}<div class="msg" style="border-left-color:var(--warn);margin:0">⚠ 이 changeset의 <b>{{ n_conf }}건</b>은 소스(NCBI·BV-BRC·Pathoplexus) 사이에 값이 서로 다릅니다. 표의 <b>정합성</b> 열이 "불일치"인 항목은 <a href="/integrity?watch={{ watch }}">정합성 탭</a>에서 두 값을 확인한 뒤 승인하세요. 정합성 필터로 불일치 항목만 골라 보류/거절할 수도 있습니다.</div>{% endif %}
 <details class="card" style="margin:0;border-top:0;border-radius:0" {% if cs.status == 'BLOCKED' %}open{% endif %}>
  <summary>Dry-run: <b class="{{ 'READY' if cs.status == 'READY' else 'BLOCKED' }}">{{ 'OK' if cs.status == 'READY' else cs.status }}</b>
  {% for n in summary.notes %}<span class="mut"> · ⚠ {{ n }}</span>{% endfor %}</summary>
@@ -29,11 +30,13 @@ async function delCs(){const i=await (await fetch('/api/changeset/{{ cs.id }}/im
  if(i.rejected||i.hold)m+='\n\n⚠ 거절 '+i.rejected+'건 · 보류 '+i.hold+'건의 결정도 사라져서 다음 확인 때 다시 올라올 수 있습니다.';
  if(confirm(m))document.getElementById('csdel').submit()}
 function ids(){return G.selected()}
+function nConf(s){const r=JSON.parse(document.getElementById('gdata').textContent).rows,set=new Set(s.map(Number));return r.filter(x=>set.has(x.id)&&x.integrity==='불일치').length}
 function dec(a){const s=ids();if(!s.length){alert('선택된 항목이 없습니다. 체크박스로 고르거나 Select all을 누르세요.');return}
+ if(a==='approved'){const n=nConf(s);if(n&&!confirm('선택한 '+s.length+'건 중 '+n+'건은 소스 간 값이 서로 다릅니다(정합성=불일치).\n그래도 승인할까요?'))return}
  const f=document.getElementById('df');document.getElementById('act').value=a;
  document.getElementById('ids').innerHTML=`<input type="hidden" name="items" value="${s.join(',')}">`;f.submit()}
 function aa(){const s=ids(),f=document.getElementById('df');document.getElementById('fsv').value=document.getElementById('fsq').checked?'1':'0';
- if(s.length){if(!confirm(s.length+'건을 승인하고 로컬에 적용할까요?'))return;f.action='/changeset/{{ cs.id }}/approve_apply';
+ if(s.length){const n=nConf(s);if(!confirm(s.length+'건을 승인하고 로컬에 적용할까요?'+(n?'\n\n⚠ 이 중 '+n+'건은 소스 간 값이 서로 다릅니다(정합성=불일치).':'')))return;f.action='/changeset/{{ cs.id }}/approve_apply';
   document.getElementById('ids').innerHTML=`<input type="hidden" name="items" value="${s.join(',')}">`;runJob(f)}
  else if(confirm('선택이 없습니다. 이미 승인된 항목만 적용할까요?')){f.action='/changeset/{{ cs.id }}/apply';runJob(f)}}
 </script>

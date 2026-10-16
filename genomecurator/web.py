@@ -50,7 +50,8 @@ def start_job(fn) -> JSONResponse:
     return JSONResponse({"job": jid})
 
 
-CS_COLS = [("kind", "종류", True, True), ("decision", "결정", True, True), ("accession", "Accession", True, False),
+CS_COLS = [("kind", "종류", True, True), ("decision", "결정", True, True), ("integrity", "정합성", True, True),
+           ("conflict_fields", "불일치 필드", True, False), ("accession", "Accession", True, False),
            ("accession_version", "Ver", True, False), ("genome_name", "Genome Name", True, False),
            ("genome_status", "Status", True, False), ("genome_length", "Length", True, False),
            ("strain", "Strain", True, False), ("host_name", "Host", True, False),
@@ -63,7 +64,7 @@ CS_COLS = [("kind", "종류", True, True), ("decision", "결정", True, True), (
            ("assembly_method", "Assembly Method", False, False), ("has_sra", "SRA", False, False),
            ("submitter", "Submitter", False, False), ("bvbrc_genome_id", "BV-BRC ID", False, False),
            ("release_date", "Release Date", False, False)]
-CS_FACETS = [("kind", "종류"), ("decision", "결정"), ("genome_status", "Genome Status"), ("host_name", "Host"),
+CS_FACETS = [("kind", "종류"), ("decision", "결정"), ("integrity", "정합성(소스 간 일치)"), ("genome_status", "Genome Status"), ("host_name", "Host"),
              ("isolation_country", "Country"), ("collection_year", "Collection Year"), ("has_sra", "SRA")]
 GN_COLS = [("genome_name", "Genome Name", True), ("strain", "Strain", True), ("genbank", "GenBank Accessions", True),
            ("genome_length", "Size", True), ("genome_status", "Genome Status", True), ("collection_date", "Collection Date", True),
@@ -302,19 +303,24 @@ def create_app(scheduler: bool = True) -> FastAPI:
     def changeset(request: Request, cid: int):
         cs = _rows("SELECT c.*, w.name wname FROM changeset c JOIN watchlist w ON w.id=c.watch_id WHERE c.id=?", cid)[0]
         rows = []
+        agree = curate.source_agreement(cs["watch_id"])
         for i in _rows("SELECT * FROM changeset_item WHERE changeset_id=? ORDER BY kind, accession", cid):
             r = {k: v for k, v in json.loads(i["new_record_json"] or "{}").items()
                  if v is not None and k not in ("taxon_lineage_ids", "taxon_lineage_names")}
             if isinstance(r.get("submitter"), str):
                 r["submitter"] = r["submitter"][:120]
+            ag = agree.get(i["accession"], {})
             r.update(id=i["id"], kind=i["kind"], decision=i["decision"], accession=i["accession"],
-                     has_sra="Yes" if r.get("sra_accession") else "No")
+                     has_sra="Yes" if r.get("sra_accession") else "No",
+                     integrity="불일치" if ag.get("conflict") else ("표기차이" if ag.get("cosmetic") else "일치"),
+                     conflict_fields=", ".join(sorted(ag.get("conflict", []))))
             if i["kind"] == "changed":
                 r["_diff"] = json.loads(i["diff_json"] or "{}")
             rows.append(r)
         data = {"rows": rows, "selectable": True, "name": f"changeset_{cid}",
                 "cols": _cols(CS_COLS, rows), "facets": _facets(CS_FACETS, rows)}
-        return render(request, "changeset.html", cs=cs, data=data, nav="cur", watch=cs["watch_id"],
+        n_conf = sum(1 for r in rows if r["integrity"] == "불일치")
+        return render(request, "changeset.html", cs=cs, data=data, nav="cur", watch=cs["watch_id"], n_conf=n_conf,
                       summary=json.loads(cs["summary_json"] or "{}"),
                       dry=json.loads(cs["dryrun_json"] or "{}"))
 
