@@ -344,3 +344,35 @@ def test_logging_context_masking_and_audit(tmp_path, monkeypatch):
     detail = connect().execute("SELECT detail FROM audit_log").fetchone()[0]
     assert len(detail) < 700 and "(+400자)" in detail
     lg.removeHandler(h)
+
+
+def test_schema_check_detects_drift_and_keeps_baseline(tmp_path, monkeypatch):
+    from genomecurator import schema_check as sc
+    rows = [{"accession": "A1.1", "length": 10, "virus": {"tax_id": 9, "organism_name": "V", "lineage": [{"tax_id": 1, "name": "x"}]},
+             "host": {"organism_name": "H"}, "isolate": {"collection_date": "2020"}} for _ in range(5)]
+    seen, produced = sc._read_set("ncbi", rows)
+    assert {"accession", "length", "host.organism_name", "virus.lineage[].tax_id"} <= seen      # the real adapter's reads are measured
+    live = sc.profile(rows)
+    drifted = [{k: v for k, v in r.items() if k != "host"} | {"seqLength": 10} for r in rows]
+    prev = {p: dict(v) for p, v in live.items()}
+    d_live = sc.profile(drifted)
+    f = sc._compare("ncbi", d_live, seen, prev, {"top": ["reports"]}, ["reports"])
+    kinds = {(x["kind"], x["path"]) for x in f}
+    assert ("removed", "host") in kinds or ("removed", "host.organism_name") in kinds
+    assert any(x["severity"] == "fail" for x in f)
+    assert sc._compare("ncbi", live, seen, prev, {"top": ["reports"]}, ["reports"]) == []       # identical shape: nothing to report
+
+
+def test_schema_local_check_finds_missing_column(tmp_path, monkeypatch):
+    import sqlite3
+    from genomecurator import config, schema_check as sc
+    from genomecurator.db import connect
+    monkeypatch.setattr(config, "DATA_DIR", tmp_path)
+    monkeypatch.setattr(config, "DB_PATH", tmp_path / "g.db")
+    connect().close()
+    raw = sqlite3.connect(config.DB_PATH)
+    raw.execute("ALTER TABLE genome DROP COLUMN segment")
+    raw.commit()
+    raw.close()
+    out = sc.local_checks({})
+    assert any(f["severity"] == "fail" and f["kind"] == "column" and "segment" in f["detail"] for f in out)

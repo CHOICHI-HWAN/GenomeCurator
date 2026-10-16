@@ -516,6 +516,29 @@ def create_app(scheduler: bool = True) -> FastAPI:
         wid = cs[0]["watch_id"]
         return start_job(lambda p: (seqcheck.build_plan(wid, accs, progress=p), f"/integrity?watch={wid}#seq")[1], "선택 항목 서열 검증 계획")
 
+    @app.get("/schema")
+    def schema_page(request: Request, msg: str = ""):
+        from . import schema_check
+        return render(request, "schema.html", nav="sch", msg=msg, rep=schema_check.latest(), label=schema_check.LABEL)
+
+    @app.post("/schema/check")
+    def schema_run(request: Request):
+        if not _same_origin(request):
+            return JSONResponse({"error": "cross-site request refused"}, 403)
+        from . import schema_check
+        return start_job(lambda p: (schema_check.run(None, progress=p), "/schema")[1], "스키마 점검")
+
+    @app.post("/schema/accept")
+    def schema_accept(request: Request):
+        if not _same_origin(request):
+            return JSONResponse({"error": "cross-site request refused"}, 403)
+        from . import schema_check
+        try:
+            msg = "새 기준으로 저장했습니다: " + ", ".join(schema_check.LABEL.get(x, x) for x in schema_check.accept())
+        except ValueError as e:
+            msg = str(e)
+        return RedirectResponse(f"/schema?msg={msg}", 303)
+
     @app.get("/integrity")
     def integrity(request: Request, watch: int = 0, field: str = "", kind: str = "conflict", files: int = 0):
         from . import reconcile, seqcheck, verify

@@ -242,6 +242,42 @@ def parse_fasta(text: str) -> dict[str, str]:
 
 
 # -------------------------------------------------------------------- BV-BRC
+def normalize_bvbrc(g: dict) -> tuple[list[str], dict]:
+    """One BV-BRC genome row -> ([base accessions], partial record). Kept separate so the schema check can run it on live samples."""
+    host = g.get("host_name") or g.get("host_common_name")
+    rec = {
+        "genome_name": g.get("genome_name"),
+        "genome_status": g.get("genome_status"),
+        "genome_length": g.get("genome_length"),
+        "strain": g.get("strain"),
+        "host_name": host,
+        "isolation_country": g.get("isolation_country"),
+        "geographic_location": g.get("geographic_location"),
+        "collection_date": g.get("collection_date"),
+        "isolation_source": g.get("isolation_source"),
+        "subtype": g.get("subtype"),
+        "genotype": g.get("genotype"),
+        "segment": g.get("segment"),
+        "publication": g.get("publication"),
+        "genome_quality": g.get("genome_quality"),
+        "sra_accession": g.get("sra_accession"),
+        "bioproject_accession": g.get("bioproject_accession"),
+        "biosample_accession": g.get("biosample_accession"),
+        "assembly_method": g.get("assembly_method"),
+        "sequencing_platform": g.get("sequencing_platform"),
+        "taxon_id": g.get("taxon_id"),
+        "taxon_lineage_ids": ",".join(g.get("taxon_lineage_ids") or []) or None,
+        "taxon_lineage_names": ",".join(g.get("taxon_lineage_names") or []) or None,
+    }
+    rec = {k: v for k, v in rec.items() if v not in (None, "")}
+    accs = []
+    for acc in (g.get("genbank_accessions") or "").replace(";", ",").split(","):
+        acc = acc.strip()
+        if acc:
+            accs.append(split_version(acc)[0])
+    return accs, rec
+
+
 def fetch_bvbrc(taxon_id: int | None) -> dict[str, dict]:
     if not taxon_id:
         return {}
@@ -254,36 +290,9 @@ def fetch_bvbrc(taxon_id: int | None) -> dict[str, dict]:
             r.raise_for_status()
             rows = r.json()
             for g in rows:
-                host = g.get("host_name") or g.get("host_common_name")
-                rec = {
-                    "genome_name": g.get("genome_name"),
-                    "genome_status": g.get("genome_status"),
-                    "genome_length": g.get("genome_length"),
-                    "strain": g.get("strain"),
-                    "host_name": host,
-                    "isolation_country": g.get("isolation_country"),
-                    "geographic_location": g.get("geographic_location"),
-                    "collection_date": g.get("collection_date"),
-                    "isolation_source": g.get("isolation_source"),
-                    "subtype": g.get("subtype"),
-                    "genotype": g.get("genotype"),
-                    "segment": g.get("segment"),
-                    "publication": g.get("publication"),
-                    "genome_quality": g.get("genome_quality"),
-                    "sra_accession": g.get("sra_accession"),
-                    "bioproject_accession": g.get("bioproject_accession"),
-                    "biosample_accession": g.get("biosample_accession"),
-                    "assembly_method": g.get("assembly_method"),
-                    "sequencing_platform": g.get("sequencing_platform"),
-                    "taxon_id": g.get("taxon_id"),
-                    "taxon_lineage_ids": ",".join(g.get("taxon_lineage_ids") or []) or None,
-                    "taxon_lineage_names": ",".join(g.get("taxon_lineage_names") or []) or None,
-                }
-                rec = {k: v for k, v in rec.items() if v not in (None, "")}
-                for acc in (g.get("genbank_accessions") or "").replace(";", ",").split(","):
-                    acc = acc.strip()
-                    if acc:
-                        out[split_version(acc)[0]] = {**rec, "bvbrc_genome_id": g.get("genome_id")}
+                accs, rec = normalize_bvbrc(g)
+                for acc in accs:
+                    out[acc] = {**rec, "bvbrc_genome_id": g.get("genome_id")}
             if len(rows) < page:
                 return out
             offset += page
@@ -434,6 +443,31 @@ def pathoplexus_slug_for(accession_version: str) -> str | None:
     return None
 
 
+def normalize_ppx(row: dict) -> tuple[str, dict] | None:
+    """One LAPIS details row -> (base accession, partial record) or None when it has no INSDC accession."""
+    full = row.get("insdcAccessionFull") or row.get("insdcAccessionBase")
+    if not full:
+        return None
+    base, ver = split_version(full)
+    geo = ", ".join(x for x in (row.get("geoLocCountry"), row.get("geoLocAdmin1")) if x)
+    rec = {"accession_version": ver,
+           "pathoplexus_accession": row.get("accessionVersion"),
+           "strain": row.get("specimenCollectorSampleId"),
+           "host_name": row.get("hostNameScientific") or row.get("hostNameCommon"),
+           "isolation_country": row.get("geoLocCountry"),
+           "geographic_location": geo or None,
+           "collection_date": row.get("sampleCollectionDate"),
+           "clade": row.get("clade"), "lineage": row.get("lineage"), "serotype": row.get("serotype"),
+           "genotype": row.get("genotype"), "subtype": row.get("subtype"), "outbreak": row.get("outbreak"),
+           "isolation_source": row.get("anatomicalPart") or row.get("bodyProduct"),
+           "submitter": row.get("authorAffiliations"),
+           "release_date": row.get("earliestReleaseDate"),
+           "bioproject_accession": row.get("bioprojectAccession"),
+           "biosample_accession": row.get("biosampleAccession"),
+           "sra_accession": row.get("insdcRawReadsAccession")}
+    return base, {k: v for k, v in rec.items() if v not in (None, "", "None")}
+
+
 def fetch_pathoplexus(watch_name: str, taxon: str = "", taxon_id: int | None = None) -> dict[str, dict]:
     res = pathoplexus_resolve(watch_name, taxon or watch_name, taxon_id)
     if not res:
@@ -445,32 +479,17 @@ def fetch_pathoplexus(watch_name: str, taxon: str = "", taxon_id: int | None = N
         probe = _get(c, f"{config.PATHOPLEXUS_BASE}/{slug}/sample/details", params={**flt, "limit": 1})
         probe.raise_for_status()
         have = set((probe.json().get("data") or [{}])[0])
+        gone = [f for f in _PPX_FIELDS if f not in have]
+        if gone:   # LAPIS rejects unknown names, so these are skipped - but the data they carried is then missing
+            _log.warning("Pathoplexus %s no longer offers expected fields %s; they are skipped (run the schema check)", slug, gone)
         fields = [f for f in _PPX_FIELDS if f in have] + [f for f in _PPX_TAXON if f in have]
         r = _get(c, f"{config.PATHOPLEXUS_BASE}/{slug}/sample/details",
                   params={**flt, "fields": ",".join(fields), "limit": 200000}, timeout=300)
         r.raise_for_status()
         for row in r.json().get("data", []):
-            full = row.get("insdcAccessionFull") or row.get("insdcAccessionBase")
-            if not full:
-                continue  # Pathoplexus-native sequence without INSDC accession: cannot join
-            base, ver = split_version(full)
-            geo = ", ".join(x for x in (row.get("geoLocCountry"), row.get("geoLocAdmin1")) if x)
-            rec = {"accession_version": ver,
-                   "pathoplexus_accession": row.get("accessionVersion"),
-                   "strain": row.get("specimenCollectorSampleId"),
-                   "host_name": row.get("hostNameScientific") or row.get("hostNameCommon"),
-                   "isolation_country": row.get("geoLocCountry"),
-                   "geographic_location": geo or None,
-                   "collection_date": row.get("sampleCollectionDate"),
-                   "clade": row.get("clade"), "lineage": row.get("lineage"), "serotype": row.get("serotype"),
-                   "genotype": row.get("genotype"), "subtype": row.get("subtype"), "outbreak": row.get("outbreak"),
-                   "isolation_source": row.get("anatomicalPart") or row.get("bodyProduct"),
-                   "submitter": row.get("authorAffiliations"),
-                   "release_date": row.get("earliestReleaseDate"),
-                   "bioproject_accession": row.get("bioprojectAccession"),
-                   "biosample_accession": row.get("biosampleAccession"),
-                   "sra_accession": row.get("insdcRawReadsAccession")}
-            out[base] = {k: v for k, v in rec.items() if v not in (None, "", "None")}
+            n = normalize_ppx(row)
+            if n:   # None = Pathoplexus-native sequence without INSDC accession: cannot join
+                out[n[0]] = n[1]
     return out
 
 def fetch_all(watch_name: str, taxon: str, taxon_id: int | None, filters: dict | None, progress=None):

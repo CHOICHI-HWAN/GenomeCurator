@@ -57,6 +57,9 @@ CREATE TABLE IF NOT EXISTS sequence_check(
   length INTEGER, sha256 TEXT, ref_length INTEGER, prefix_same INTEGER, suffix_same INTEGER, detail TEXT, checked_at TEXT,
   PRIMARY KEY(watch_id, accession, source));
 CREATE TABLE IF NOT EXISTS sequence_plan(watch_id INTEGER PRIMARY KEY, created TEXT, plan_json TEXT);  -- dry-run of seqcheck
+-- schema dry-run (schema_check.py): last live field profile per source, and the report history
+CREATE TABLE IF NOT EXISTS schema_snapshot(source TEXT PRIMARY KEY, taken TEXT, snapshot_json TEXT);
+CREATE TABLE IF NOT EXISTS schema_report(id INTEGER PRIMARY KEY, checked_at TEXT, report_json TEXT);
 CREATE TABLE IF NOT EXISTS reconcile_report(watch_id INTEGER PRIMARY KEY, checked_at TEXT, report_json TEXT);
 
 CREATE TABLE IF NOT EXISTS audit_log(

@@ -1,0 +1,41 @@
+{% extends "base.html" %}{% block body %}
+<style>
+.vd{border-radius:4px;padding:12px 16px;margin:0 0 14px;border:1px solid var(--bd);border-left:6px solid var(--ok);background:var(--card)}
+.vd.review{border-left-color:var(--warn)}.vd.update{border-left-color:var(--bad)}.vd b.t{font-size:17px}
+.sev{border-radius:10px;padding:0 9px;font-size:12px;font-weight:600;border:1px solid currentColor;white-space:nowrap}
+.sev.fail{color:var(--bad)}.sev.warn{color:var(--warn)}.sev.info{color:var(--mut)}.sev.ok{color:var(--ok)}
+</style>
+<div class="pagehead"><h2>스키마 점검</h2><span class="mut">NCBI·BV-BRC·Pathoplexus와 로컬 DB의 구조가 바뀌지 않았는지 확인합니다 (dry-run)</span></div>
+{% if msg %}<div class="msg">{{ msg }}</div>{% endif %}
+<div class="help">소스의 응답 구조는 예고 없이 바뀔 수 있습니다. <b>점검 실행</b>은 소스마다 실제 응답 샘플 200건을 읽기만 하고(서열은 받지 않고, 서열 엔드포인트는 가장 작은 유전체 1건으로만 확인),
+ <b>우리 코드가 실제로 읽는 필드</b>를 측정해 ① 사라지거나 이름·형태가 바뀐 필드, ② 응답 최상위 구조 변화, ③ 새로 생긴 필드, ④ 로컬 DB가 코드의 기대와 맞는지를 알려 줍니다. 아무것도 수정하지 않습니다.
+ 지난 점검과 비교하기 때문에 처음 실행은 기준(baseline)만 저장합니다.</div>
+<form method="post" action="/schema/check" onsubmit="runJob(this);return false" style="margin-bottom:12px"><button class="p">스키마 점검 실행 (dry-run)</button>
+ <span class="mut" style="font-size:12.5px"> 소요 시간 약 5~10초</span></form>
+{% if not rep %}<div class="card mut">아직 점검한 기록이 없습니다. 위 버튼으로 처음 실행하면 현재 상태가 기준으로 저장됩니다.</div>
+{% else %}
+<div class="vd {{ rep.verdict }}"><b class="t">{% if rep.verdict == 'update' %}⚠ 소스 코드 업데이트가 필요합니다{% elif rep.verdict == 'review' %}확인을 권장합니다{% else %}✔ 소스 코드 업데이트가 필요하지 않습니다{% endif %}</b>
+ <span class="mut"> · 오류 {{ rep.fail }} · 경고 {{ rep.warn }} · 참고 {{ rep.info }} · {{ rep.checked_at }} 점검 · 샘플 기준 바이러스: {{ rep.watch }}</span>
+ {% if rep.verdict == 'update' %}<div style="margin-top:6px">아래 <b>오류</b> 항목의 "조치"에 적힌 함수를 확인하세요. 고친 뒤(또는 영향이 없다고 판단한 뒤) 다시 점검하고 <b>새 기준으로 저장</b>하세요.</div>{% endif %}
+ {% if rep.baseline_kept %}<form method="post" action="/schema/accept" style="margin-top:8px" onsubmit="return confirm('현재 상태를 새 기준으로 저장합니다. 위 문제를 해결했거나 영향이 없다고 판단했을 때만 누르세요.')">
+  <span class="mut">기준을 갱신하지 않은 소스: {% for x in rep.baseline_kept %}{{ label.get(x, x) }}{{ ', ' if not loop.last }}{% endfor %}</span> <button>현재 상태를 새 기준으로 저장</button></form>{% endif %}</div>
+
+<div class="cards">{% for src, i in rep.sources.items() %}<div class="kpi"><small>{{ i.label }}</small><b>{{ i.fields }}개 필드</b>
+ <small>코드가 읽는 필드 {{ i.read }}개 · 샘플 {{ i.sample }}건 ({{ i.sample_of }})</small><small>이전 기준: {{ i.previous or '없음(이번에 저장)' }}</small></div>{% endfor %}</div>
+
+{% set kl = {'removed': '필드가 사라짐', 'type': '값 형태 변경', 'dropped': '채움 비율 감소', 'shape': '응답 구조 변경', 'new': '새 필드', 'unused': '읽지 않는 필드', 'unseen': '샘플에 값 없음', 'unreachable': '접속·응답 실패',
+ 'sequence': '서열 엔드포인트', 'column': '열 누락', 'table': '테이블 누락', 'view': '뷰 오류', 'mapping': '목록·스키마 불일치', 'dropped_on_apply': '적용 때 버려짐', 'extra_table': '모르는 테이블', 'extra_column': '모르는 열'} %}
+{% set sl = {'fail': '오류', 'warn': '경고', 'info': '참고', 'ok': '정상'} %}
+{% set nm = {'ncbi': 'NCBI Virus', 'bvbrc': 'BV-BRC', 'pathoplexus': 'Pathoplexus', 'local': '로컬 DB'} %}
+{% set act = rep.findings | rejectattr('severity', 'equalto', 'info') | list %}
+<h3>점검 결과</h3>
+<table><tr><th>수준</th><th>대상</th><th>종류</th><th>필드/항목</th><th>내용</th><th>조치</th></tr>
+{% for f in act %}<tr><td><span class="sev {{ f.severity }}">{{ sl[f.severity] }}</span></td><td class="nw">{{ nm[f.source] }}</td><td class="nw">{{ kl.get(f.kind, f.kind) }}</td><td><code>{{ f.path }}</code></td><td>{{ f.detail }}</td><td class="mut">{{ f.hint }}</td></tr>
+{% else %}<tr><td colspan="6" class="mut">문제가 발견되지 않았습니다.</td></tr>{% endfor %}</table>
+
+{% set infos = rep.findings | selectattr('severity', 'equalto', 'info') | list %}
+{% if infos %}<details style="margin-top:14px"><summary style="cursor:pointer"><b>참고 {{ infos|length }}건</b> <span class="mut">— 새로 생긴 필드, 코드가 읽지 않는 필드 등 (필요하면 어댑터에 매핑을 추가할 후보)</span></summary>
+<table style="margin-top:8px"><tr><th>대상</th><th>종류</th><th>필드/항목</th><th>내용</th></tr>
+{% for f in infos %}<tr><td class="nw">{{ nm[f.source] }}</td><td class="nw">{{ kl.get(f.kind, f.kind) }}</td><td><code>{{ f.path }}</code></td><td class="mut">{{ f.detail }}</td></tr>{% endfor %}</table></details>{% endif %}
+{% endif %}
+{% endblock %}
