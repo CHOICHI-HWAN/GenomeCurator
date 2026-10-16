@@ -4,11 +4,14 @@
 
 ## 실행
 ```bash
-pip install -e ".[dev]"
+mamba env create -f environment.yml && mamba activate genomecurator   # conda 환경 'genomecurator' (Python 3.12)
 python -m genomecurator watch-add "Henipavirus nipahense"
-python -m genomecurator serve        # http://127.0.0.1:8000
+python -m genomecurator serve        # http://127.0.0.1:8000 (8000이 쓰이면 --port 8001)
 pytest
 ```
+- 한 번에 시작: `scripts/start.sh | start.command | start.bat` (mamba/conda 환경을 쓰고, 없으면 만들고, 둘 다 없으면 .venv).
+- Superset은 별도 환경: `mamba env create -f superset/environment.yml` (`docs/SUPERSET.md`).
+- 이 머신의 쉘 기본값은 `base`다. 직접 실행하려면 먼저 `mamba activate genomecurator`.
 데이터(DB, 서열)는 `data/`에 생기며 git에는 올리지 않습니다 (`GC_DATA_DIR`로 위치 변경).
 Windows에서 `git`이 PATH에 없으면 `C:\Program Files\Git\cmd\git.exe`로 실행하세요.
 
@@ -157,4 +160,10 @@ Windows에서 `git`이 PATH에 없으면 `C:\Program Files\Git\cmd\git.exe`로 �
 - 문제가 있으면 상단 **스키마** 탭에 `!` 배지(오류=빨강, 경고=주황)가 뜬다(1분 캐시). 결과는 스키마 탭 "매일 점검" 표(바이러스×소스)와 문제 목록, 이력(`schema_daily`, 실패는 `schema_daily_failed`)과 로그에 남는다.
 - 한계: NCBI·Pathoplexus 샘플은 "처음 N건"(오래된 레코드)이다. NCBI는 정렬 파라미터가 먹지 않았고 LAPIS의 내림차순 지정은 확인하지 못했다(BV-BRC만 최신순 정렬 가능). 새 필드가 최신 레코드에만 생기는 경우는 매일 점검이 늦게 발견할 수 있어 전체 점검(수동)을 병행한다.
 - 실측: 바이러스 2종(nipah, mpox)에서 오탐 없이 통과, 주입한 구조 변경·형태 변경·전체 소멸 필드는 모두 감지.
+
+## 환경 파일 / README (2026-10-17)
+- `environment.yml`(앱), `superset/environment.yml`(Superset) 추가. 새 환경을 만들어 다른 폴더에서 임포트·pytest 24건 통과로 검증했다(`-e .`는 yml이 있는 폴더 기준이라 저장소 루트의 파일로 만들어야 한다). pip 단계에서 `--no-deps` 줄은 mamba가 패키지 이름으로 읽어 실패하므로 쓰지 않는다.
+- CI에 `conda-env` 작업 추가(environment.yml이 실제로 빌드되고 테스트가 통과하는지).
+- `.claude/launch.json`은 `mamba run -n genomecurator ...`, 포트 8001. 이 컴퓨터 전용 절대 경로를 저장소에 넣지 않는다.
+- README를 새로 썼다(철칙·소스 삼형제·정합성 3종·명령어·환경변수·FAQ·한계·코드 지도).
 

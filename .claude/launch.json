@@ -3,14 +3,34 @@
   "configurations": [
     {
       "name": "genomecurator",
-      "runtimeExecutable": "python",
-      "runtimeArgs": ["-m", "genomecurator", "serve", "--port", "8000"],
-      "port": 8000
+      "runtimeExecutable": "mamba",
+      "runtimeArgs": [
+        "run",
+        "-n",
+        "genomecurator",
+        "python",
+        "-m",
+        "genomecurator",
+        "serve",
+        "--port",
+        "8001"
+      ],
+      "port": 8001
     },
     {
       "name": "static-preview",
-      "runtimeExecutable": "python",
-      "runtimeArgs": ["-m", "http.server", "8010", "--directory", "docs"],
+      "runtimeExecutable": "mamba",
+      "runtimeArgs": [
+        "run",
+        "-n",
+        "genomecurator",
+        "python",
+        "-m",
+        "http.server",
+        "8010",
+        "--directory",
+        "docs"
+      ],
       "port": 8010
     }
   ]

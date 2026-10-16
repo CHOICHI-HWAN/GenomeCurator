@@ -1,0 +1,10 @@
+# Apache Superset for GenomeCurator (separate environment on purpose: its dependencies are heavy and strict)
+#   mamba env create -f superset/environment.yml   (run from the repository root)
+name: gc-superset
+channels:
+  - conda-forge
+dependencies:
+  - python=3.11
+  - pip
+  - pip:
+      - -r superset/requirements.txt
