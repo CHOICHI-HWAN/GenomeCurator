@@ -1,5 +1,126 @@
 {% extends "base.html" %}{% block body %}
-<h2>유전체 <span class="mut" style="font-size:14px">로컬에 반영된 데이터</span></h2>
+<style>
+main{max-width:none;padding:10px 14px}
+:root{--bvg:#76a72b}
+.bvh{display:flex;gap:10px;align-items:center;margin-bottom:6px}
+.bvh .ico{width:26px;height:26px;background:var(--bvg);color:#fff;border-radius:3px;display:flex;align-items:center;justify-content:center;font-weight:700}
+.bvh small{display:block;color:var(--mut);font-size:11px;text-transform:uppercase;letter-spacing:.04em}
+.crumb{font-size:12.5px;color:var(--mut)}.crumb b{color:var(--bvg)}.crumb em{font-style:normal;color:var(--mut)}
+.tabs{display:flex;border-bottom:1px solid var(--bd);margin:4px 0 0}
+.tabs a{padding:6px 14px;font-size:13px;color:var(--fg);text-decoration:none;border:1px solid transparent;border-bottom:0;margin-bottom:-1px}
+.tabs a.on{background:var(--card);border-color:var(--bd);border-top:3px solid var(--bvg);font-weight:600}
+.tool{display:flex;gap:2px;align-items:flex-end;background:var(--card);border:1px solid var(--bd);border-top:0;padding:6px 8px}
+.tbn{display:flex;flex-direction:column;align-items:center;gap:2px;padding:2px 12px;cursor:pointer;color:var(--acc);font-size:10px;letter-spacing:.05em;text-transform:uppercase;border:0;background:none}
+.tbn i{font-style:normal;font-size:20px;line-height:22px}.tbn:hover{color:var(--bvg)}
+.kw{display:flex;flex-direction:column;font-size:10px;letter-spacing:.05em;color:var(--mut);text-transform:uppercase;margin:0 10px}.kw input{width:260px}
+.wrap{display:flex;background:var(--card);border:1px solid var(--bd);border-top:0}
+#fp{width:230px;flex:none;border-right:1px solid var(--bd);max-height:72vh;overflow:auto;font-size:12.5px}
+#fp .fg{padding:6px 10px;border-bottom:1px solid var(--bd)}#fp .fg>b{display:block;font-size:11px;color:var(--mut);text-transform:uppercase;margin:2px 0 4px}
+.fv{display:flex;justify-content:space-between;gap:6px;padding:1px 4px;border-radius:2px;cursor:pointer}.fv:hover{background:var(--hover)}.fv.on{background:var(--bvg);color:#fff}
+.fv span:first-child{overflow:hidden;text-overflow:ellipsis;white-space:nowrap}.fv .n{opacity:.7}.more{font-size:11.5px;color:var(--acc);cursor:pointer;padding:2px 4px}
+.gm{flex:1;min-width:0}.chips{display:flex;gap:6px;flex-wrap:wrap;padding:5px 8px;border-bottom:1px solid var(--bd)}
+.chip{background:var(--chip);border-radius:2px;padding:0 4px 0 8px;font-size:12px}.chip a{cursor:pointer;margin-left:4px;padding:0 4px}
+.gs{overflow:auto;max-height:66vh}
+.gt{width:100%;border:0;font-size:12.5px;white-space:nowrap}.gt th{position:sticky;top:0;background:var(--th);cursor:pointer;user-select:none;border-bottom:2px solid var(--bd);border-right:1px solid var(--bd);padding:5px 8px;font-size:12px;z-index:1}
+.gt th.s::after{content:" ▲";font-size:9px}.gt th.s.d::after{content:" ▼";font-size:9px}
+.gt td{padding:3px 8px;border-bottom:1px solid var(--bd);max-width:260px;overflow:hidden;text-overflow:ellipsis}
+.gt tbody tr{cursor:pointer}.gt tbody tr:hover{background:var(--hover)}.gt tr.cur{background:var(--chip)}
+.gt td.nm{color:var(--acc);font-weight:500}.Complete{color:var(--ok)}
+#rp{width:300px;flex:none;border-left:1px solid var(--bd);background:var(--stripe);font-size:12.5px;max-height:72vh;overflow:auto}
+#rp h5{margin:0;padding:8px 12px;font-size:13px;background:var(--bvg);color:#fff}
+#rp .hint{margin:12px;padding:10px;background:var(--card);border:1px solid var(--bd);border-radius:3px;color:var(--mut)}
+#rp table{border:0;font-size:12px}#rp td{padding:3px 10px;border-bottom:1px solid var(--bd);vertical-align:top;word-break:break-word}#rp td:first-child{color:var(--mut);width:42%}
+.src{font-size:10px;border-radius:8px;padding:0 6px;margin-left:4px;color:#fff}.src.pathoplexus{background:#8a6bbd}.src.ncbi{background:#2f79b5}.src.bvbrc{background:#3a9d6e}
+.acts{padding:10px 12px;display:flex;flex-direction:column;gap:6px}
+.pg{display:flex;gap:8px;align-items:center;padding:6px 10px;background:var(--card);border:1px solid var(--bd);border-top:0;font-size:12.5px}
+.pg .pn{cursor:pointer;color:var(--acc);padding:0 4px}.pg .pn.on{font-weight:700;color:var(--fg);text-decoration:underline}
+.cm{position:absolute;background:var(--card);border:1px solid var(--bd);padding:8px;box-shadow:0 4px 12px rgba(0,0,0,.2);z-index:5;display:none;max-height:300px;overflow:auto;text-align:left;text-transform:none;letter-spacing:0}
+.cm label{display:block;font-size:12.5px;color:var(--fg)}.cm.open{display:block}
+@media(max-width:1000px){ #rp{display:none}}@media(max-width:700px){ #fp{display:none}}
+</style>
+{% if not data.rows %}
+<div class="card mut">이 바이러스에는 아직 반영된 유전체가 없습니다. 큐레이션 탭에서 changeset을 승인·적용하세요.</div>
+{% endif %}
+<div class="bvh"><div class="ico">T</div><div><small>Taxon View</small>
+ <div class="crumb">{% for l in data.lineage[:-1] %}{{ l }} › {% endfor %}<b>{{ data.watch }}</b> <em>( {{ data.rows|length }} Genomes )</em></div></div>
+ <select style="margin-left:auto" onchange="location.href='/genomes?watch='+this.value">{% for w in watches %}<option value="{{ w.id }}" {{ 'selected' if w.id==watch }}>{{ w.name }} ({{ w.n }})</option>{% endfor %}</select></div>
+<div class="tabs"><a href="/dashboard?watch={{ watch }}">Overview</a><a class="on">Genomes</a><a href="/">Changes</a><a href="/history">History</a></div>
+<div class="tool">
+ <button class="tbn" onclick="G.tsv(false)"><i>⬇</i>Download</button>
+ <label class="kw">Keywords<input id="gq" placeholder="검색어 입력"></label>
+ <span style="position:relative"><button class="tbn" onclick="document.getElementById('cm').classList.toggle('open')"><i>▥</i>Select Columns</button><div class="cm" id="cm"></div></span>
+ <button class="tbn" onclick="G.togglePanel()"><i>⛃</i>Filters</button>
+ <button class="tbn" onclick="G.clear()"><i>✕</i>Clear</button>
+ <span style="flex:1"></span><span class="mut" id="gcount" style="font-size:12px"></span></div>
+<div class="wrap"><aside id="fp"></aside>
+ <div class="gm"><div class="chips" id="chips" style="display:none"></div><div class="gs"><table class="gt"><thead id="gh"></thead><tbody id="gb"></tbody></table></div></div>
+ <aside id="rp"></aside></div>
+<div class="pg"><span id="gres"></span><span style="flex:1"></span><span class="pn" onclick="G.page(-1)">◀</span><span id="gpages"></span><span class="pn" onclick="G.page(1)">▶</span>
+ <select id="gps" onchange="G.size(this.value)"><option>25</option><option>50</option><option selected>100</option><option>250</option></select> 행</div>
+<form id="ff" method="post" action="/genomes/fasta" style="display:none"><input name="ids" id="fids"><input name="watch" value="{{ watch }}"></form>
 <script type="application/json" id="gdata">{{ data|tojson }}</script>
-{% include "grid.html" %}
+<script>
+const G=(()=>{
+const D=JSON.parse(document.getElementById('gdata').textContent),rows=D.rows,cols=D.cols,facets=D.facets;
+rows.forEach(r=>{r.collection_year=(r.collection_date||'').slice(0,4)||'(없음)'});
+const st={f:{},q:'',sort:null,dir:1,pg:0,ps:100,vis:new Set(cols.filter(c=>c.on).map(c=>c.k)),cur:null,sel:new Set(),panel:true};
+const $=id=>document.getElementById(id),esc=s=>String(s??'').replace(/[&<>"]/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c]));
+const val=(r,k)=>{const v=r[k];return v===null||v===undefined||v===''?'(없음)':String(v)};
+const label=k=>(cols.find(c=>c.k===k)||{label:k}).label;
+function match(r,skip){for(const k in st.f){if(k===skip||!st.f[k].size)continue;if(!st.f[k].has(val(r,k)))return false}
+ if(st.q){const q=st.q.toLowerCase();if(!cols.some(c=>String(r[c.k]??'').toLowerCase().includes(q)))return false}return true}
+let view=[];
+function filt(){view=rows.filter(r=>match(r));if(st.sort){const k=st.sort,d=st.dir;view.sort((a,b)=>{let x=a[k],y=b[k];if(x==null||x==='')return 1;if(y==null||y==='')return -1;
+ const nx=parseFloat(x),ny=parseFloat(y);if(!isNaN(nx)&&!isNaN(ny)&&String(nx)==String(x))return(nx-ny)*d;return String(x).localeCompare(String(y))*d})}}
+function facetsHtml(){let h='';for(const f of facets){const cnt={};rows.forEach(r=>{if(match(r,f.k)){const v=val(r,f.k);cnt[v]=(cnt[v]||0)+1}});
+ const act=st.f[f.k]||new Set();act.forEach(v=>{if(!(v in cnt))cnt[v]=0});const e=Object.entries(cnt).sort((a,b)=>b[1]-a[1]||a[0].localeCompare(b[0]));if(!e.length)continue;
+ const open=st['m'+f.k],sh=open?e:e.slice(0,8);
+ h+=`<div class="fg"><b>${esc(f.label)}</b>`+sh.map(([v,n])=>`<div class="fv ${act.has(v)?'on':''}" data-k="${esc(f.k)}" data-v="${esc(v)}"><span title="${esc(v)}">${esc(v)}</span><span class="n">${n}</span></div>`).join('')
+ +(e.length>8?`<div class="more" data-more="${esc(f.k)}">${open?'접기':`+${e.length-8}개 더 보기`}</div>`:'')+'</div>'}
+ return h}
+function rp(){const el=$('rp');if(!st.panel){el.style.display='none';return}el.style.display='';
+ const n=st.sel.size;
+ if(!n&&!st.cur){el.innerHTML='<h5>Nothing selected.</h5><div class="hint">표에서 행을 클릭하면 상세 정보와 값의 출처(Pathoplexus / NCBI / BV-BRC)가 여기에 표시됩니다. 체크박스로 여러 건을 선택하면 일괄 다운로드할 수 있습니다.</div>';return}
+ let h=`<h5>${n?n+' genome'+(n>1?'s':'')+' selected':'Genome detail'}</h5>`;
+ if(n)h+=`<div class="acts"><button onclick="G.tsv(true)">선택 항목 TSV 다운로드</button><button onclick="G.fasta()">선택 항목 FASTA 다운로드</button></div>`;
+ const r=st.cur;if(r){const keys=cols.map(c=>c.k).concat(['taxon_id','taxon_lineage_names','accession','sequence_md5','sequence_hash','pathoplexus_accession','submitter','publication','segment','genotype','subtype']);
+  h+='<table>'+[...new Set(keys)].filter(k=>r[k]!==null&&r[k]!==undefined&&r[k]!=='').map(k=>{const s=r._prov&&r._prov[k];
+   return `<tr><td>${esc(label(k))}</td><td>${esc(r[k])}${s?`<span class="src ${s}">${s}</span>`:''}</td></tr>`}).join('')+'</table>'}
+ el.innerHTML=h}
+function table(){const vc=cols.filter(c=>st.vis.has(c.k));
+ $('gh').innerHTML='<tr><th><input type="checkbox" id="gall"></th>'+vc.map(c=>`<th data-s="${c.k}" class="${st.sort===c.k?'s '+(st.dir<0?'d':''):''}">${esc(c.label)}</th>`).join('')+'</tr>';
+ const pages=Math.max(1,Math.ceil(view.length/st.ps));st.pg=Math.min(st.pg,pages-1);const sl=view.slice(st.pg*st.ps,(st.pg+1)*st.ps);
+ $('gb').innerHTML=sl.map(r=>`<tr data-id="${r.id}" class="${st.cur&&st.cur.id===r.id?'cur':''}"><td><input type="checkbox" ${st.sel.has(r.id)?'checked':''}></td>`
+  +vc.map(c=>`<td class="${c.k==='genome_name'?'nm':''} ${c.k==='genome_status'?esc(r[c.k]):''}" title="${esc(r[c.k])}">${esc(r[c.k])}</td>`).join('')+'</tr>').join('');
+ const a=view.length?st.pg*st.ps+1:0,b=Math.min(view.length,(st.pg+1)*st.ps);
+ $('gres').textContent=`${a.toLocaleString()} - ${b.toLocaleString()} of ${view.length.toLocaleString()} results`;
+ $('gcount').textContent=view.length!==rows.length?`${view.length.toLocaleString()} / ${rows.length.toLocaleString()} 필터됨`:'';
+ let pn='';const lo=Math.max(0,st.pg-2),hi=Math.min(pages-1,st.pg+2);for(let i=lo;i<=hi;i++)pn+=`<span class="pn ${i===st.pg?'on':''}" data-p="${i}">${i+1}</span>`;$('gpages').innerHTML=pn;
+ const ga=$('gall');if(ga)ga.checked=view.length>0&&view.every(r=>st.sel.has(r.id))}
+function draw(){filt();$('fp').innerHTML=facetsHtml();$('fp').style.display=st.panelF===false?'none':'';
+ const ch=[];for(const k in st.f)st.f[k].forEach(v=>ch.push(`<span class="chip">${esc(label(k))}: ${esc(v)}<a data-rm="${esc(k)}" data-v="${esc(v)}">✕</a></span>`));
+ $('chips').style.display=ch.length?'flex':'none';$('chips').innerHTML=ch.join('');table();rp()}
+document.addEventListener('click',e=>{const t=e.target;
+ const fv=t.closest('.fv');if(fv){const k=fv.dataset.k,v=fv.dataset.v;(st.f[k]=st.f[k]||new Set());st.f[k].has(v)?st.f[k].delete(v):st.f[k].add(v);st.pg=0;draw();return}
+ if(t.dataset.more){st['m'+t.dataset.more]=!st['m'+t.dataset.more];$('fp').innerHTML=facetsHtml();return}
+ if(t.dataset.rm){st.f[t.dataset.rm].delete(t.dataset.v);draw();return}
+ if(t.dataset.p){st.pg=+t.dataset.p;table();return}
+ const th=t.closest('th[data-s]');if(th){const k=th.dataset.s;st.dir=st.sort===k?-st.dir:1;st.sort=k;draw();return}
+ if(t.id==='gall'){view.forEach(r=>t.checked?st.sel.add(r.id):st.sel.delete(r.id));table();rp();return}
+ const tr=t.closest('#gb tr');if(tr){const id=+tr.dataset.id,r=rows.find(x=>x.id===id);
+  if(t.tagName==='INPUT'){t.checked?st.sel.add(id):st.sel.delete(id)}else{st.cur=r}
+  document.querySelectorAll('#gb tr').forEach(x=>x.classList.toggle('cur',st.cur&&+x.dataset.id===st.cur.id));rp();return}
+ if(!t.closest('#cm')&&!t.closest('.tbn'))$('cm').classList.remove('open')});
+$('gq').addEventListener('input',e=>{st.q=e.target.value;st.pg=0;draw()});
+$('cm').innerHTML=cols.map(c=>`<label><input type="checkbox" data-c="${c.k}" ${st.vis.has(c.k)?'checked':''}> ${esc(c.label)}</label>`).join('');
+$('cm').addEventListener('change',e=>{const k=e.target.dataset.c;e.target.checked?st.vis.add(k):st.vis.delete(k);table()});
+new URLSearchParams(location.search).getAll('f').forEach(s=>{const i=s.indexOf(':');if(i>0){const k=s.slice(0,i);(st.f[k]=st.f[k]||new Set()).add(s.slice(i+1))}});
+draw();
+const dl=(name,text,type)=>{const a=document.createElement('a');a.href=URL.createObjectURL(new Blob([text],{type}));a.download=name;a.click()};
+return{clear(){st.f={};st.q='';$('gq').value='';st.pg=0;draw()},page(d){st.pg=Math.max(0,st.pg+d);table()},size(v){st.ps=+v;st.pg=0;table()},
+ togglePanel(){st.panelF=st.panelF===false;draw()},
+ tsv(sel){const vc=cols.filter(c=>st.vis.has(c.k));const list=sel?view.filter(r=>st.sel.has(r.id)):view;
+  dl('genomes.tsv','﻿'+[vc.map(c=>c.label).join('\t')].concat(list.map(r=>vc.map(c=>String(r[c.k]??'').replace(/[\t\n]/g,' ')).join('\t'))).join('\n'),'text/tab-separated-values')},
+ fasta(){$('fids').value=rows.filter(r=>st.sel.has(r.id)).map(r=>r.genome_id).join(',');$('ff').submit()}}})();
+</script>
 {% endblock %}

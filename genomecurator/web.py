@@ -60,12 +60,12 @@ CS_COLS = [("kind", "종류", True, True), ("decision", "결정", True, True), (
            ("release_date", "Release Date", False, False)]
 CS_FACETS = [("kind", "종류"), ("decision", "결정"), ("genome_status", "Genome Status"), ("host_name", "Host"),
              ("isolation_country", "Country"), ("collection_year", "Collection Year")]
-GN_COLS = [("genome_id", "Genome ID", True), ("accession", "Accession", True), ("genome_name", "Genome Name", True),
-           ("strain", "Strain", True), ("genome_status", "Status", True), ("genome_length", "Length", True),
-           ("host_name", "Host", True), ("isolation_country", "Country", True),
-           ("geographic_location", "Geographic Location", False), ("collection_date", "Collection Date", True),
-           ("isolation_source", "Isolation Source", False), ("genome_quality", "Quality", False),
-           ("bvbrc_genome_id", "BV-BRC ID", False), ("md5", "MD5", False), ("date_modified", "Modified", False)]
+GN_COLS = [("genome_name", "Genome Name", True), ("strain", "Strain", True), ("genbank", "GenBank Accessions", True),
+           ("genome_length", "Size", True), ("genome_status", "Genome Status", True), ("collection_date", "Collection Date", True),
+           ("isolation_country", "Isolation Country", True), ("host_name", "Host Name", True),
+           ("geographic_location", "Geographic Location", False), ("isolation_source", "Isolation Source", False),
+           ("genome_quality", "Genome Quality", False), ("genome_id", "Genome ID", False), ("bvbrc_genome_id", "BV-BRC ID", False),
+           ("gc_content", "GC %", False), ("release_date", "Release Date", False), ("date_modified", "Modified", False)]
 GN_FACETS = [("genome_status", "Genome Status"), ("host_name", "Host"), ("isolation_country", "Country"),
              ("collection_year", "Collection Year"), ("genome_quality", "Quality")]
 
@@ -201,17 +201,39 @@ def create_app(scheduler: bool = True) -> FastAPI:
         return RedirectResponse(f"/changeset/{cid}", 303)
 
     @app.get("/genomes")
-    def genomes(request: Request):
-        rows = _rows("SELECT g.*, s.md5 FROM genome g LEFT JOIN genome_sequence s ON s.accession=g.accession ORDER BY g.genome_id")
+    def genomes(request: Request, watch: int = 0):
+        watches = _rows("SELECT w.id, w.name, w.taxon_id, (SELECT COUNT(*) FROM genome g WHERE g.watch_id=w.id) n FROM watchlist w")
+        if not watch and watches:
+            watch = next((w["id"] for w in watches if w["n"]), watches[0]["id"])
+        cur = next((w for w in watches if w["id"] == watch), None)
+        rows = _rows("SELECT g.*, s.md5, s.gc_content FROM genome g LEFT JOIN genome_sequence s ON s.accession=g.accession "
+                     "WHERE g.watch_id=? ORDER BY g.genome_id", watch)
+        prov: dict[str, dict] = {}
+        for p in _rows("SELECT p.genome_id, p.field, p.source FROM field_provenance p JOIN genome g ON g.genome_id=p.genome_id "
+                       "WHERE g.watch_id=?", watch):
+            prov.setdefault(p["genome_id"], {})[p["field"]] = p["source"]
+        lineage = (rows[0].get("taxon_lineage_names") or "").split(",") if rows else []
         for n, r in enumerate(rows):
             r["id"] = n
-            if r.get("accession_version"):
-                r["accession"] = f"{r['accession']}.{r['accession_version']}"
-            r["md5"] = (r.get("md5") or "")[:8]
-        data = {"rows": rows, "selectable": False, "name": "genomes",
+            r["genbank"] = f"{r['accession']}.{r['accession_version']}" if r.get("accession_version") else r["accession"]
+            r["_prov"] = prov.get(r["genome_id"], {})
+        data = {"rows": rows, "name": "genomes", "watch": cur and cur["name"], "lineage": lineage,
                 "cols": [{"k": k, "label": l, "on": on} for k, l, on in GN_COLS],
                 "facets": [{"k": k, "label": l} for k, l in GN_FACETS]}
-        return render(request, "genomes.html", data=data, nav="gen")
+        return render(request, "genomes.html", data=data, nav="gen", watches=watches, watch=watch)
+
+    @app.post("/genomes/fasta")
+    async def genomes_fasta(request: Request):
+        form = await request.form()
+        ids = [i for i in str(form.get("ids", "")).split(",") if i]
+        out = []
+        for r in _rows("SELECT file_path FROM genome_sequence WHERE genome_id IN (%s)" % ",".join("?" * len(ids)), *ids) if ids else []:
+            try:
+                out.append(Path(r["file_path"]).read_text())
+            except OSError:
+                pass
+        return Response("".join(out), media_type="text/plain; charset=utf-8",
+                        headers={"Content-Disposition": "attachment; filename=genomes.fna"})
 
     @app.get("/genomes.tsv")
     def genomes_tsv():
