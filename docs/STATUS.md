@@ -32,3 +32,7 @@ Windows에서 `git`이 PATH에 없으면 `C:\Program Files\Git\cmd\git.exe`로 �
 - 웹 UI 화면 스크린샷 확인 (스프레드시트형으로 변경 후 미확인)
 - Pathoplexus 대상 바이러스 추가 시 `config.PATHOPLEXUS_ORGANISMS` 설정과 필드 매핑 검증
 - genome_feature(주석), 재개 가능한 다운로드, 로깅
+
+## �ܺ� ȣ�� ��Ģ
+- ��� �� ��û(NCBI/BV-BRC/Pathoplexus)�� �ּ� 300ms ���� (GC_REQUEST_DELAY_MS), 429/5xx�� ���� ������� �ִ� 3ȸ ��õ� (sources._get).
+- NCBI�� Datasets v2 REST API ���. datasets CLI�� �̻��(�̼�ġ). ��뷮 ���� �ϰ� �ٿ�ε尡 �ʿ��ϸ� CLI �鿣�带 ���� �ɼ����� �߰� ����.

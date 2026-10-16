@@ -20,14 +20,29 @@ def _client() -> httpx.Client:
 
 
 def _throttle():
-    """NCBI: 3 req/s without key, 10 with."""
+    """Space out every outgoing web request (default 300 ms, GC_REQUEST_DELAY_MS)."""
     global _last_call
-    gap = 0.11 if config.NCBI_API_KEY else 0.34
-    wait = gap - (time.monotonic() - _last_call)
+    wait = config.REQUEST_DELAY_S - (time.monotonic() - _last_call)
     if wait > 0:
         time.sleep(wait)
     _last_call = time.monotonic()
 
+
+def _get(c: httpx.Client, url: str, retries: int = 3, **kw) -> httpx.Response:
+    """GET with the shared delay; retries 429/5xx and network errors with backoff."""
+    for attempt in range(retries + 1):
+        _throttle()
+        try:
+            r = c.get(url, **kw)
+            if r.status_code in (429, 500, 502, 503, 504) and attempt < retries:
+                time.sleep(2 ** attempt)
+                continue
+            return r
+        except httpx.TransportError:
+            if attempt == retries:
+                raise
+            time.sleep(2 ** attempt)
+    raise RuntimeError("unreachable")
 
 def split_version(acc: str) -> tuple[str, int | None]:
     if "." in acc:
@@ -38,10 +53,9 @@ def split_version(acc: str) -> tuple[str, int | None]:
 
 
 def _ncbi_get(c: httpx.Client, url: str, **params):
-    _throttle()
     if config.NCBI_API_KEY:
         params["api_key"] = config.NCBI_API_KEY
-    r = c.get(url, params=params)
+    r = _get(c, url, params=params)
     r.raise_for_status()
     return r
 
@@ -148,7 +162,7 @@ def fetch_bvbrc(taxon_id: int | None) -> dict[str, dict]:
     offset, page = 0, 1000
     with _client() as c:
         while True:
-            r = c.get(f"{config.BVBRC_BASE}?eq(taxon_lineage_ids,{taxon_id})&sort(+genome_id)&limit({page},{offset})",
+            r = _get(c, f"{config.BVBRC_BASE}?eq(taxon_lineage_ids,{taxon_id})&sort(+genome_id)&limit({page},{offset})",
                       headers={"Accept": "application/json"})
             r.raise_for_status()
             rows = r.json()
@@ -207,7 +221,7 @@ def pathoplexus_resolve(watch_name: str, taxon: str, taxon_id: int | None):
         for s, _ in cands:
             for flt in ([{"ncbiVirusTaxId": taxon_id}] if taxon_id else []) + [{"ncbiVirusName": taxon}]:
                 try:
-                    r = c.get(f"{config.PATHOPLEXUS_BASE}/{s}/sample/aggregated", params={**base, **flt})
+                    r = _get(c, f"{config.PATHOPLEXUS_BASE}/{s}/sample/aggregated", params={**base, **flt})
                     if r.status_code == 200 and r.json()["data"][0]["count"] > 0:
                         found = (s, {**base, **flt})
                         break
@@ -228,7 +242,7 @@ def fetch_pathoplexus(watch_name: str, taxon: str = "", taxon_id: int | None = N
     slug, flt = res
     out: dict[str, dict] = {}
     with _client() as c:
-        r = c.get(f"{config.PATHOPLEXUS_BASE}/{slug}/sample/details",
+        r = _get(c, f"{config.PATHOPLEXUS_BASE}/{slug}/sample/details",
                   params={**flt, "fields": ",".join(_PPX_FIELDS), "limit": 200000}, timeout=300)
         r.raise_for_status()
         for row in r.json().get("data", []):
