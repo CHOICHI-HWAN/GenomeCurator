@@ -6,6 +6,12 @@
       "runtimeExecutable": "python",
       "runtimeArgs": ["-m", "genomecurator", "serve", "--port", "8000"],
       "port": 8000
+    },
+    {
+      "name": "static-preview",
+      "runtimeExecutable": "python",
+      "runtimeArgs": ["-m", "http.server", "8010", "--directory", "docs"],
+      "port": 8010
     }
   ]
 }

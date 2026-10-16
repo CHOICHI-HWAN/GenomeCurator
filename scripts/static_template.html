@@ -1,0 +1,215 @@
+<!doctype html>
+<html lang="ko"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<title>GenomeCurator — Virus Genome Catalog</title>
+<meta name="description" content="Read-only snapshot of virus genome metadata curated from NCBI Virus, Pathoplexus and BV-BRC.">
+<style>
+:root{--bg:#eef1f5;--fg:#27303a;--mut:#6b7785;--card:#fff;--bd:#d5dbe3;--acc:#2f79b5;--ok:#1a7f37;--bad:#c62828;--warn:#9a6700;--bvg:#76a72b;
+--hd:#1f4e79;--th:#e3e9f0;--stripe:#f7f9fb;--hover:#e8f1fa;--chip:#dbe9f6}
+@media(prefers-color-scheme:dark){:root{--bg:#14181d;--fg:#e4e8ed;--mut:#8f9aa7;--card:#1d232a;--bd:#323b45;--acc:#5aa2dc;--ok:#3fb950;--bad:#f85149;--warn:#d29922;
+--hd:#0f2a44;--th:#27313b;--stripe:#20272e;--hover:#273544;--chip:#2c4458}}
+*{box-sizing:border-box}body{margin:0;background:var(--bg);color:var(--fg);font:14px/1.45 "Segoe UI",system-ui,"Malgun Gothic",sans-serif}
+header{background:var(--hd);color:#fff;display:flex;align-items:center;gap:6px;padding:0 20px;min-height:48px;flex-wrap:wrap}
+header .logo{font-weight:700;font-size:18px;margin-right:22px}header .logo i{font-style:normal;color:#8fd0ff}
+header a{color:#cfe3f5;text-decoration:none;padding:14px 12px;font-size:14px;border-bottom:3px solid transparent;cursor:pointer}
+header a:hover{color:#fff}header a.on{color:#fff;border-bottom-color:#8fd0ff}
+header .sp{flex:1}header select{background:#fff1;color:#fff;border:1px solid #fff4}header select option{color:#000}
+main{max-width:1500px;margin:0 auto;padding:10px 14px}
+select,input,button{font:inherit;padding:4px 10px;border:1px solid var(--bd);border-radius:3px;background:var(--card);color:var(--fg)}
+button{cursor:pointer}button:hover{border-color:var(--acc)}
+a{color:var(--acc)}.mut{color:var(--mut)}.view{display:none}.view.on{display:block}
+.bvh{display:flex;gap:10px;align-items:center;margin:4px 0 6px}
+.bvh .ico{width:26px;height:26px;background:var(--bvg);color:#fff;border-radius:3px;display:flex;align-items:center;justify-content:center;font-weight:700}
+.bvh small{display:block;color:var(--mut);font-size:11px;text-transform:uppercase;letter-spacing:.04em}
+.crumb{font-size:12.5px;color:var(--mut)}.crumb b{color:var(--bvg)}
+.cards{display:grid;grid-template-columns:repeat(auto-fit,minmax(160px,1fr));gap:12px;margin:10px 0 14px}
+.kpi{background:var(--card);border:1px solid var(--bd);border-top:3px solid var(--acc);border-radius:4px;padding:10px 14px}
+.kpi b{display:block;font-size:24px;line-height:1.2}.kpi span{color:var(--mut);font-size:12.5px}
+.charts{display:grid;grid-template-columns:repeat(auto-fit,minmax(420px,1fr));gap:14px}
+.ch{background:var(--card);border:1px solid var(--bd);border-radius:4px;padding:10px 14px}
+.ch h4{margin:0 0 6px;font-size:14px}.ch small{color:var(--mut);font-weight:400}.ch div{position:relative;height:260px}
+.tool{display:flex;gap:2px;align-items:flex-end;background:var(--card);border:1px solid var(--bd);padding:6px 8px;flex-wrap:wrap}
+.tbn{display:flex;flex-direction:column;align-items:center;gap:2px;padding:2px 12px;cursor:pointer;color:var(--acc);font-size:10px;letter-spacing:.05em;text-transform:uppercase;border:0;background:none}
+.tbn i{font-style:normal;font-size:20px;line-height:22px}.tbn:hover{color:var(--bvg)}
+.kw{display:flex;flex-direction:column;font-size:10px;letter-spacing:.05em;color:var(--mut);text-transform:uppercase;margin:0 10px}.kw input{width:240px}
+.wrap{display:flex;background:var(--card);border:1px solid var(--bd);border-top:0}
+#fp{width:230px;flex:none;border-right:1px solid var(--bd);max-height:72vh;overflow:auto;font-size:12.5px}
+#fp .fg{padding:6px 10px;border-bottom:1px solid var(--bd)}#fp .fg>b{display:block;font-size:11px;color:var(--mut);text-transform:uppercase;margin:2px 0 4px}
+.fv{display:flex;justify-content:space-between;gap:6px;padding:1px 4px;border-radius:2px;cursor:pointer}.fv:hover{background:var(--hover)}.fv.on{background:var(--bvg);color:#fff}
+.fv span:first-child{overflow:hidden;text-overflow:ellipsis;white-space:nowrap}.fv .n{opacity:.7}.more{font-size:11.5px;color:var(--acc);cursor:pointer;padding:2px 4px}
+.gm{flex:1;min-width:0}.chips{display:flex;gap:6px;flex-wrap:wrap;padding:5px 8px;border-bottom:1px solid var(--bd)}
+.chip{background:var(--chip);border-radius:2px;padding:0 4px 0 8px;font-size:12px}.chip a{cursor:pointer;margin-left:4px;padding:0 4px}
+.gs{overflow:auto;max-height:66vh}
+.gt{width:100%;border-collapse:collapse;font-size:12.5px;white-space:nowrap}
+.gt th{position:sticky;top:0;background:var(--th);cursor:pointer;user-select:none;border-bottom:2px solid var(--bd);border-right:1px solid var(--bd);padding:5px 8px;font-size:12px;text-align:left;z-index:1}
+.gt th.s::after{content:" ▲";font-size:9px}.gt th.s.d::after{content:" ▼";font-size:9px}
+.gt td{padding:3px 8px;border-bottom:1px solid var(--bd);max-width:260px;overflow:hidden;text-overflow:ellipsis}
+.gt tbody tr{cursor:pointer}.gt tbody tr:hover{background:var(--hover)}.gt tr.cur{background:var(--chip)}.gt td.nm{color:var(--acc);font-weight:500}.Complete{color:var(--ok)}
+#rp{width:300px;flex:none;border-left:1px solid var(--bd);background:var(--stripe);font-size:12.5px;max-height:72vh;overflow:auto}
+#rp h5{margin:0;padding:8px 12px;font-size:13px;background:var(--bvg);color:#fff}
+#rp .hint{margin:12px;padding:10px;background:var(--card);border:1px solid var(--bd);border-radius:3px;color:var(--mut)}
+#rp table{border-collapse:collapse;width:100%;font-size:12px}#rp td{padding:3px 10px;border-bottom:1px solid var(--bd);vertical-align:top;word-break:break-word}#rp td:first-child{color:var(--mut);width:42%}
+.src{font-size:10px;border-radius:8px;padding:0 6px;margin-left:4px;color:#fff}.src.pathoplexus{background:#8a6bbd}.src.ncbi{background:#2f79b5}.src.bvbrc{background:#3a9d6e}
+.acts{padding:10px 12px;display:flex;flex-direction:column;gap:6px}
+.pg{display:flex;gap:8px;align-items:center;padding:6px 10px;background:var(--card);border:1px solid var(--bd);border-top:0;font-size:12.5px}
+.pg .pn{cursor:pointer;color:var(--acc);padding:0 4px}.pg .pn.on{font-weight:700;color:var(--fg);text-decoration:underline}
+.cm{position:absolute;background:var(--card);border:1px solid var(--bd);padding:8px;box-shadow:0 4px 12px rgba(0,0,0,.2);z-index:5;display:none;max-height:300px;overflow:auto;text-align:left;text-transform:none;letter-spacing:0}
+.cm label{display:block;font-size:12.5px;color:var(--fg)}.cm.open{display:block}
+.card{background:var(--card);border:1px solid var(--bd);border-radius:4px;padding:14px 18px;margin:12px 0;max-width:900px}
+.card h3{margin:0 0 8px}.card code{background:var(--th);padding:1px 5px;border-radius:3px}
+footer{max-width:1500px;margin:6px auto 24px;padding:0 14px;color:var(--mut);font-size:12px}
+@media(max-width:1000px){#rp{display:none}}@media(max-width:700px){#fp{display:none}.charts{grid-template-columns:1fr}header{padding:0 10px}}
+</style></head><body>
+<header><span class="logo">Genome<i>Curator</i></span>
+ <a data-v="overview">Overview</a><a data-v="genomes">Genomes</a><a data-v="about">About</a>
+ <span class="sp"></span><select id="vsel" title="Virus"></select></header>
+<main>
+<section class="view" id="v-overview"></section>
+<section class="view" id="v-genomes"></section>
+<section class="view" id="v-about"></section>
+</main>
+<footer id="foot"></footer>
+
+<script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.1/dist/chart.umd.min.js"></script>
+<script type="application/json" id="data">/*DATA*/</script>
+<script>
+const DATA=JSON.parse(document.getElementById('data').textContent);
+const $=(s,r=document)=>r.querySelector(s);
+const esc=s=>String(s??'').replace(/[&<>"]/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c]));
+const fmt=n=>Number(n).toLocaleString();
+const COLS=[["genome_name","Genome Name",1],["strain","Strain",1],["genbank","GenBank Accessions",1],["genome_length","Size",1],["genome_status","Genome Status",1],
+ ["collection_date","Collection Date",1],["isolation_country","Isolation Country",1],["host_name","Host Name",1],["sra_accession","SRA Accession",1],
+ ["bioproject_accession","BioProject",0],["biosample_accession","BioSample",0],["sequencing_platform","Sequencing Platform",0],["assembly_method","Assembly Method",0],
+ ["geographic_location","Geographic Location",0],["isolation_source","Isolation Source",0],["genome_quality","Genome Quality",0],["has_sra","SRA Available",0],
+ ["genome_id","Genome ID",0],["bvbrc_genome_id","BV-BRC ID",0],["gc_content","GC %",0],["release_date","Release Date",0]].map(([k,label,on])=>({k,label,on:!!on}));
+const FACETS=[["genome_status","Genome Status"],["host_name","Host"],["isolation_country","Country"],["collection_year","Collection Year"],["has_sra","SRA"],["genome_quality","Quality"]].map(([k,label])=>({k,label}));
+const LINKS={genbank:a=>'https://www.ncbi.nlm.nih.gov/nuccore/'+a,sra_accession:a=>'https://www.ncbi.nlm.nih.gov/sra/'+a,
+ bioproject_accession:a=>'https://www.ncbi.nlm.nih.gov/bioproject/?term='+a,biosample_accession:a=>'https://www.ncbi.nlm.nih.gov/biosample/'+a};
+const cell=(k,r)=>{const v=r[k];if(!LINKS[k]||!v)return esc(v);
+ return String(v).split(/[;,]\s*/).filter(Boolean).map(a=>`<a href="${esc(LINKS[k](a.replace(/\.\d+$/,'')))}" target="_blank" rel="noopener" onclick="event.stopPropagation()">${esc(a)}</a>`).join(', ')};
+DATA.viruses.forEach(v=>v.rows.forEach((r,i)=>{r.id=i;r.collection_year=(r.collection_date||'').slice(0,4)||'(없음)';r.has_sra=r.sra_accession?'Yes':'No'}));
+
+let cur=DATA.viruses[0],view='overview',charts=[],G=null;
+const vsel=$('#vsel');DATA.viruses.forEach((v,i)=>vsel.add(new Option(`${v.name} (${fmt(v.rows.length)})`,i)));
+vsel.onchange=()=>{cur=DATA.viruses[+vsel.value];render()};
+
+/* ---------------- Overview ---------------- */
+function counts(rows,key,n,empty='(없음)'){const c={};rows.forEach(r=>{const v=r[key]||empty;c[v]=(c[v]||0)+1});
+ const e=Object.entries(c).sort((a,b)=>b[1]-a[1]);const top=e.slice(0,n),rest=e.slice(n).reduce((s,x)=>s+x[1],0);
+ return{labels:top.map(x=>x[0]).concat(rest?['기타']:[]),values:top.map(x=>x[1]).concat(rest?[rest]:[])}}
+function byPrefix(rows,key,len){const c={};rows.forEach(r=>{const v=(r[key]||'').slice(0,len)||'(없음)';c[v]=(c[v]||0)+1});
+ const ks=Object.keys(c).filter(k=>k!=='(없음)').sort();if(c['(없음)'])ks.push('(없음)');return{labels:ks,values:ks.map(k=>c[k])}}
+function overview(){
+ const rows=cur.rows,n=rows.length||1,lens=rows.map(r=>r.genome_length).filter(Boolean);
+ const complete=rows.filter(r=>r.genome_status==='Complete').length,sra=rows.filter(r=>r.sra_accession).length;
+ const latest=rows.map(r=>r.release_date||'').sort().pop()||'-';
+ $('#v-overview').innerHTML=`<div class="bvh"><div class="ico">T</div><div><small>Taxon View · Overview</small><div class="crumb">${esc(cur.lineage.slice(0,-1).join(' › '))}${cur.lineage.length>1?' › ':''}<b>${esc(cur.name)}</b> ( ${fmt(rows.length)} Genomes )</div></div></div>
+ <div class="cards">${[[fmt(rows.length),'전체 유전체'],[(100*complete/n).toFixed(1)+'%','완전 유전체 비율'],[fmt(lens.length?Math.round(lens.reduce((a,b)=>a+b,0)/lens.length):0)+' bp','평균 길이'],
+ [(100*sra/n).toFixed(1)+'%','SRA 보유 비율'],[latest,'가장 최근 공개일']].map(([a,b])=>`<div class="kpi"><b>${a}</b><span>${b}</span></div>`).join('')}</div>
+ <div class="charts">${[['monthly','월별 신규 등록','release_date'],['year','수집 연도별','collection_date'],['country','국가별 상위 15','클릭하면 목록 필터'],['host','숙주별','클릭하면 목록 필터'],['hist','서열 길이 분포','bp'],['fill','메타데이터 완성도','값이 채워진 비율 (%)']]
+ .map(([id,t,s])=>`<div class="ch"><h4>${t} <small>${s}</small></h4><div><canvas id="c_${id}"></canvas></div></div>`).join('')}</div>`;
+ charts.forEach(c=>c.destroy());charts=[];
+ if(typeof Chart==='undefined'){$('.charts').innerHTML='<div class="card mut">Chart.js를 불러오지 못했습니다. 인터넷 연결을 확인하세요.</div>';return}
+ const cs=getComputedStyle(document.documentElement),css=n=>cs.getPropertyValue(n).trim();
+ Chart.defaults.color=css('--fg');Chart.defaults.borderColor=css('--bd');
+ const pal=['#2f79b5','#e08a1e','#3a9d6e','#c4524f','#8a6bbd','#4aa3b8','#b5a02f','#7c8a99','#d4709c'];
+ const base=(x={})=>({responsive:true,maintainAspectRatio:false,plugins:{legend:{display:false}},...x});
+ const mk=(id,type,d,opt,color=css('--acc'))=>charts.push(new Chart($('#c_'+id),{type,data:{labels:d.labels,datasets:[{data:d.values,backgroundColor:color,borderRadius:2}]},options:opt}));
+ const go=key=>(e,els,ch)=>{if(!els.length)return;const l=ch.data.labels[els[0].index];if(l==='기타'||l==='(없음)')return;openGenomes({[key]:[l]})};
+ mk('monthly','bar',byPrefix(rows,'release_date',7),base());mk('year','bar',byPrefix(rows,'collection_date',4),base());
+ mk('country','bar',counts(rows,'isolation_country',15),base({indexAxis:'y',onClick:go('isolation_country')}));
+ const h=counts(rows,'host_name',8);charts.push(new Chart($('#c_host'),{type:'doughnut',data:{labels:h.labels,datasets:[{data:h.values,backgroundColor:pal,borderWidth:0}]},options:{responsive:true,maintainAspectRatio:false,onClick:go('host_name'),plugins:{legend:{position:'right'}}}}));
+ const hist={labels:[],values:[]};if(lens.length){const lo=Math.min(...lens),hi=Math.max(...lens),step=Math.max(1,Math.ceil((hi-lo+1)/20)),b={};lens.forEach(x=>{const i=Math.floor((x-lo)/step);b[i]=(b[i]||0)+1});
+  for(let i=0;i<=Math.max(...Object.keys(b).map(Number));i++){hist.labels.push(fmt(lo+i*step));hist.values.push(b[i]||0)}}
+ mk('hist','bar',hist,base(),'#3a9d6e');
+ const fields=['host_name','isolation_country','collection_date','isolation_source','strain','geographic_location','genotype','subtype','genome_quality','sra_accession','bioproject_accession','biosample_accession'];
+ const fill=fields.map(f=>({f,p:Math.round(1000*rows.filter(r=>r[f]).length/n)/10})).sort((a,b)=>a.p-b.p);
+ mk('fill','bar',{labels:fill.map(x=>x.f),values:fill.map(x=>x.p)},base({indexAxis:'y',scales:{x:{max:100}}}),'#e08a1e');
+}
+
+/* ---------------- Genomes grid ---------------- */
+function openGenomes(filters){show('genomes',filters)}
+function genomes(preset){
+ const rows=cur.rows,cols=COLS,facets=FACETS;
+ const st={f:{},q:'',sort:null,dir:1,pg:0,ps:100,vis:new Set(cols.filter(c=>c.on).map(c=>c.k)),cur:null,sel:new Set(),fp:true};
+ for(const k in (preset||{}))st.f[k]=new Set(preset[k]);
+ $('#v-genomes').innerHTML=`<div class="bvh"><div class="ico">T</div><div><small>Taxon View · Genomes</small><div class="crumb">${esc(cur.lineage.slice(0,-1).join(' › '))}${cur.lineage.length>1?' › ':''}<b>${esc(cur.name)}</b> ( ${fmt(rows.length)} Genomes )</div></div></div>
+ <div class="tool"><button class="tbn" id="b_dl"><i>⬇</i>Download</button>
+  <label class="kw">Keywords<input id="gq" placeholder="검색어 입력"></label>
+  <span style="position:relative"><button class="tbn" id="b_cols"><i>▥</i>Select Columns</button><div class="cm" id="cm"></div></span>
+  <button class="tbn" id="b_fp"><i>⛃</i>Filters</button><button class="tbn" id="b_clr"><i>✕</i>Clear</button><span style="flex:1"></span><span class="mut" id="gcount" style="font-size:12px"></span></div>
+ <div class="wrap"><aside id="fp"></aside><div class="gm"><div class="chips" id="chips" style="display:none"></div><div class="gs"><table class="gt"><thead id="gh"></thead><tbody id="gb"></tbody></table></div></div><aside id="rp"></aside></div>
+ <div class="pg"><span id="gres"></span><span style="flex:1"></span><span class="pn" id="p_prev">◀</span><span id="gpages"></span><span class="pn" id="p_next">▶</span>
+  <select id="gps"><option>25</option><option>50</option><option selected>100</option><option>250</option></select> 행</div>`;
+ const val=(r,k)=>{const v=r[k];return v===null||v===undefined||v===''?'(없음)':String(v)},label=k=>(cols.find(c=>c.k===k)||{label:k}).label;
+ const match=(r,skip)=>{for(const k in st.f){if(k===skip||!st.f[k].size)continue;if(!st.f[k].has(val(r,k)))return false}
+  if(st.q){const q=st.q.toLowerCase();if(!cols.some(c=>String(r[c.k]??'').toLowerCase().includes(q)))return false}return true};
+ let vw=[];
+ const filt=()=>{vw=rows.filter(r=>match(r));if(st.sort){const k=st.sort,d=st.dir;vw.sort((a,b)=>{const x=a[k],y=b[k];if(x==null||x==='')return 1;if(y==null||y==='')return -1;
+   const nx=parseFloat(x),ny=parseFloat(y);if(!isNaN(nx)&&!isNaN(ny)&&String(nx)==String(x))return(nx-ny)*d;return String(x).localeCompare(String(y))*d})}};
+ const facetsHtml=()=>{let h='';for(const f of facets){const cnt={};rows.forEach(r=>{if(match(r,f.k)){const v=val(r,f.k);cnt[v]=(cnt[v]||0)+1}});
+  const act=st.f[f.k]||new Set();act.forEach(v=>{if(!(v in cnt))cnt[v]=0});const e=Object.entries(cnt).sort((a,b)=>b[1]-a[1]||a[0].localeCompare(b[0]));if(!e.length)continue;
+  const open=st['m'+f.k],sh=open?e:e.slice(0,8);
+  h+=`<div class="fg"><b>${esc(f.label)}</b>`+sh.map(([v,n])=>`<div class="fv ${act.has(v)?'on':''}" data-k="${esc(f.k)}" data-v="${esc(v)}"><span title="${esc(v)}">${esc(v)}</span><span class="n">${n}</span></div>`).join('')
+   +(e.length>8?`<div class="more" data-more="${esc(f.k)}">${open?'접기':`+${e.length-8}개 더 보기`}</div>`:'')+'</div>'}return h};
+ const rp=()=>{const el=$('#rp');const n=st.sel.size,r=st.cur;
+  if(!n&&!r){el.innerHTML='<h5>Nothing selected.</h5><div class="hint">표에서 행을 클릭하면 상세 정보와 값의 출처(Pathoplexus / NCBI / BV-BRC)가 표시됩니다. 체크박스로 여러 건을 선택하면 TSV로 내려받을 수 있습니다.</div>';return}
+  let h=`<h5>${n?n+' genome'+(n>1?'s':'')+' selected':'Genome detail'}</h5>`;if(n)h+='<div class="acts"><button id="b_seltsv">선택 항목 TSV 다운로드</button></div>';
+  if(r){const keys=[...new Set(cols.map(c=>c.k).concat(['taxon_id','sequence_md5','genotype','subtype','segment','publication']))];
+   h+='<table>'+keys.filter(k=>r[k]!==null&&r[k]!==undefined&&r[k]!=='').map(k=>{const s=r.p&&r.p[k];return `<tr><td>${esc(label(k))}</td><td>${cell(k,r)}${s?`<span class="src ${s}">${s}</span>`:''}</td></tr>`}).join('')+'</table>'}
+  el.innerHTML=h;const b=$('#b_seltsv');if(b)b.onclick=()=>tsv(true)};
+ const table=()=>{const vc=cols.filter(c=>st.vis.has(c.k));
+  $('#gh').innerHTML='<tr><th><input type="checkbox" id="gall"></th>'+vc.map(c=>`<th data-s="${c.k}" class="${st.sort===c.k?'s '+(st.dir<0?'d':''):''}">${esc(c.label)}</th>`).join('')+'</tr>';
+  const pages=Math.max(1,Math.ceil(vw.length/st.ps));st.pg=Math.min(st.pg,pages-1);const sl=vw.slice(st.pg*st.ps,(st.pg+1)*st.ps);
+  $('#gb').innerHTML=sl.map(r=>`<tr data-id="${r.id}" class="${st.cur&&st.cur.id===r.id?'cur':''}"><td><input type="checkbox" ${st.sel.has(r.id)?'checked':''}></td>`
+   +vc.map(c=>`<td class="${c.k==='genome_name'?'nm':''} ${c.k==='genome_status'?esc(r[c.k]):''}" title="${esc(r[c.k])}">${cell(c.k,r)}</td>`).join('')+'</tr>').join('');
+  const a=vw.length?st.pg*st.ps+1:0,b=Math.min(vw.length,(st.pg+1)*st.ps);$('#gres').textContent=`${fmt(a)} - ${fmt(b)} of ${fmt(vw.length)} results`;
+  $('#gcount').textContent=vw.length!==rows.length?`${fmt(vw.length)} / ${fmt(rows.length)} 필터됨`:'';
+  let pn='';for(let i=Math.max(0,st.pg-2);i<=Math.min(pages-1,st.pg+2);i++)pn+=`<span class="pn ${i===st.pg?'on':''}" data-p="${i}">${i+1}</span>`;$('#gpages').innerHTML=pn;
+  const ga=$('#gall');if(ga)ga.checked=vw.length>0&&vw.every(r=>st.sel.has(r.id))};
+ const draw=()=>{filt();$('#fp').innerHTML=facetsHtml();$('#fp').style.display=st.fp?'':'none';
+  const ch=[];for(const k in st.f)st.f[k].forEach(v=>ch.push(`<span class="chip">${esc(label(k))}: ${esc(v)}<a data-rm="${esc(k)}" data-v="${esc(v)}">✕</a></span>`));
+  $('#chips').style.display=ch.length?'flex':'none';$('#chips').innerHTML=ch.join('');table();rp()};
+ const tsv=sel=>{const vc=cols.filter(c=>st.vis.has(c.k));const list=sel?vw.filter(r=>st.sel.has(r.id)):vw;
+  const t='﻿'+[vc.map(c=>c.label).join('\t')].concat(list.map(r=>vc.map(c=>String(r[c.k]??'').replace(/[\t\n]/g,' ')).join('\t'))).join('\n');
+  const a=document.createElement('a');a.href=URL.createObjectURL(new Blob([t],{type:'text/tab-separated-values'}));a.download=cur.name.replace(/\s+/g,'_')+'_genomes.tsv';a.click()};
+ const root=$('#v-genomes');
+ root.onclick=e=>{const t=e.target;
+  const fv=t.closest('.fv');if(fv){const k=fv.dataset.k,v=fv.dataset.v;(st.f[k]=st.f[k]||new Set());st.f[k].has(v)?st.f[k].delete(v):st.f[k].add(v);st.pg=0;draw();return}
+  if(t.dataset.more){st['m'+t.dataset.more]=!st['m'+t.dataset.more];$('#fp').innerHTML=facetsHtml();return}
+  if(t.dataset.rm){st.f[t.dataset.rm].delete(t.dataset.v);draw();return}
+  if(t.dataset.p){st.pg=+t.dataset.p;table();return}
+  const th=t.closest('th[data-s]');if(th){const k=th.dataset.s;st.dir=st.sort===k?-st.dir:1;st.sort=k;draw();return}
+  if(t.id==='gall'){vw.forEach(r=>t.checked?st.sel.add(r.id):st.sel.delete(r.id));table();rp();return}
+  const tr=t.closest('#gb tr');if(tr){const id=+tr.dataset.id;if(t.tagName==='INPUT'){t.checked?st.sel.add(id):st.sel.delete(id)}else if(t.tagName!=='A'){st.cur=rows[id]}
+   root.querySelectorAll('#gb tr').forEach(x=>x.classList.toggle('cur',st.cur&&+x.dataset.id===st.cur.id));rp();return}
+  if(!t.closest('#cm')&&!t.closest('#b_cols'))$('#cm').classList.remove('open')};
+ $('#gq').oninput=e=>{st.q=e.target.value;st.pg=0;draw()};
+ $('#cm').innerHTML=cols.map(c=>`<label><input type="checkbox" data-c="${c.k}" ${st.vis.has(c.k)?'checked':''}> ${esc(c.label)}</label>`).join('');
+ $('#cm').onchange=e=>{const k=e.target.dataset.c;e.target.checked?st.vis.add(k):st.vis.delete(k);table()};
+ $('#b_cols').onclick=()=>$('#cm').classList.toggle('open');$('#b_dl').onclick=()=>tsv(false);$('#b_fp').onclick=()=>{st.fp=!st.fp;draw()};
+ $('#b_clr').onclick=()=>{st.f={};st.q='';$('#gq').value='';st.pg=0;draw()};
+ $('#p_prev').onclick=()=>{st.pg=Math.max(0,st.pg-1);table()};$('#p_next').onclick=()=>{st.pg++;table()};$('#gps').onchange=e=>{st.ps=+e.target.value;st.pg=0;table()};
+ draw();
+}
+
+/* ---------------- About ---------------- */
+function about(){$('#v-about').innerHTML=`<div class="card"><h3>GenomeCurator</h3>
+ <p>바이러스 유전체 메타데이터를 NCBI Virus, Pathoplexus, BV-BRC에서 모아 BV-BRC 형식으로 정리하고, 변경 사항을 사람이 검토·승인한 뒤에만 반영하는 큐레이션 도구입니다.
+ 이 페이지는 그 결과를 <b>읽기 전용</b>으로 보여 주는 정적 스냅샷입니다. 수집·검토·반영 기능은 포함되어 있지 않습니다.</p>
+ <h3 style="margin-top:16px">데이터 출처와 우선순위</h3>
+ <p>값이 충돌하면 <b>Pathoplexus &gt; NCBI Virus &gt; BV-BRC</b> 순으로 채택하며, 상세 패널의 배지(<span class="src pathoplexus">pathoplexus</span><span class="src ncbi">ncbi</span><span class="src bvbrc">bvbrc</span>)가 값의 출처를 나타냅니다.
+ 서열 파일은 이 페이지에 포함되어 있지 않으며, accession 링크로 NCBI에서 확인할 수 있습니다.</p>
+ <h3 style="margin-top:16px">포함된 바이러스</h3><ul>${DATA.viruses.map(v=>`<li>${esc(v.name)} — ${fmt(v.rows.length)}건 <span class="mut">(NCBI taxon ${esc(v.taxon_id)})</span></li>`).join('')}</ul>
+ ${DATA.repo?`<p>소스 코드: <a href="${esc(DATA.repo)}" target="_blank" rel="noopener">${esc(DATA.repo)}</a></p>`:''}</div>`}
+
+/* ---------------- Router ---------------- */
+function show(v,preset){view=v;document.querySelectorAll('header a[data-v]').forEach(a=>a.classList.toggle('on',a.dataset.v===v));
+ document.querySelectorAll('.view').forEach(s=>s.classList.toggle('on',s.id==='v-'+v));
+ if(v==='overview')overview();else if(v==='genomes')genomes(preset);else about();
+ history.replaceState(null,'','#'+v+'?v='+DATA.viruses.indexOf(cur));window.scrollTo(0,0)}
+function render(){show(view)}
+document.querySelectorAll('header a[data-v]').forEach(a=>a.onclick=()=>show(a.dataset.v));
+$('#foot').textContent=`스냅샷 생성: ${DATA.generated} · 메타데이터 출처: NCBI Virus, Pathoplexus, BV-BRC (각 출처의 이용 약관을 따릅니다)`;
+(()=>{const m=location.hash.match(/^#(overview|genomes|about)(?:\?v=(\d+))?/);if(m){if(m[2]&&DATA.viruses[+m[2]]){cur=DATA.viruses[+m[2]];vsel.value=m[2]}view=m[1]}show(view)})();
+</script>
+</body></html>

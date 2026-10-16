@@ -21,3 +21,13 @@ python -m genomecurator serve                           # http://127.0.0.1:8000
 ## Pathoplexus
 `genomecurator/config.py`의 `PATHOPLEXUS_ORGANISMS`에 `{워치 이름: LAPIS organism slug}`를 넣으면 활성화됩니다.
 (Nipah/Henipavirus는 현재 Pathoplexus에 organism이 없어 건너뜁니다. 필드 매핑은 미검증.)
+
+## 공개용 정적 페이지 (읽기 전용)
+
+`docs/index.html` 한 파일로 Overview(차트)와 Genomes(필터·정렬·상세·TSV)를 볼 수 있는 스냅샷이다. 수집·검토·반영(다운로드) 코드와 서열, 파일 경로, 이력은 들어 있지 않고 공개 메타데이터만 담긴다.
+
+```bash
+python scripts/build_static.py      # 로컬 DB에서 docs/index.html 재생성
+```
+
+GitHub Pages로 공개하려면 저장소 Settings → Pages → Source를 `main` 브랜치의 `/docs`로 지정한다. 차트는 CDN(Chart.js)을 쓰므로 보는 쪽에 인터넷이 필요하다.
