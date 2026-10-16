@@ -280,6 +280,24 @@ def create_app(scheduler: bool = True) -> FastAPI:
     def job(jid: str):
         return JOBS.get(jid) or JSONResponse({"error": "unknown job", "done": True}, 404)
 
+    @app.get("/api/changeset/{cid}/impact")
+    def changeset_impact_api(cid: int):
+        try:
+            return curate.changeset_impact(cid)
+        except ValueError as e:
+            return JSONResponse({"error": str(e)}, 404)
+
+    @app.post("/changeset/{cid}/delete")
+    def changeset_delete(request: Request, cid: int):
+        if not _same_origin(request):
+            return JSONResponse({"error": "cross-site request refused"}, 403)
+        try:
+            r = curate.delete_changeset(cid)
+            msg = f"changeset {cid}번 삭제 완료 — 항목 {r['items']}건 (이미 반영된 유전체는 그대로입니다)."
+        except ValueError as e:
+            msg = f"삭제 실패: {e}"
+        return RedirectResponse(f"/?msg={msg}", 303)
+
     @app.get("/changeset/{cid}")
     def changeset(request: Request, cid: int):
         cs = _rows("SELECT c.*, w.name wname FROM changeset c JOIN watchlist w ON w.id=c.watch_id WHERE c.id=?", cid)[0]

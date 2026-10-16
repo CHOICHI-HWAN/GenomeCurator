@@ -51,6 +51,44 @@ def watch_impact(watch_id: int) -> dict:
         con.close()
 
 
+def changeset_impact(changeset_id: int) -> dict:
+    con = connect()
+    try:
+        c = con.execute("SELECT c.*, w.name wname FROM changeset c LEFT JOIN watchlist w ON w.id=c.watch_id WHERE c.id=?",
+                        (changeset_id,)).fetchone()
+        if not c:
+            raise ValueError("changeset을 찾을 수 없습니다.")
+        by = {r[0]: r[1] for r in con.execute(
+            "SELECT decision, COUNT(*) FROM changeset_item WHERE changeset_id=? GROUP BY decision", (changeset_id,))}
+        return {"id": changeset_id, "watch": c["wname"], "status": c["status"], "items": sum(by.values()),
+                "rejected": by.get("rejected", 0), "hold": by.get("hold", 0), "approved": by.get("approved", 0),
+                "pending": by.get("pending", 0)}
+    finally:
+        con.close()
+
+
+def delete_changeset(changeset_id: int) -> dict:
+    """Delete a changeset and its items. Genomes already applied stay; only the review record goes.
+    Rejected/hold decisions in it are forgotten, so those items can come back at the next check."""
+    impact = changeset_impact(changeset_id)
+    con = connect()
+    try:
+        con.execute("BEGIN")
+        con.execute("DELETE FROM changeset_item WHERE changeset_id=?", (changeset_id,))
+        con.execute("DELETE FROM changeset WHERE id=?", (changeset_id,))
+        audit(con, "changeset_delete", f"changeset {changeset_id} ({impact['watch']}, {impact['status']}): {impact['items']} items")
+        con.commit()
+    except BaseException:
+        con.rollback()
+        raise
+    finally:
+        con.close()
+    stage = (config.DATA_DIR / "staging" / str(changeset_id)).resolve()
+    if (config.DATA_DIR / "staging").resolve() in stage.parents and stage.is_dir():
+        shutil.rmtree(stage, ignore_errors=True)
+    return impact
+
+
 def update_watch(watch_id: int, name: str | None = None, taxon: str | None = None, enabled: bool | None = None) -> list[str]:
     """Rename, re-point to another taxon (validated like add_watch) and/or (de)activate automatic checks.
     Returns human-readable notes; raises ValueError for invalid input."""

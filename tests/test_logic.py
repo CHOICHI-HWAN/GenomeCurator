@@ -172,3 +172,27 @@ def test_backup_roundtrip(tmp_path, monkeypatch):
     import pytest
     with pytest.raises(FileExistsError):
         backup.restore_backup(tmp_path / "b.zip")
+
+
+def test_delete_changeset(tmp_path, monkeypatch):
+    import pytest
+    from genomecurator import config, curate
+    from genomecurator.db import connect
+    monkeypatch.setattr(config, "DATA_DIR", tmp_path)
+    monkeypatch.setattr(config, "DB_PATH", tmp_path / "g.db")
+    con = connect()
+    con.execute("INSERT INTO watchlist(id,name,taxon,taxon_id) VALUES(1,'V','V',9)")
+    con.execute("INSERT INTO genome(genome_id,watch_id,accession) VALUES('9.1',1,'AB1')")
+    con.execute("INSERT INTO changeset(id,watch_id,status) VALUES(5,1,'APPLIED'),(6,1,'READY')")
+    con.execute("INSERT INTO changeset_item(changeset_id,accession,kind,decision) VALUES(5,'AB1','new','applied'),(5,'AB2','new','rejected'),(6,'AB3','new','pending')")
+    con.commit()
+    con.close()
+    imp = curate.changeset_impact(5)
+    assert imp["items"] == 2 and imp["rejected"] == 1
+    curate.delete_changeset(5)
+    db = connect()
+    assert [r[0] for r in db.execute("SELECT id FROM changeset")] == [6]
+    assert [r[0] for r in db.execute("SELECT changeset_id FROM changeset_item")] == [6]   # other changeset untouched
+    assert db.execute("SELECT COUNT(*) FROM genome").fetchone()[0] == 1                    # applied genomes stay
+    with pytest.raises(ValueError):
+        curate.delete_changeset(5)

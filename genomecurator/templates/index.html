@@ -71,6 +71,17 @@ async function lookup(){const q=document.getElementById('lkq').value.trim();if(!
 <table><tr><th>#</th><th>바이러스</th><th>생성</th><th>상태</th><th>신규/변경/삭제</th><th></th></tr>
 {% for c in changesets %}
 <tr><td>{{ c.id }}</td><td>{{ c.wname }}</td><td>{{ c.created }}</td><td class="{{ c.status }}">{{ c.status }}</td>
-<td class="mut">{{ c.summary_json[:90] }}</td><td><a href="/changeset/{{ c.id }}">검토</a></td></tr>
+<td class="mut">{{ c.summary_json[:90] }}</td><td><a href="/changeset/{{ c.id }}">검토</a> <button class="dcs" data-id="{{ c.id }}">삭제</button></td></tr>
 {% else %}<tr><td colspan="6" class="mut">없음</td></tr>{% endfor %}</table>
+<form id="csdel" method="post" style="display:none"></form>
+<script>
+async function delChangeset(id){
+ const r=await fetch('/api/changeset/'+id+'/impact');const i=await r.json();
+ if(i.error){alert(i.error);return}
+ let m='changeset #'+id+' ('+i.watch+', '+i.status+')을 삭제할까요?\n항목 '+i.items+'건의 검토 기록이 영구 삭제됩니다. 이미 반영된 유전체는 그대로 남습니다.';
+ if(i.rejected||i.hold)m+='\n\n⚠ 거절 '+i.rejected+'건 · 보류 '+i.hold+'건의 결정도 사라져서 다음 확인 때 다시 올라올 수 있습니다.';
+ if(!confirm(m))return;
+ const f=document.getElementById('csdel');f.action='/changeset/'+id+'/delete';f.submit()}
+document.querySelectorAll('.dcs').forEach(b=>b.onclick=()=>delChangeset(b.dataset.id));
+</script>
 {% endblock %}

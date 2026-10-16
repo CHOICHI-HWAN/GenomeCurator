@@ -9,6 +9,7 @@
  {% for n in summary.notes %}<span class="mut"> · ⚠ {{ n }}</span>{% endfor %}</summary>
  <table style="margin-top:6px">{% for c in dry.checks %}<tr><td>{{ c.name }}</td><td class="{{ 'READY' if c.ok else 'BLOCKED' }}">{{ 'OK' if c.ok else 'FAIL' }}</td><td>{{ c.detail }}</td></tr>{% endfor %}</table>
  <form method="post" action="/changeset/{{ cs.id }}/dryrun" style="margin-top:6px"><button>Dry-run 다시 실행</button></form></details>
+<form method="post" id="csdel" action="/changeset/{{ cs.id }}/delete" style="display:none"></form>
 <form method="post" id="df" action="/changeset/{{ cs.id }}/decide"><input type="hidden" name="decision" id="act"><input type="hidden" name="fetch_sequences" id="fsv" value="1"><div id="ids"></div></form>
 {% set toolbar_extra %}
 <span style="width:1px;background:var(--bd);align-self:stretch;margin:0 6px"></span>
@@ -16,12 +17,17 @@
 <button class="tbn" style="color:var(--ok)" onclick="dec('approved')"><i>✔</i>Approve</button>
 <button class="tbn" style="color:var(--bad)" onclick="dec('rejected')"><i>✖</i>Reject</button>
 <button class="tbn" style="color:var(--warn)" onclick="dec('hold')"><i>⏸</i>Hold</button>
+<button class="tbn" style="color:var(--bad)" onclick="delCs()"><i>🗑</i>Delete</button>
 <button class="tbn" {% if cs.status != 'READY' %}disabled style="opacity:.4"{% endif %} onclick="aa()"><i>⬆</i>Apply</button>
 <label style="font-size:11px;color:var(--mut);align-self:center;margin-left:4px;cursor:pointer" title="끄면 서열 없이 메타데이터만 먼저 반영합니다 (신규 항목). 서열은 유전체 화면의 Get FASTA로 나중에 받습니다."><input type="checkbox" id="fsq" checked style="vertical-align:-2px"> 서열(FASTA)도 받기</label>
 {% endset %}
 <script type="application/json" id="gdata">{{ data|tojson }}</script>
 {% include "bvgrid.html" %}
 <script>
+async function delCs(){const i=await (await fetch('/api/changeset/{{ cs.id }}/impact')).json();
+ let m='changeset #{{ cs.id }}을 삭제할까요?\n항목 '+i.items+'건의 검토 기록이 영구 삭제됩니다. 이미 반영된 유전체는 그대로 남습니다.';
+ if(i.rejected||i.hold)m+='\n\n⚠ 거절 '+i.rejected+'건 · 보류 '+i.hold+'건의 결정도 사라져서 다음 확인 때 다시 올라올 수 있습니다.';
+ if(confirm(m))document.getElementById('csdel').submit()}
 function ids(){return G.selected()}
 function dec(a){const s=ids();if(!s.length){alert('선택된 항목이 없습니다. 체크박스로 고르거나 Select all을 누르세요.');return}
  const f=document.getElementById('df');document.getElementById('act').value=a;
