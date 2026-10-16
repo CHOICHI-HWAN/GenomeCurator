@@ -25,10 +25,10 @@
 function ids(){return G.selected()}
 function dec(a){const s=ids();if(!s.length){alert('선택된 항목이 없습니다. 체크박스로 고르거나 Select all을 누르세요.');return}
  const f=document.getElementById('df');document.getElementById('act').value=a;
- document.getElementById('ids').innerHTML=s.map(i=>`<input type="hidden" name="item" value="${i}">`).join('');f.submit()}
+ document.getElementById('ids').innerHTML=`<input type="hidden" name="items" value="${s.join(',')}">`;f.submit()}
 function aa(){const s=ids(),f=document.getElementById('df');document.getElementById('fsv').value=document.getElementById('fsq').checked?'1':'0';
  if(s.length){if(!confirm(s.length+'건을 승인하고 로컬에 적용할까요?'))return;f.action='/changeset/{{ cs.id }}/approve_apply';
-  document.getElementById('ids').innerHTML=s.map(i=>`<input type="hidden" name="item" value="${i}">`).join('');runJob(f)}
+  document.getElementById('ids').innerHTML=`<input type="hidden" name="items" value="${s.join(',')}">`;runJob(f)}
  else if(confirm('선택이 없습니다. 이미 승인된 항목만 적용할까요?')){f.action='/changeset/{{ cs.id }}/apply';runJob(f)}}
 </script>
 {% endblock %}

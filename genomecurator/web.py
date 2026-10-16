@@ -142,6 +142,14 @@ def _ppx_slug(watch_id: int, rows: list[dict]) -> str | None:
     return slug
 
 
+def _item_ids(form) -> list[int]:
+    """Selected changeset item ids. Sent as ONE comma-separated field (`items`): one field per id would hit
+    Starlette's 1000-field form limit as soon as more than 1000 rows are selected. Legacy `item` fields still work."""
+    ids = [int(x) for x in form.getlist("item") if str(x).isdigit()]
+    ids += [int(x) for x in str(form.get("items", "")).split(",") if x.strip().isdigit()]
+    return ids
+
+
 def create_app(scheduler: bool = True) -> FastAPI:
     app = FastAPI(title="GenomeCurator")
 
@@ -230,7 +238,7 @@ def create_app(scheduler: bool = True) -> FastAPI:
     @app.post("/changeset/{cid}/decide")
     async def decide(request: Request, cid: int):
         form = await request.form()
-        ids = [int(x) for x in form.getlist("item")]
+        ids = _item_ids(form)
         action = form.get("decision")
         if action in ("approved", "rejected", "hold"):
             curate.decide(ids, action)
@@ -255,7 +263,7 @@ def create_app(scheduler: bool = True) -> FastAPI:
     @app.post("/changeset/{cid}/approve_apply")
     async def approve_apply(request: Request, cid: int):
         form = await request.form()
-        curate.decide([int(x) for x in form.getlist("item")], "approved")
+        curate.decide(_item_ids(form), "approved")
         return _apply_job(cid, form.get("fetch_sequences", "1") != "0")
 
     @app.post("/changeset/{cid}/apply")
