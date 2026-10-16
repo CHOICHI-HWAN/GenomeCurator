@@ -121,8 +121,24 @@ def create_app(scheduler: bool = True) -> FastAPI:
     def pending_count():
         return pending_total()
 
+    def current_watch(request: Request, watch: int, watches: list[dict]) -> int:
+        """Explicit ?watch= wins, then the cookie, then the first virus that has genomes."""
+        ids = {x["id"] for x in watches}
+        if watch in ids:
+            return watch
+        try:
+            c = int(request.cookies.get("gc_watch", "0"))
+        except ValueError:
+            c = 0
+        if c in ids:
+            return c
+        return next((x["id"] for x in watches if x["n"]), watches[0]["id"] if watches else 0)
+
     def render(request, name, **ctx):
-        return T.TemplateResponse(request, name, {"badge": pending_count(), **ctx})
+        resp = T.TemplateResponse(request, name, {"badge": pending_count(), "watch": ctx.get("watch") or request.cookies.get("gc_watch", ""), **ctx})
+        if ctx.get("watch"):
+            resp.set_cookie("gc_watch", str(ctx["watch"]), max_age=86400 * 365, samesite="lax")
+        return resp
 
     @app.get("/")
     def index(request: Request, msg: str = ""):
@@ -170,7 +186,7 @@ def create_app(scheduler: bool = True) -> FastAPI:
         data = {"rows": rows, "selectable": True, "name": f"changeset_{cid}",
                 "cols": [{"k": k, "label": l, "on": on, "cls": c} for k, l, on, c in CS_COLS],
                 "facets": [{"k": k, "label": l} for k, l in CS_FACETS]}
-        return render(request, "changeset.html", cs=cs, data=data, nav="cur",
+        return render(request, "changeset.html", cs=cs, data=data, nav="cur", watch=cs["watch_id"],
                       summary=json.loads(cs["summary_json"] or "{}"),
                       dry=json.loads(cs["dryrun_json"] or "{}"))
 
@@ -211,8 +227,7 @@ def create_app(scheduler: bool = True) -> FastAPI:
     @app.get("/genomes")
     def genomes(request: Request, watch: int = 0):
         watches = _rows("SELECT w.id, w.name, w.taxon_id, (SELECT COUNT(*) FROM genome g WHERE g.watch_id=w.id) n FROM watchlist w")
-        if not watch and watches:
-            watch = next((w["id"] for w in watches if w["n"]), watches[0]["id"])
+        watch = current_watch(request, watch, watches)
         cur = next((w for w in watches if w["id"] == watch), None)
         rows = _rows("SELECT g.*, s.md5, s.gc_content FROM genome g LEFT JOIN genome_sequence s ON s.accession=g.accession "
                      "WHERE g.watch_id=? ORDER BY g.genome_id", watch)
@@ -253,8 +268,7 @@ def create_app(scheduler: bool = True) -> FastAPI:
     @app.get("/dashboard")
     def dashboard(request: Request, watch: int = 0):
         watches = _rows("SELECT w.id, w.name, (SELECT COUNT(*) FROM genome g WHERE g.watch_id=w.id) n FROM watchlist w")
-        if not watch and watches:
-            watch = next((w["id"] for w in watches if w["n"]), watches[0]["id"])
+        watch = current_watch(request, watch, watches)
         g = _rows("SELECT * FROM genome WHERE watch_id=?", watch)
         prov = _rows("SELECT p.source, COUNT(*) n FROM field_provenance p JOIN genome g ON g.genome_id=p.genome_id "
                      "WHERE g.watch_id=? GROUP BY p.source", watch)

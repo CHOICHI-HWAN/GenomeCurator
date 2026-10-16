@@ -38,7 +38,7 @@ if(typeof Chart==='undefined'){document.querySelector('.charts').innerHTML='<div
 Chart.defaults.color=fg;Chart.defaults.borderColor=bd;Chart.defaults.font.family='"Segoe UI","Malgun Gothic",sans-serif';
 const base=(extra={})=>({responsive:true,maintainAspectRatio:false,plugins:{legend:{display:false}},...extra});
 const mk=(id,type,labels,values,opt={},color=acc)=>new Chart(document.getElementById(id),{type,data:{labels,datasets:[{data:values,backgroundColor:color,borderRadius:2}]},options:opt});
-const go=(key)=>(e,els,chart)=>{if(!els.length)return;const l=chart.data.labels[els[0].index];if(l==='기타'||l==='(없음)')return;location.href='/genomes?f='+encodeURIComponent(key+':'+l)};
+const go=(key)=>(e,els,chart)=>{if(!els.length)return;const l=chart.data.labels[els[0].index];if(l==='기타'||l==='(없음)')return;location.href='/genomes?watch={{ watch }}&f='+encodeURIComponent(key+':'+l)};
 mk('c_monthly','bar',D.monthly.labels,D.monthly.values,base());
 mk('c_year','bar',D.year.labels,D.year.values,base());
 mk('c_country','bar',D.country.labels,D.country.values,base({indexAxis:'y',onClick:go('isolation_country'),onHover:(e,a)=>e.native.target.style.cursor=a.length?'pointer':'default'}));

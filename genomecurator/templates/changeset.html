@@ -3,7 +3,7 @@
  <div class="crumb"><b>{{ cs.wname }}</b> · Changeset #{{ cs.id }} <span class="pill {{ cs.status }}">{{ cs.status }}</span>
   <em>— 신규 <b style="color:var(--ok)">{{ summary.new }}</b> · 변경 <b style="color:var(--warn)">{{ summary.changed }}</b> · 삭제 <b style="color:var(--bad)">{{ summary.removed }}</b>
   · 소스 {% for s, n in summary.sources.items() %}{{ s }} {{ n }}{{ ', ' if not loop.last }}{% endfor %}</em></div></div></div>
-<div class="tabs"><a href="/dashboard">Overview</a><a href="/genomes">Genomes</a><a class="on">Changes</a><a href="/history">History</a></div>
+<div class="tabs"><a href="/dashboard?watch={{ watch }}">Overview</a><a href="/genomes?watch={{ watch }}">Genomes</a><a class="on">Changes</a><a href="/history">History</a></div>
 <details class="card" style="margin:0;border-top:0;border-radius:0" {% if cs.status == 'BLOCKED' %}open{% endif %}>
  <summary>Dry-run: <b class="{{ 'READY' if cs.status == 'READY' else 'BLOCKED' }}">{{ 'OK' if cs.status == 'READY' else cs.status }}</b>
  {% for n in summary.notes %}<span class="mut"> · ⚠ {{ n }}</span>{% endfor %}</summary>
