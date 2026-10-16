@@ -1,0 +1,7 @@
+{% extends "base.html" %}{% block body %}
+<h2>로컬 유전체 ({{ genomes|length }})</h2>
+<table><tr><th>genome_id</th><th>accession</th><th>name / strain</th><th>status</th><th>length</th><th>host</th><th>country</th><th>collected</th><th>md5</th></tr>
+{% for g in genomes %}<tr><td>{{ g.genome_id }}</td><td><code>{{ g.accession }}.{{ g.accession_version }}</code></td><td>{{ g.genome_name }} <span class="mut">{{ g.strain or "" }}</span></td>
+<td>{{ g.genome_status }}</td><td>{{ g.genome_length }}</td><td>{{ g.host_name or "" }}</td><td>{{ g.isolation_country or "" }}</td><td>{{ g.collection_date or "" }}</td><td><code>{{ (g.md5 or "")[:8] }}</code></td></tr>
+{% else %}<tr><td colspan="9" class="mut">아직 반영된 유전체가 없습니다. 큐레이션 페이지에서 승인 후 적용하세요.</td></tr>{% endfor %}</table>
+{% endblock %}

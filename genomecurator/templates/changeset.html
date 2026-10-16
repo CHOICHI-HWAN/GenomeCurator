@@ -1,0 +1,24 @@
+{% extends "base.html" %}{% block body %}
+<h2>Changeset #{{ cs.id }} · {{ cs.wname }} <span class="pill {{ cs.status }}">{{ cs.status }}</span></h2>
+<p class="mut">신규 {{ summary.new }} · 변경 {{ summary.changed }} · 삭제 {{ summary.removed }} · 소스 레코드 수 {{ summary.sources }}
+{% for n in summary.notes %}<br>⚠ {{ n }}{% endfor %}</p>
+<h3>Dry-run</h3>
+{% if dry.checks %}<table><tr><th>검사</th><th>결과</th><th>상세</th></tr>
+{% for c in dry.checks %}<tr><td>{{ c.name }}</td><td class="{{ 'READY' if c.ok else 'BLOCKED' }}">{{ 'OK' if c.ok else 'FAIL' }}</td><td>{{ c.detail }}</td></tr>{% endfor %}</table>
+{% else %}<p class="mut">아직 실행되지 않음</p>{% endif %}
+<form method="post" action="/changeset/{{ cs.id }}/dryrun" style="margin:8px 0"><button>Dry-run 다시 실행</button></form>
+
+<h3>항목</h3>
+<form method="post" action="/changeset/{{ cs.id }}/decide">
+<p><button name="action" value="approved">선택 승인</button> <button name="action" value="rejected">선택 거절</button>
+<button name="action" value="hold">선택 보류</button> <button name="action" value="approve_all">대기 중 전체 승인</button></p>
+<table><tr><th></th><th>accession</th><th>종류</th><th>변경 내용 (이전 → 새 값)</th><th>결정</th></tr>
+{% for i in items %}<tr><td><input type="checkbox" name="item" value="{{ i.id }}"></td>
+<td><code>{{ i.accession }}</code></td><td class="{{ i.kind }}">{{ i.kind }}</td>
+<td>{% for k, v in i.diff.items() %}<div><b>{{ k }}</b>{% if i.prov.get(k) %} <span class="mut">[{{ i.prov[k] }}]</span>{% endif %}:
+{% if v[0] is not none and v[0] != "" %}<span class="old">{{ v[0] }}</span> → {% endif %}<span class="new">{{ v[1] }}</span></div>{% endfor %}</td>
+<td class="{{ i.decision }}">{{ i.decision }}</td></tr>{% endfor %}</table></form>
+<form method="post" action="/changeset/{{ cs.id }}/apply" style="margin-top:14px">
+<button class="p" {% if cs.status != 'READY' %}disabled{% endif %}>승인된 항목 적용 (Apply)</button>
+<span class="mut"> 승인된 항목만 로컬에 반영됩니다. BLOCKED 상태에서는 적용할 수 없습니다.</span></form>
+{% endblock %}
