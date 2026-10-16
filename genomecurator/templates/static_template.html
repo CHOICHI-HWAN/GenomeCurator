@@ -56,6 +56,9 @@ a{color:var(--acc)}.mut{color:var(--mut)}.view{display:none}.view.on{display:blo
 .cm label{display:block;font-size:12.5px;color:var(--fg)}.cm.open{display:block}
 .card{background:var(--card);border:1px solid var(--bd);border-radius:4px;padding:14px 18px;margin:12px 0;max-width:900px}
 .card h3{margin:0 0 8px}.card code{background:var(--th);padding:1px 5px;border-radius:3px}
+#gbox.max{position:fixed;inset:0;z-index:60;background:var(--bg);display:flex;flex-direction:column;padding:8px 10px}
+#gbox.max .wrap{flex:1;min-height:0}#gbox.max .gm{display:flex;flex-direction:column}
+#gbox.max .gs{flex:1;max-height:none}#gbox.max #fp,#gbox.max #rp{max-height:none;height:100%}
 footer{max-width:1500px;margin:6px auto 24px;padding:0 14px;color:var(--mut);font-size:12px}
 @media(max-width:1000px){#rp{display:none}}@media(max-width:700px){#fp{display:none}.charts{grid-template-columns:1fr}header{padding:0 10px}}
 </style></head><body>
@@ -133,13 +136,13 @@ function genomes(preset){
  const st={f:{},q:'',sort:null,dir:1,pg:0,ps:100,vis:new Set(cols.filter(c=>c.on).map(c=>c.k)),cur:null,sel:new Set(),fp:true};
  for(const k in (preset||{}))st.f[k]=new Set(preset[k]);
  $('#v-genomes').innerHTML=`<div class="bvh"><div class="ico">T</div><div><small>Taxon View · Genomes</small><div class="crumb">${esc(cur.lineage.slice(0,-1).join(' › '))}${cur.lineage.length>1?' › ':''}<b>${esc(cur.name)}</b> ( ${fmt(rows.length)} Genomes )</div></div></div>
- <div class="tool"><button class="tbn" id="b_dl"><i>⬇</i>Download</button>
+ <div id="gbox"><div class="tool"><button class="tbn" id="b_dl"><i>⬇</i>Download</button>
   <label class="kw">Keywords<input id="gq" placeholder="검색어 입력"></label>
   <span style="position:relative"><button class="tbn" id="b_cols"><i>▥</i>Select Columns</button><div class="cm" id="cm"></div></span>
-  <button class="tbn" id="b_fp"><i>⛃</i>Filters</button><button class="tbn" id="b_clr"><i>✕</i>Clear</button><span style="flex:1"></span><span class="mut" id="gcount" style="font-size:12px"></span></div>
+  <button class="tbn" id="b_fp"><i>⛃</i>Filters</button><button class="tbn" id="b_clr"><i>✕</i>Clear</button><button class="tbn" id="b_max" title="표를 전체 화면으로 (Esc로 복귀)"><i>⤢</i>Maximize</button><span style="flex:1"></span><span class="mut" id="gcount" style="font-size:12px"></span></div>
  <div class="wrap"><aside id="fp"></aside><div class="gm"><div class="chips" id="chips" style="display:none"></div><div class="gs"><table class="gt"><thead id="gh"></thead><tbody id="gb"></tbody></table></div></div><aside id="rp"></aside></div>
  <div class="pg"><span id="gres"></span><span style="flex:1"></span><span class="pn" id="p_prev">◀</span><span id="gpages"></span><span class="pn" id="p_next">▶</span>
-  <select id="gps"><option>25</option><option>50</option><option selected>100</option><option>250</option></select> 행</div>`;
+  <select id="gps"><option>25</option><option>50</option><option selected>100</option><option>250</option></select> 행</div></div>`;
  const val=(r,k)=>{const v=r[k];return v===null||v===undefined||v===''?'(없음)':String(v)},label=k=>(cols.find(c=>c.k===k)||{label:k}).label;
  const match=(r,skip)=>{for(const k in st.f){if(k===skip||!st.f[k].size)continue;if(!st.f[k].has(val(r,k)))return false}
   if(st.q){const q=st.q.toLowerCase();if(!cols.some(c=>String(r[c.k]??'').toLowerCase().includes(q)))return false}return true};
@@ -188,6 +191,8 @@ function genomes(preset){
  $('#cm').onchange=e=>{const k=e.target.dataset.c;e.target.checked?st.vis.add(k):st.vis.delete(k);table()};
  $('#b_cols').onclick=()=>$('#cm').classList.toggle('open');$('#b_dl').onclick=()=>tsv(false);$('#b_fp').onclick=()=>{st.fp=!st.fp;draw()};
  $('#b_clr').onclick=()=>{st.f={};st.q='';$('#gq').value='';st.pg=0;draw()};
+ const toggleMax=()=>{const b=$('#gbox'),on=b.classList.toggle('max');document.body.style.overflow=on?'hidden':'';$('#b_max').innerHTML=on?'<i>⤡</i>Restore':'<i>⤢</i>Maximize'};
+ $('#b_max').onclick=toggleMax;
  $('#p_prev').onclick=()=>{st.pg=Math.max(0,st.pg-1);table()};$('#p_next').onclick=()=>{st.pg++;table()};$('#gps').onchange=e=>{st.ps=+e.target.value;st.pg=0;table()};
  draw();
 }
@@ -203,7 +208,8 @@ function about(){$('#v-about').innerHTML=`<div class="card"><h3>GenomeCurator</h
  ${DATA.repo?`<p>소스 코드: <a href="${esc(DATA.repo)}" target="_blank" rel="noopener">${esc(DATA.repo)}</a></p>`:''}</div>`}
 
 /* ---------------- Router ---------------- */
-function show(v,preset){view=v;document.querySelectorAll('header a[data-v]').forEach(a=>a.classList.toggle('on',a.dataset.v===v));
+document.addEventListener('keydown',e=>{const b=$('#gbox');if(e.key==='Escape'&&b&&b.classList.contains('max'))$('#b_max').click()});
+function show(v,preset){document.body.style.overflow='';view=v;document.querySelectorAll('header a[data-v]').forEach(a=>a.classList.toggle('on',a.dataset.v===v));
  document.querySelectorAll('.view').forEach(s=>s.classList.toggle('on',s.id==='v-'+v));
  if(v==='overview')overview();else if(v==='genomes')genomes(preset);else about();
  history.replaceState(null,'','#'+v+'?v='+DATA.viruses.indexOf(cur));window.scrollTo(0,0)}

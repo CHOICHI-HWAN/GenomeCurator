@@ -39,13 +39,18 @@ main{max-width:none;padding:10px 14px}
 .gt td.chg{background:rgba(210,153,34,.22)}.gt td.chg i{display:block;font-size:11px;text-decoration:line-through;color:var(--bad);font-style:normal}
 .new,.approved,.applied{color:var(--ok)}.removed,.rejected{color:var(--bad)}.changed,.hold,.pending{color:var(--warn)}
 #rp s.old{color:var(--bad)}
+#gbox.max{position:fixed;inset:0;z-index:60;background:var(--bg);display:flex;flex-direction:column;padding:8px 10px}
+#gbox.max .wrap{flex:1;min-height:0}#gbox.max .gm{display:flex;flex-direction:column}
+#gbox.max .gs{flex:1;max-height:none}#gbox.max #fp,#gbox.max #rp{max-height:none;height:100%}
 </style>
+<div id="gbox">
 <div class="tool">
  <button class="tbn" onclick="G.tsv(false)"><i>⬇</i>Download</button>
  <label class="kw">Keywords<input id="gq" placeholder="검색어 입력"></label>
  <span style="position:relative"><button class="tbn" onclick="document.getElementById('cm').classList.toggle('open')"><i>▥</i>Select Columns</button><div class="cm" id="cm"></div></span>
  <button class="tbn" onclick="G.togglePanel()"><i>⛃</i>Filters</button>
  <button class="tbn" onclick="G.clear()"><i>✕</i>Clear</button>
+ <button class="tbn" id="b_max" onclick="G.max()" title="표를 전체 화면으로 (Esc로 복귀)"><i>⤢</i>Maximize</button>
  {{ toolbar_extra|default('')|safe }}
  <span style="flex:1"></span><span class="mut" id="gcount" style="font-size:12px"></span></div>
 <div class="wrap"><aside id="fp"></aside>
@@ -53,6 +58,7 @@ main{max-width:none;padding:10px 14px}
  <aside id="rp"></aside></div>
 <div class="pg"><span id="gres"></span><span style="flex:1"></span><span class="pn" onclick="G.page(-1)">◀</span><span id="gpages"></span><span class="pn" onclick="G.page(1)">▶</span>
  <select id="gps" onchange="G.size(this.value)"><option>25</option><option>50</option><option selected>100</option><option>250</option></select> 행</div>
+</div>
 <form id="ff" method="post" action="/genomes/fasta" style="display:none"><input name="ids" id="fids"></form>
 <script type="application/json" id="gdata">{{ data|tojson }}</script>
 <script>
@@ -116,9 +122,12 @@ $('gq').addEventListener('input',e=>{st.q=e.target.value;st.pg=0;draw()});
 $('cm').innerHTML=cols.map(c=>`<label><input type="checkbox" data-c="${c.k}" ${st.vis.has(c.k)?'checked':''}> ${esc(c.label)}</label>`).join('');
 $('cm').addEventListener('change',e=>{const k=e.target.dataset.c;e.target.checked?st.vis.add(k):st.vis.delete(k);table()});
 new URLSearchParams(location.search).getAll('f').forEach(s=>{const i=s.indexOf(':');if(i>0){const k=s.slice(0,i);(st.f[k]=st.f[k]||new Set()).add(s.slice(i+1))}});
+document.addEventListener('keydown',e=>{if(e.key==='Escape'&&document.getElementById('gbox').classList.contains('max'))G.max()});
 draw();
 const dl=(name,text,type)=>{const a=document.createElement('a');a.href=URL.createObjectURL(new Blob([text],{type}));a.download=name;a.click()};
-return{clear(){st.f={};st.q='';$('gq').value='';st.pg=0;draw()},page(d){st.pg=Math.max(0,st.pg+d);table()},size(v){st.ps=+v;st.pg=0;table()},
+return{max(){const b=document.getElementById('gbox'),on=b.classList.toggle('max');document.body.style.overflow=on?'hidden':'';
+  document.getElementById('b_max').innerHTML=on?'<i>⤡</i>Restore':'<i>⤢</i>Maximize'},
+ clear(){st.f={};st.q='';$('gq').value='';st.pg=0;draw()},page(d){st.pg=Math.max(0,st.pg+d);table()},size(v){st.ps=+v;st.pg=0;table()},
  togglePanel(){st.panelF=st.panelF===false;draw()},
  tsv(sel){const vc=cols.filter(c=>st.vis.has(c.k));const list=sel?view.filter(r=>st.sel.has(r.id)):view;
   dl('genomes.tsv','﻿'+[vc.map(c=>c.label).join('\t')].concat(list.map(r=>vc.map(c=>String(r[c.k]??'').replace(/[\t\n]/g,' ')).join('\t'))).join('\n'),'text/tab-separated-values')},

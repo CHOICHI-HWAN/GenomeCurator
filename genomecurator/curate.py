@@ -21,8 +21,7 @@ COMPARE = ["accession_version"] + config.TRACKED_FIELDS
 
 # ------------------------------------------------------------------ watchlist
 def add_watch(name: str, taxon: str | None = None, filters: dict | None = None) -> int:
-    taxon = taxon or name
-    tid = sources.ncbi_resolve_taxon_id(taxon)
+    tid, taxon = sources.ncbi_resolve_virus(taxon or name)  # ValueError if not a virus / no records
     sp = sources.ncbi_species_scope(tid)
     if sp:  # watch the species so records tagged at the species node are not missed
         tid, taxon = sp
@@ -89,7 +88,8 @@ def check(watch_name: str, progress=None) -> int | None:
         notes = notes0 + notes
         p(75, "로컬 데이터와 비교 중…")
         if not per_source["ncbi"]:
-            raise SystemExit("NCBI returned no records; refusing to compute removals")
+            raise SystemExit(f"NCBI returned no records for '{w['taxon']}' (taxon {w['taxon_id']}); check that the watch is a virus taxon. "
+                             "Refusing to compute removals")
         merged = merge(per_source)
         local = {r["accession"]: dict(r) for r in
                  con.execute("SELECT * FROM genome WHERE watch_id=?", (w["id"],))}

@@ -70,6 +70,38 @@ def ncbi_resolve_taxon_id(taxon: str) -> int | None:
         return None
 
 
+def ncbi_resolve_virus(text: str) -> tuple[int, str]:
+    """Resolve user text to an NCBI *virus* taxon -> (tax_id, official name).
+
+    Raises ValueError with suggestions when the text is not a virus (e.g. 'andes' matches the genus
+    Andes, not Andes virus) or when NCBI Virus holds no genome records for it."""
+    text = text.strip()
+    with _client() as c:
+        node = None
+        try:
+            nodes = _ncbi_get(c, f"https://api.ncbi.nlm.nih.gov/datasets/v2/taxonomy/taxon/{quote(text)}").json().get("taxonomy_nodes", [])
+            node = nodes[0]["taxonomy"] if nodes and "taxonomy" in nodes[0] else None
+        except Exception:
+            pass
+        if not node or 10239 not in node.get("lineage", []):
+            hint = ""
+            try:
+                sug = _ncbi_get(c, f"https://api.ncbi.nlm.nih.gov/datasets/v2/taxonomy/taxon_suggest/{quote(text)}").json()
+                names = [f"{x['sci_name']} ({x['matched_term']})" if x["matched_term"] != x["sci_name"] else x["sci_name"]
+                         for x in sug.get("sci_name_and_ids", []) if x.get("group_name") == "viruses"][:5]
+                if names:
+                    hint = " 후보: " + ", ".join(names)
+            except Exception:
+                pass
+            what = f"NCBI에서 '{node['organism_name']}'(바이러스 아님)로 인식됨." if node else "NCBI에서 찾을 수 없음."
+            raise ValueError(f"'{text}'는 바이러스 분류군이 아닙니다. {what}{hint}")
+        tid, name = int(node["tax_id"]), node["organism_name"]
+        total = _ncbi_get(c, f"{config.NCBI_BASE}/taxon/{tid}/dataset_report", page_size=1).json().get("total_count") or 0
+        if not total:
+            raise ValueError(f"'{name}'(taxon {tid})에는 NCBI Virus 유전체 레코드가 없습니다.")
+        return tid, name
+
+
 def ncbi_species_scope(taxon_id: int | None) -> tuple[int, str] | None:
     """If taxon_id is a rank-less virus name / strain / sub-species node, return its SPECIES ancestor.
 
