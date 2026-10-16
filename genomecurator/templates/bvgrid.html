@@ -64,7 +64,7 @@ const $=id=>document.getElementById(id),esc=s=>String(s??'').replace(/[&<>"]/g,c
 const val=(r,k)=>{const v=r[k];return v===null||v===undefined||v===''?'(없음)':String(v)};
 const label=k=>(cols.find(c=>c.k===k)||{label:k}).label;
 const LINKS={genbank:a=>'https://www.ncbi.nlm.nih.gov/nuccore/'+a,sra_accession:a=>'https://www.ncbi.nlm.nih.gov/sra/'+a,
- bioproject_accession:a=>'https://www.ncbi.nlm.nih.gov/bioproject/'+a,biosample_accession:a=>'https://www.ncbi.nlm.nih.gov/biosample/'+a};
+ bioproject_accession:a=>'https://www.ncbi.nlm.nih.gov/bioproject/?term='+a,biosample_accession:a=>'https://www.ncbi.nlm.nih.gov/biosample/'+a};
 const cell=(k,r)=>{const v=r[k];if(!LINKS[k]||!v)return esc(v);
  return String(v).split(/[;,]\s*/).filter(Boolean).map(a=>`<a href="${esc(LINKS[k](a.replace(/\.\d+$/,'')))}" target="_blank" rel="noopener" onclick="event.stopPropagation()">${esc(a)}</a>`).join(', ')};
 function match(r,skip){for(const k in st.f){if(k===skip||!st.f[k].size)continue;if(!st.f[k].has(val(r,k)))return false}
