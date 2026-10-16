@@ -33,9 +33,9 @@ Windows에서 `git`이 PATH에 없으면 `C:\Program Files\Git\cmd\git.exe`로 �
 - Pathoplexus 대상 바이러스 추가 시 `config.PATHOPLEXUS_ORGANISMS` 설정과 필드 매핑 검증
 - genome_feature(주석), 재개 가능한 다운로드, 로깅
 
-## �ܺ� ȣ�� ��Ģ
-- ��� �� ��û(NCBI/BV-BRC/Pathoplexus)�� �ּ� 300ms ���� (GC_REQUEST_DELAY_MS), 429/5xx�� ���� ������� �ִ� 3ȸ ��õ� (sources._get).
-- NCBI�� Datasets v2 REST API ���. datasets CLI�� �̻��(�̼�ġ). ��뷮 ���� �ϰ� �ٿ�ε尡 �ʿ��ϸ� CLI �鿣�带 ���� �ɼ����� �߰� ����.
+## 외부 호출 규칙
+- 모든 웹 요청(NCBI/BV-BRC/Pathoplexus)은 최소 300ms 간격 (GC_REQUEST_DELAY_MS), 429/5xx는 지수 백오프로 최대 3회 재시도 (sources._get).
+- NCBI는 Datasets v2 REST API 사용. datasets CLI는 미사용(미설치). 대용량 서열 일괄 다운로드가 필요하면 CLI 백엔드를 선택 옵션으로 추가 검토.
 
 ## 분류군(taxon) 범위 규칙
 - NCBI는 레코드를 종(species) 노드(예: `Orthopoxvirus monkeypox` 3431483)나 그 하위 이름(`Monkeypox virus` 10244, `Mpox virus` 등)에 섞어서 붙인다. 하위 노드로만 조회하면 종 노드에 붙은 레코드가 빠진다(예: PX379520, 652건).
@@ -87,4 +87,4 @@ Windows에서 `git`이 PATH에 없으면 `C:\Program Files\Git\cmd\git.exe`로 �
 
 ## 백업 / 복원
 - `python -m genomecurator backup <zip>` / `restore <zip> [--force]` (`genomecurator/backup.py`). 포함: watchlist, genome, genome_sequence, field_provenance, genome_version, changeset, audit_log, 결정이 있는 changeset 항목(rejected/hold/applied/approved), FASTA. 제외(재생성 가능): source_record, pending 항목. zip-slip 방지, 실행 중 DB는 잠금 메시지로 안내.
-- 2026-10-16 이 PC의 data(726MB)에서 만든 백업(21.7MB)은 저장소의 `data-backup` 브랜치에 올려 두었다(`genomecurator-backup.zip`). 복원: 새 환경에서 `git checkout data-backup -- genomecurator-backup.zip` 후 `restore`.
+- 데이터(`data/`)와 백업 파일은 GitHub에 올리지 않는다(저장소가 공개). 옮길 때는 백업 zip을 직접 복사해 가져가 `restore`한다.
