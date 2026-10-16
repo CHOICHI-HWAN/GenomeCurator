@@ -3,6 +3,7 @@ import hashlib
 import json
 import os
 import shutil
+from pathlib import Path
 from datetime import datetime
 
 from . import config, sources
@@ -157,6 +158,23 @@ def check(watch_name: str, progress=None) -> int | None:
         con.close()
 
 
+# Only these changes can alter the sequence itself; everything else is metadata.
+SEQ_FIELDS = {"accession_version", "genome_length", "sequence_hash"}
+
+
+def _needs_sequence(con, it) -> bool:
+    """New records always need their FASTA. A changed record only does when the sequence may have
+    changed (version/length/hash) or the local file is missing; a metadata-only change keeps the file."""
+    if it["kind"] == "removed":
+        return False
+    if it["kind"] == "new":
+        return True
+    if SEQ_FIELDS & set(json.loads(it["diff_json"] or "{}")):
+        return True
+    row = con.execute("SELECT file_path FROM genome_sequence WHERE accession=?", (it["accession"],)).fetchone()
+    return not (row and row["file_path"] and Path(row["file_path"]).exists())
+
+
 # -------------------------------------------------------------------- dry-run
 def _versioned(acc: str, rec: dict) -> str:
     v = rec.get("accession_version")
@@ -172,7 +190,11 @@ def dryrun(changeset_id: int, sample: int | None = None, progress=None) -> dict:
         items = con.execute("SELECT * FROM changeset_item WHERE changeset_id=? AND kind IN ('new','changed')",
                             (changeset_id,)).fetchall()
         checks = []
-        recs = {i["accession"]: json.loads(i["new_record_json"]) for i in items}
+        need_dl = [i for i in items if _needs_sequence(con, i)]
+        meta_only = len(items) - len(need_dl)
+        recs = {i["accession"]: json.loads(i["new_record_json"]) for i in need_dl}
+        checks.append({"name": "sequence_plan", "ok": True,
+                       "detail": f"서열 다운로드 {len(need_dl)}건 · 메타데이터만 변경(서열 다운로드 생략) {meta_only}건"})
         total_bytes = sum((r.get("genome_length") or 0) for r in recs.values())
 
         free = shutil.disk_usage(config.DATA_DIR if config.DATA_DIR.exists() else ".").free
@@ -254,7 +276,8 @@ def apply(changeset_id: int, progress=None) -> dict:
         snap = config.DATA_DIR / "snapshots" / f"cs{changeset_id}-{datetime.now():%Y%m%d-%H%M%S}"
         stage.mkdir(parents=True, exist_ok=True)
 
-        recs = {i["accession"]: json.loads(i["new_record_json"]) for i in items if i["kind"] != "removed"}
+        recs = {i["accession"]: json.loads(i["new_record_json"]) for i in items if _needs_sequence(con, i)}
+        metaonly = {i["accession"] for i in items if i["kind"] == "changed" and i["accession"] not in recs}
         meta: dict[str, dict] = {}  # staged files only; sequences are never all held in memory
         failed: dict[str, str] = {}
         todo = []
@@ -303,6 +326,10 @@ def apply(changeset_id: int, progress=None) -> dict:
             if acc in failed:
                 continue
             rec = {k: ("; ".join(map(str, v)) if isinstance(v, list) else v) for k, v in rec.items()}
+            if it["kind"] == "changed":  # a value the sources no longer report is cleared, not kept forever
+                for k in json.loads(it["diff_json"] or "{}"):
+                    if k in GENOME_COLS and k not in rec:
+                        rec[k] = None
             old = con.execute("SELECT * FROM genome WHERE accession=?", (acc,)).fetchone()
             if old:
                 con.execute("INSERT INTO genome_version(genome_id,snapshot_json,changeset_id) VALUES(?,?,?)",
@@ -322,6 +349,14 @@ def apply(changeset_id: int, progress=None) -> dict:
                     next_n[tid] = max(nums, default=0)
                 next_n[tid] += 1
                 gid = f"{tid}.{next_n[tid]}"
+            if acc in metaonly and old:
+                mcols = [c for c in GENOME_COLS if c in rec]
+                con.execute(f"UPDATE genome SET {','.join(c + '=?' for c in mcols)}, date_modified=? WHERE accession=?",
+                            [rec[c] for c in mcols] + [now, acc])
+                for f, src in json.loads(it["provenance_json"] or "{}").items():
+                    con.execute("INSERT OR REPLACE INTO field_provenance(genome_id,field,source) VALUES(?,?,?)", (gid, f, src))
+                done_ids.append(it["id"])
+                continue
             m = meta[acc]
             md5 = rec["sequence_md5"] = m["md5"]
             path = taxon_dir / f"{gid}.fna"
@@ -360,7 +395,7 @@ def apply(changeset_id: int, progress=None) -> dict:
         if not failed:
             shutil.rmtree(stage, ignore_errors=True)
         p(100, "완료")
-        return {"applied": len(done_ids), "failed": failed, "remaining": left}
+        return {"applied": len(done_ids), "failed": failed, "remaining": left, "metadata_only": len(metaonly - set(failed))}
     except BaseException:
         con.rollback()
         for path, bak in backups:  # restore files

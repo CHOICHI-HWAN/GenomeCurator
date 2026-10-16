@@ -240,6 +240,8 @@ def create_app(scheduler: bool = True) -> FastAPI:
         def work(p):
             res = curate.apply(cid, progress=p)
             msg = f"{res['applied']}건 적용 완료"
+            if res.get("metadata_only"):
+                msg += f" (메타데이터만 변경 {res['metadata_only']}건은 서열을 다시 받지 않음)"
             if res.get("failed"):
                 first = next(iter(res["failed"].items()))
                 msg += f", {len(res['failed'])}건 실패 (예: {first[0]} - {first[1]}). 실패 항목은 승인 상태로 남아 있으니 Apply를 다시 누르면 재시도합니다"
