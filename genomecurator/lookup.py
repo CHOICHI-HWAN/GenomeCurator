@@ -125,7 +125,7 @@ def _pathoplexus(q: str, taxon: str, taxon_id: int | None) -> dict:
             r.raise_for_status()
             return r.json()["data"][0]["count"]
         total = count(dict(sources._PPX_FILTER))
-        mine = count(dict(flt))
+        mine = sources.pathoplexus_matched(slug, taxon_id) or count(dict(flt))
     lines = [f"organism: {slug} — 전체 {total:,}건을 받아 NCBI accession과 연결 (종 노드로 직접 표기된 건 {mine:,}건)"]
     return _src("ok", "Pathoplexus", lines, organism=slug, count=mine, total=total)
 

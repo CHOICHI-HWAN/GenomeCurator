@@ -35,6 +35,108 @@ def add_watch(name: str, taxon: str | None = None, filters: dict | None = None) 
         return cur.lastrowid
 
 
+def watch_impact(watch_id: int) -> dict:
+    """What deleting a watch would remove (shown to the user before they confirm)."""
+    con = connect()
+    try:
+        w = con.execute("SELECT * FROM watchlist WHERE id=?", (watch_id,)).fetchone()
+        if not w:
+            raise ValueError("워치를 찾을 수 없습니다.")
+        one = lambda sql: con.execute(sql, (watch_id,)).fetchone()[0]
+        return {"name": w["name"], "genomes": one("SELECT COUNT(*) FROM genome WHERE watch_id=?"),
+                "fasta": one("SELECT COUNT(*) FROM genome_sequence WHERE genome_id IN (SELECT genome_id FROM genome WHERE watch_id=?)"),
+                "changesets": one("SELECT COUNT(*) FROM changeset WHERE watch_id=?"),
+                "items": one("SELECT COUNT(*) FROM changeset_item WHERE changeset_id IN (SELECT id FROM changeset WHERE watch_id=?)")}
+    finally:
+        con.close()
+
+
+def update_watch(watch_id: int, name: str | None = None, taxon: str | None = None, enabled: bool | None = None) -> list[str]:
+    """Rename, re-point to another taxon (validated like add_watch) and/or (de)activate automatic checks.
+    Returns human-readable notes; raises ValueError for invalid input."""
+    con = connect()
+    try:
+        w = con.execute("SELECT * FROM watchlist WHERE id=?", (watch_id,)).fetchone()
+        if not w:
+            raise ValueError("워치를 찾을 수 없습니다.")
+        sets: dict = {}
+        notes: list[str] = []
+        if name is not None and name.strip() and name.strip() != w["name"]:
+            new = name.strip()
+            if con.execute("SELECT 1 FROM watchlist WHERE name=? AND id!=?", (new, watch_id)).fetchone():
+                raise ValueError(f"'{new}' 이름의 워치가 이미 있습니다.")
+            sets["name"] = new
+            notes.append(f"이름 {w['name']} → {new}")
+        if taxon is not None and taxon.strip() and taxon.strip().lower() not in {str(w["taxon"]).lower(), str(w["taxon_id"])}:
+            tid, tname = sources.ncbi_resolve_virus(taxon.strip())  # ValueError if not a virus / no records
+            sp = sources.ncbi_species_scope(tid)
+            if sp:
+                tid, tname = sp
+            if tid != w["taxon_id"]:
+                sets.update(taxon=tname, taxon_id=tid, pathoplexus_organism=None)
+                notes.append(f"수집 분류군 {w['taxon']} ({w['taxon_id']}) → {tname} ({tid})")
+                n = con.execute("SELECT COUNT(*) FROM genome WHERE watch_id=?", (watch_id,)).fetchone()[0]
+                if n:
+                    notes.append(f"이미 반영된 유전체 {n}건 중 새 분류군에 없는 것은 다음 확인에서 '삭제됨' 후보로 올라올 수 있습니다")
+        if enabled is not None and int(bool(enabled)) != int(w["enabled"]):
+            sets["enabled"] = int(bool(enabled))
+            notes.append("자동 확인 " + ("켬" if enabled else "끔"))
+        if not sets:
+            return []
+        con.execute(f"UPDATE watchlist SET {','.join(k + '=?' for k in sets)} WHERE id=?", [*sets.values(), watch_id])
+        audit(con, "watch_update", f"{w['name']}: " + "; ".join(notes))
+        con.commit()
+        return notes
+    finally:
+        con.close()
+
+
+def delete_watch(watch_id: int) -> dict:
+    """Delete a watch together with everything it collected (genomes, FASTA files, changesets, history).
+    Irreversible: the web UI asks the user to type the watch name first."""
+    con = connect()
+    files: list[str] = []
+    try:
+        w = con.execute("SELECT * FROM watchlist WHERE id=?", (watch_id,)).fetchone()
+        if not w:
+            raise ValueError("워치를 찾을 수 없습니다.")
+        impact = watch_impact(watch_id)
+        files = [r[0] for r in con.execute(
+            "SELECT file_path FROM genome_sequence WHERE file_path IS NOT NULL AND genome_id IN (SELECT genome_id FROM genome WHERE watch_id=?)",
+            (watch_id,))]
+        con.execute("BEGIN")
+        mine = "(SELECT genome_id FROM genome WHERE watch_id=?)"
+        for table in ("field_provenance", "genome_version", "genome_sequence"):
+            con.execute(f"DELETE FROM {table} WHERE genome_id IN {mine}", (watch_id,))
+        con.execute("DELETE FROM changeset_item WHERE changeset_id IN (SELECT id FROM changeset WHERE watch_id=?)", (watch_id,))
+        for table in ("genome", "changeset", "source_record"):
+            con.execute(f"DELETE FROM {table} WHERE watch_id=?", (watch_id,))
+        con.execute("DELETE FROM watchlist WHERE id=?", (watch_id,))
+        audit(con, "watch_delete", f"{w['name']}: {impact['genomes']} genomes, {impact['fasta']} fasta, {impact['changesets']} changesets")
+        con.commit()
+    except BaseException:
+        con.rollback()
+        raise
+    finally:
+        con.close()
+    root = (config.DATA_DIR / "genomes").resolve()
+    removed = 0
+    for f in files:  # only ever delete inside data/genomes
+        try:
+            p = config.data_path(f).resolve()
+            if root in p.parents and p.is_file():
+                p.unlink()
+                removed += 1
+        except OSError:
+            pass
+    for d in {config.data_path(f).parent for f in files}:
+        try:
+            d.rmdir()  # only succeeds when empty
+        except OSError:
+            pass
+    return {**impact, "files_removed": removed}
+
+
 # ---------------------------------------------------------------------- merge
 def merge(per_source: dict[str, dict[str, dict]]) -> dict[str, tuple[dict, dict]]:
     """NCBI defines the accession set; other sources enrich. -> {acc: (record, provenance)}"""
@@ -173,7 +275,7 @@ def _needs_sequence(con, it) -> bool:
     if SEQ_FIELDS & set(json.loads(it["diff_json"] or "{}")):
         return True
     row = con.execute("SELECT file_path FROM genome_sequence WHERE accession=?", (it["accession"],)).fetchone()
-    return not (row and row["file_path"] and Path(row["file_path"]).exists())
+    return not (row and row["file_path"] and config.data_path(row["file_path"]).exists())
 
 
 # -------------------------------------------------------------------- dry-run
@@ -399,7 +501,7 @@ def apply(changeset_id: int, progress=None, fetch_sequences: bool = True) -> dic
                             f" VALUES(?,?,?,{','.join('?' * len(cols))},?,?)",
                             [gid, w["id"], acc] + vals + [now, now])
             con.execute("INSERT OR REPLACE INTO genome_sequence(accession,genome_id,version,length,gc_content,md5,file_path)"
-                        " VALUES(?,?,?,?,?,?,?)", (acc, gid, rec.get("accession_version"), m["len"], m["gc"], md5, str(path)))
+                        " VALUES(?,?,?,?,?,?,?)", (acc, gid, rec.get("accession_version"), m["len"], m["gc"], md5, config.rel_data_path(path)))
             for f, s in json.loads(it["provenance_json"] or "{}").items():
                 con.execute("INSERT OR REPLACE INTO field_provenance(genome_id,field,source) VALUES(?,?,?)", (gid, f, s))
             done_ids.append(it["id"])
@@ -477,7 +579,7 @@ def fetch_missing_sequences(watch_id: int, genome_ids: list[str] | None = None, 
                 os.replace(tmp, path)
                 md5 = hashlib.md5(s.encode()).hexdigest()
                 con.execute("INSERT OR REPLACE INTO genome_sequence(accession,genome_id,version,length,gc_content,md5,file_path)"
-                            " VALUES(?,?,?,?,?,?,?)", (a, r["genome_id"], r["accession_version"], len(s), _gc(s), md5, str(path)))
+                            " VALUES(?,?,?,?,?,?,?)", (a, r["genome_id"], r["accession_version"], len(s), _gc(s), md5, config.rel_data_path(path)))
                 con.execute("UPDATE genome SET sequence_md5=? WHERE accession=?", (md5, a))
                 fetched += 1
             con.commit()

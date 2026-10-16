@@ -75,3 +75,12 @@ Windows에서 `git`이 PATH에 없으면 `C:\Program Files\Git\cmd\git.exe`로 �
 - 워치 이름은 `config.safe_name()`으로 폴더명에 안전하게 변환(Windows 금지 문자 대응). git은 PATH → 각 OS 기본 설치 위치 순으로 탐색(`deploy._git`).
 - CLI 출력은 UTF-8로 재설정(cp949 등 콘솔 대응), `serve --open`으로 브라우저 자동 열기. 시작 스크립트: `scripts/start.bat | start.sh | start.command`.
 - `.github/workflows/ci.yml`: ubuntu/windows/macos × Python 3.10/3.12에서 pytest.
+
+## 워치 편집/삭제
+- 워치 목록의 **편집**: 이름, 수집 분류군(NCBI로 바이러스·레코드 확인 후 종 노드로 확장), 자동 확인 켜기/끄기. 분류군을 바꾸면 이미 반영된 유전체가 다음 확인에서 '삭제됨' 후보로 올라올 수 있다고 알려 준다.
+- **삭제**: 영향 범위(유전체·FASTA 파일·changeset 수)를 보여 주고 워치 이름을 그대로 입력해야 활성화된다. 유전체, 출처, 이력, FASTA 파일(`data/genomes` 안에 있는 것만), changeset을 함께 지운다(되돌릴 수 없음). 데이터를 남기고 수집만 멈추려면 편집에서 자동 확인을 끈다. 서버 쪽에서도 이름 일치와 Origin을 검사한다.
+- FASTA 경로는 DB에 `data` 기준 상대경로(`/` 구분)로 저장한다(`config.rel_data_path/data_path`). 폴더를 옮기거나 OS를 바꿔도 링크가 유지되고, 예전 절대경로(Windows 경로 포함)도 읽힌다.
+
+## Pathoplexus organism 자동 발견
+- `sources.pathoplexus_organisms()`가 pathoplexus.org 메뉴에서 organism 목록을 읽는다(예: `ebola-bdbv`, `andv`). 실패하면 `PPX_KNOWN`으로 대체한다.
+- 워치의 NCBI taxon이 그 organism 서열의 `ncbiVirusTaxId` 자신이거나 하위 노드이면 연결한다(`pathoplexus_index`, NCBI lineage로 판정). 이름으로도 한 번 더 찾는다.

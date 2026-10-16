@@ -29,6 +29,33 @@ def safe_name(name: str) -> str:
 
 
 DATA_DIR = _default_data_dir()
+
+
+def rel_data_path(path) -> str:
+    """Path stored in the database: relative to DATA_DIR with '/' separators, so the data folder can be
+    copied between Windows, macOS and Linux (or simply moved) without breaking links to the FASTA files."""
+    p = Path(path)
+    try:
+        return p.resolve().relative_to(DATA_DIR.resolve()).as_posix()
+    except ValueError:
+        return p.as_posix()
+
+
+def data_path(stored) -> Path:
+    """Resolve a stored file path. Understands the new relative form and absolute paths written by older
+    versions (including Windows paths read on macOS/Linux, which are re-rooted at their 'genomes' folder)."""
+    s = str(stored)
+    p = Path(s)
+    absolute = p.is_absolute() or s.startswith(("/", "\\")) or bool(re.match(r"^[A-Za-z]:[\\/]", s))
+    if not absolute:  # new format: relative to the data folder
+        return DATA_DIR / p
+    parts = re.split(r"[\\/]+", s)
+    rerooted = DATA_DIR.joinpath(*parts[len(parts) - 1 - parts[::-1].index("genomes"):]) if "genomes" in parts else None
+    if rerooted is not None and rerooted.exists():  # prefer this data folder's own copy (folder moved / copied)
+        return rerooted
+    if p.exists():
+        return p
+    return rerooted or p
 DB_PATH = DATA_DIR / "genomecurator.db"
 NCBI_API_KEY = os.environ.get("NCBI_API_KEY") or None
 # Minimum gap between any two outgoing web requests (NCBI, BV-BRC, Pathoplexus).

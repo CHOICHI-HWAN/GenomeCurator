@@ -209,6 +209,45 @@ def create_app(scheduler: bool = True) -> FastAPI:
                       changesets=_rows("SELECT c.*, w.name wname FROM changeset c JOIN watchlist w ON w.id=c.watch_id "
                                        "WHERE c.status!='DISCARDED' ORDER BY c.id DESC LIMIT 30"))
 
+    def _same_origin(request: Request) -> bool:
+        from urllib.parse import urlparse
+        origin = request.headers.get("origin")
+        return not origin or urlparse(origin).netloc == request.headers.get("host")
+
+    @app.get("/api/watch/{wid}/impact")
+    def watch_impact_api(wid: int):
+        try:
+            return curate.watch_impact(wid)
+        except ValueError as e:
+            return JSONResponse({"error": str(e)}, 404)
+
+    @app.post("/watch/{wid}/update")
+    def watch_update(request: Request, wid: int, name: str = Form(""), taxon: str = Form(""), enabled: str = Form("")):
+        if not _same_origin(request):
+            return JSONResponse({"error": "cross-site request refused"}, 403)
+        try:
+            notes = curate.update_watch(wid, name, taxon, enabled == "1")
+            msg = "저장했습니다: " + "; ".join(notes) if notes else "변경 사항이 없습니다."
+        except ValueError as e:
+            msg = f"수정 실패: {e}"
+        return RedirectResponse(f"/?msg={msg}", 303)
+
+    @app.post("/watch/{wid}/delete")
+    def watch_delete(request: Request, wid: int, confirm_name: str = Form("")):
+        if not _same_origin(request):
+            return JSONResponse({"error": "cross-site request refused"}, 403)
+        try:
+            w = curate.watch_impact(wid)
+            if confirm_name.strip() != w["name"]:
+                msg = "삭제하지 않았습니다: 확인용 이름이 일치하지 않습니다."
+            else:
+                r = curate.delete_watch(wid)
+                msg = (f"'{r['name']}' 삭제 완료 — 유전체 {r['genomes']}건, FASTA 파일 {r['files_removed']}개, "
+                       f"changeset {r['changesets']}개를 지웠습니다.")
+        except ValueError as e:
+            msg = f"삭제 실패: {e}"
+        return RedirectResponse(f"/?msg={msg}", 303)
+
     @app.get("/api/lookup")
     def api_lookup(q: str = ""):
         """Check a typed virus name against ICTV, NCBI Virus, BV-BRC and Pathoplexus (read-only)."""
@@ -350,7 +389,7 @@ def create_app(scheduler: bool = True) -> FastAPI:
         out = []
         for r in _rows("SELECT file_path FROM genome_sequence WHERE genome_id IN (%s)" % ",".join("?" * len(ids)), *ids) if ids else []:
             try:
-                out.append(Path(r["file_path"]).read_text(encoding="utf-8"))
+                out.append(config.data_path(r["file_path"]).read_text(encoding="utf-8"))
             except OSError:
                 pass
         return Response("".join(out), media_type="text/plain; charset=utf-8",

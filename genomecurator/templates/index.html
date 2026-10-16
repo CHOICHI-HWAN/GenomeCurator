@@ -1,9 +1,42 @@
 {% extends "base.html" %}{% block body %}
 <h2>Watchlist</h2>
-<table><tr><th>이름</th><th>NCBI taxon</th><th>로컬 유전체</th><th>마지막 확인</th><th></th></tr>
-{% for w in watches %}<tr><td>{{ w.name }}</td><td>{{ w.taxon }} <span class="mut">({{ w.taxon_id }})</span></td><td>{{ w.n_genomes }}</td><td>{{ w.last_checked or "-" }}</td>
-<td><form method="post" action="/watch/{{ w.name }}/check" onsubmit="runJob(this);return false"><button>지금 확인</button></form></td></tr>
-{% else %}<tr><td colspan="5" class="mut">등록된 바이러스가 없습니다.</td></tr>{% endfor %}</table>
+<table><tr><th>이름</th><th>NCBI taxon</th><th>로컬 유전체</th><th>자동 확인</th><th>마지막 확인</th><th></th></tr>
+{% for w in watches %}<tr{% if not w.enabled %} style="opacity:.6"{% endif %}><td>{{ w.name }}</td><td>{{ w.taxon }} <span class="mut">({{ w.taxon_id }})</span></td><td>{{ w.n_genomes }}</td>
+<td>{{ "켜짐" if w.enabled else "꺼짐" }}</td><td>{{ w.last_checked or "-" }}</td>
+<td style="white-space:nowrap"><form method="post" action="/watch/{{ w.name }}/check" onsubmit="runJob(this);return false" style="display:inline"><button>지금 확인</button></form>
+ <button type="button" onclick="editWatch({{ w.id }})">편집</button>
+ <button type="button" onclick="delWatch({{ w.id }})" style="color:var(--bad)">삭제</button></td></tr>
+{% else %}<tr><td colspan="6" class="mut">등록된 바이러스가 없습니다.</td></tr>{% endfor %}</table>
+
+<dialog id="edlg" style="border:1px solid var(--bd);border-radius:6px;background:var(--card);color:var(--fg);max-width:520px;width:92vw">
+ <form method="post" id="edf" style="display:flex;flex-direction:column;gap:10px"><b style="font-size:16px">워치 편집</b>
+  <label>이름 (화면에 표시되는 라벨)<br><input name="name" id="ed_name" style="width:100%" required></label>
+  <label>수집 분류군 (NCBI 이름 또는 taxon ID)<br><input name="taxon" id="ed_taxon" style="width:100%"></label>
+  <div class="mut" style="font-size:12px">분류군을 바꾸면 수집 범위가 달라집니다. 바이러스인지, 유전체 레코드가 있는지 NCBI로 확인한 뒤 저장하며, 이미 반영된 유전체 중 새 범위에 없는 것은 다음 확인에서 '삭제됨' 후보로 올라올 수 있습니다. 이름만 바꿔도 이후 새로 받는 서열 파일은 새 이름의 폴더에 저장됩니다(기존 파일은 그대로 유지).</div>
+  <label style="cursor:pointer"><input type="checkbox" name="enabled" value="1" id="ed_en"> 자동 확인에 포함 (끄면 주기 실행에서 제외, 수동 확인은 가능)</label>
+  <div style="display:flex;gap:8px;justify-content:flex-end"><button type="button" onclick="document.getElementById('edlg').close()">취소</button><button class="p" id="ed_save">저장</button></div></form>
+</dialog>
+<dialog id="dldlg" style="border:1px solid var(--bad);border-radius:6px;background:var(--card);color:var(--fg);max-width:520px;width:92vw">
+ <form method="post" id="dlf" style="display:flex;flex-direction:column;gap:10px"><b style="font-size:16px;color:var(--bad)">워치 삭제</b>
+  <div id="dl_info" style="line-height:1.6"></div>
+  <label>계속하려면 워치 이름 <b id="dl_name"></b> 을(를) 그대로 입력하세요<br><input name="confirm_name" id="dl_in" autocomplete="off" style="width:100%"></label>
+  <div style="display:flex;gap:8px;justify-content:flex-end"><button type="button" onclick="document.getElementById('dldlg').close()">취소</button>
+   <button id="dl_go" disabled style="background:var(--bad);color:#fff;border-color:var(--bad)">영구 삭제</button></div></form>
+</dialog>
+<script>
+const WATCHES={{ watches|tojson }};
+function editWatch(id){const w=WATCHES.find(x=>x.id===id);if(!w)return;
+ document.getElementById('edf').action='/watch/'+id+'/update';document.getElementById('ed_name').value=w.name;
+ document.getElementById('ed_taxon').value=w.taxon;
+ document.getElementById('ed_en').checked=!!w.enabled;document.getElementById('edlg').showModal()}
+document.getElementById('edf').addEventListener('submit',()=>{const b=document.getElementById('ed_save');b.disabled=true;b.textContent='확인 중…'});
+async function delWatch(id){const w=WATCHES.find(x=>x.id===id);if(!w)return;let i;
+ try{const resp=await fetch('/api/watch/'+id+'/impact');i=await resp.json();if(!resp.ok||i.genomes===undefined){alert('영향 범위를 불러오지 못했습니다 ('+resp.status+'). 서버가 이전 버전이면 앱을 재시작하세요.');return}}catch(e){alert('영향 범위를 불러오지 못했습니다: '+e);return}
+ document.getElementById('dlf').action='/watch/'+id+'/delete';document.getElementById('dl_name').textContent=w.name;
+ document.getElementById('dl_info').innerHTML='<b>되돌릴 수 없습니다.</b> 이 워치와 함께 다음이 영구 삭제됩니다.<ul style="margin:6px 0"><li>로컬 유전체 '+i.genomes.toLocaleString()+'건 (DB 기록·출처·변경 이력)</li><li>FASTA 파일 '+i.fasta.toLocaleString()+'개</li><li>changeset '+i.changesets+'개 (항목 '+i.items.toLocaleString()+'건)</li></ul><span class="mut">나중에 다시 받을 수는 있지만 승인 이력은 사라집니다. 데이터를 남기고 수집만 멈추려면 취소하고 편집에서 \'자동 확인\'을 끄세요.</span>';
+ const inp=document.getElementById('dl_in'),go=document.getElementById('dl_go');inp.value='';go.disabled=true;
+ inp.oninput=()=>{go.disabled=inp.value.trim()!==w.name};document.getElementById('dldlg').showModal();inp.focus()}
+</script>
 <div class="card" id="addbox">
  <b>바이러스 추가</b> <span class="mut">— 이름을 입력하면 ICTV · NCBI Virus · BV-BRC · Pathoplexus에서 먼저 확인하고, 필요하면 공식 이름을 제안합니다.</span>
  <form id="lkf" style="margin-top:8px;display:flex;gap:8px;flex-wrap:wrap" onsubmit="lookup();return false">

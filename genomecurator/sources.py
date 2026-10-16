@@ -2,6 +2,7 @@
 BV-BRC style field names. A missing source (e.g. organism not on Pathoplexus)
 yields {} instead of an error."""
 import io
+import re
 import json
 import time
 import zipfile
@@ -266,8 +267,8 @@ def fetch_bvbrc(taxon_id: int | None) -> dict[str, dict]:
 
 # --------------------------------------------------------------- Pathoplexus
 # LAPIS has no organism list endpoint; these slugs were verified live (2026-10).
-PPX_KNOWN = ["mpox", "ebola-zaire", "ebola-sudan", "marburg", "cchf", "west-nile", "hmpv", "rsv-a", "rsv-b",
-             "measles", "dengue", "zika", "chikungunya", "yellow-fever"]
+PPX_KNOWN = ["mpox", "ebola-zaire", "ebola-sudan", "ebola-bdbv", "marburg", "cchf", "west-nile", "hmpv", "rsv-a", "rsv-b",
+             "measles", "dengue", "zika", "chikungunya", "yellow-fever", "andv"]
 _PPX_FIELDS = ["insdcAccessionFull", "insdcAccessionBase", "accessionVersion", "specimenCollectorSampleId",
                "hostNameScientific", "hostNameCommon", "geoLocCountry", "geoLocAdmin1", "sampleCollectionDate",
                "authorAffiliations", "earliestReleaseDate", "anatomicalPart", "bodyProduct",
@@ -279,29 +280,101 @@ _PPX_FILTER = {"versionStatus": "LATEST_VERSION", "isRevocation": "false"}
 _ppx_cache: dict[tuple, tuple | None] = {}
 
 
+PPX_HOME = "https://pathoplexus.org/"
+_ppx_index: dict[str, dict[int, int]] | None = None
+_lineage_cache: dict[int, set[int]] = {}
+_ppx_match: dict[tuple[str, int], int] = {}
+
+
+def pathoplexus_organisms() -> list[str]:
+    """Organisms Pathoplexus serves. LAPIS has no listing endpoint, so the slugs are read from the
+    website's own navigation (new organisms such as ebola-bdbv or andv appear without a code change);
+    PPX_KNOWN is only the fallback when the site cannot be read."""
+    slugs = set(PPX_KNOWN)
+    try:
+        with _client() as c:
+            r = _get(c, PPX_HOME, headers={"User-Agent": "Mozilla/5.0 GenomeCurator"})
+            if r.status_code == 200:
+                slugs |= set(re.findall(r'href="/([a-z0-9][a-z0-9\-]+)/search', r.text))
+    except Exception:
+        pass
+    return sorted(slugs)
+
+
+def pathoplexus_index(refresh: bool = False) -> dict[str, dict[int, int]]:
+    """{organism slug: {ncbiVirusTaxId: number of sequences}} for every organism Pathoplexus serves."""
+    global _ppx_index
+    if _ppx_index is not None and not refresh:
+        return _ppx_index
+    index: dict[str, dict[int, int]] = {}
+    with _client() as c:
+        for slug in pathoplexus_organisms():
+            try:
+                r = _get(c, f"{config.PATHOPLEXUS_BASE}/{slug}/sample/aggregated", params={**_PPX_FILTER, "fields": "ncbiVirusTaxId"})
+                if r.status_code != 200:
+                    continue
+                index[slug] = {int(x["ncbiVirusTaxId"]): x["count"] for x in r.json()["data"] if x.get("ncbiVirusTaxId") is not None}
+            except Exception:
+                continue
+    _ppx_index = index
+    return index
+
+
+def _lineages(taxids: list[int]) -> dict[int, set[int]]:
+    """NCBI lineage (ancestor ids, incl. itself) per taxon id, cached."""
+    todo = [t for t in taxids if t not in _lineage_cache]
+    with _client() as c:
+        for i in range(0, len(todo), 50):
+            chunk = todo[i:i + 50]
+            try:
+                nodes = _ncbi_get(c, "https://api.ncbi.nlm.nih.gov/datasets/v2/taxonomy/taxon/" + ",".join(map(str, chunk))).json().get("taxonomy_nodes", [])
+            except Exception:
+                continue
+            for n in nodes:
+                t = n.get("taxonomy") or {}
+                if t.get("tax_id"):
+                    _lineage_cache[int(t["tax_id"])] = {int(x) for x in t.get("lineage", [])} | {int(t["tax_id"])}
+    return {t: _lineage_cache.get(t, {t}) for t in taxids}
+
+
+def pathoplexus_matched(slug: str, taxon_id: int | None) -> int:
+    """Sequences of this organism that belong to the taxon (the taxon itself or any descendant)."""
+    return _ppx_match.get((slug, taxon_id or 0), 0)
+
+
 def pathoplexus_resolve(watch_name: str, taxon: str, taxon_id: int | None):
-    """-> (slug, filter) or None. Config override wins; otherwise probe known organisms by NCBI taxon."""
+    """-> (slug, filter) or None. Config override wins; otherwise the organism whose sequences are tagged with the
+    watch's NCBI taxon or one of its descendants (Pathoplexus tags at varying ranks, e.g. a strain or the species)."""
     key = (watch_name, taxon_id)
     if key in _ppx_cache:
         return _ppx_cache[key]
     base = {**_PPX_FILTER}
+    forced = config.PATHOPLEXUS_ORGANISMS.get(watch_name)
     found = None
-    slug = config.PATHOPLEXUS_ORGANISMS.get(watch_name)
-    cands = [(slug, None)] if slug else [(s, None) for s in PPX_KNOWN]
-    with _client() as c:
-        for s, _ in cands:
-            for flt in ([{"ncbiVirusTaxId": taxon_id}] if taxon_id else []) + [{"ncbiVirusName": taxon}]:
+    if not forced and taxon_id:
+        index = pathoplexus_index()
+        best: dict[str, int] = {}
+        lin = _lineages([t for ids in index.values() for t in ids])
+        for slug, ids in index.items():
+            n = sum(cnt for t, cnt in ids.items() if t == taxon_id or taxon_id in lin.get(t, ()))
+            if n:
+                best[slug] = n
+                _ppx_match[(slug, taxon_id)] = n
+        if best:
+            slug = max(best, key=best.get)
+            found = (slug, {**base, "ncbiVirusTaxId": taxon_id} if taxon_id in index[slug] else base)
+    if not found and not forced:  # last resort: match by virus name
+        with _client() as c:
+            for slug in pathoplexus_index():
                 try:
-                    r = _get(c, f"{config.PATHOPLEXUS_BASE}/{s}/sample/aggregated", params={**base, **flt})
+                    r = _get(c, f"{config.PATHOPLEXUS_BASE}/{slug}/sample/aggregated", params={**base, "ncbiVirusName": taxon})
                     if r.status_code == 200 and r.json()["data"][0]["count"] > 0:
-                        found = (s, {**base, **flt})
+                        found = (slug, {**base, "ncbiVirusName": taxon})
                         break
                 except Exception:
                     pass
-            if found:
-                break
-        if not found and slug:  # forced organism with no taxon match: take everything
-            found = (slug, base)
+    if not found and forced:  # forced organism: take everything
+        found = (forced, base)
     _ppx_cache[key] = found
     return found
 
@@ -309,7 +382,7 @@ def pathoplexus_resolve(watch_name: str, taxon: str, taxon_id: int | None):
 def pathoplexus_slug_for(accession_version: str) -> str | None:
     """Which Pathoplexus organism holds this accession (e.g. PP_006WPN1.1)? Probes the known organisms."""
     with _client() as c:
-        for slug in PPX_KNOWN:
+        for slug in pathoplexus_organisms():
             try:
                 r = _get(c, f"{config.PATHOPLEXUS_BASE}/{slug}/sample/aggregated", params={"accessionVersion": accession_version})
                 if r.status_code == 200 and r.json()["data"][0]["count"] > 0:
