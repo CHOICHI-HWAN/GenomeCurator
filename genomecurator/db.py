@@ -51,6 +51,12 @@ CREATE TABLE IF NOT EXISTS source_conflict(
   id INTEGER PRIMARY KEY, watch_id INTEGER, accession TEXT, field TEXT, kind TEXT,  -- cosmetic|conflict
   src_a TEXT, val_a TEXT, src_b TEXT, val_b TEXT);
 CREATE INDEX IF NOT EXISTS ix_conflict_watch ON source_conflict(watch_id, field, kind);
+-- verdict of the sequence-body comparison against NCBI (seqcheck.py); no sequences are stored
+CREATE TABLE IF NOT EXISTS sequence_check(
+  watch_id INTEGER, accession TEXT, source TEXT, status TEXT,  -- ref|same|diff|missing|error
+  length INTEGER, sha256 TEXT, ref_length INTEGER, prefix_same INTEGER, suffix_same INTEGER, detail TEXT, checked_at TEXT,
+  PRIMARY KEY(watch_id, accession, source));
+CREATE TABLE IF NOT EXISTS sequence_plan(watch_id INTEGER PRIMARY KEY, created TEXT, plan_json TEXT);  -- dry-run of seqcheck
 CREATE TABLE IF NOT EXISTS reconcile_report(watch_id INTEGER PRIMARY KEY, checked_at TEXT, report_json TEXT);
 
 CREATE TABLE IF NOT EXISTS audit_log(

@@ -21,6 +21,7 @@
 <button class="tbn" style="color:var(--ok)" onclick="dec('approved')"><i>✔</i>Approve</button>
 <button class="tbn" style="color:var(--bad)" onclick="dec('rejected')"><i>✖</i>Reject</button>
 <button class="tbn" style="color:var(--warn)" onclick="dec('hold')"><i>⏸</i>Hold</button>
+<button class="tbn" title="선택한 항목의 서열 검증 계획(dry-run)을 만듭니다. 서열은 아직 받지 않습니다" onclick="sq()"><i>🧬</i>Verify seq</button>
 <button class="tbn" style="color:var(--bad)" onclick="delCs()"><i>🗑</i>Delete</button>
 <button class="tbn" {% if cs.status != 'READY' %}disabled style="opacity:.4"{% endif %} onclick="aa()"><i>⬆</i>Apply</button>
 <label style="font-size:11px;color:var(--mut);align-self:center;margin-left:4px;cursor:pointer" title="끄면 서열 없이 메타데이터만 먼저 반영합니다 (신규 항목). 서열은 유전체 화면의 Get FASTA로 나중에 받습니다."><input type="checkbox" id="fsq" checked style="vertical-align:-2px"> 서열(FASTA)도 받기</label>
@@ -33,6 +34,10 @@ async function delCs(){const i=await (await fetch('/api/changeset/{{ cs.id }}/im
  if(i.rejected||i.hold)m+='\n\n⚠ 거절 '+i.rejected+'건 · 보류 '+i.hold+'건의 결정도 사라져서 다음 확인 때 다시 올라올 수 있습니다.';
  if(confirm(m))document.getElementById('csdel').submit()}
 function ids(){return G.selected()}
+function sq(){const s=ids();if(!s.length){alert('서열을 검증할 항목을 먼저 선택하세요.');return}
+ if(s.length>2000){alert('한 번에 최대 2000건까지 검증할 수 있습니다. 불일치 항목만 골라 보세요(정합성 필터).');return}
+ if(!confirm(s.length+'건의 서열 검증 계획(dry-run)을 만듭니다.\n링크와 길이만 확인하고 서열은 받지 않습니다. 계획을 확인한 뒤 실행할 수 있습니다.'))return;
+ const f=document.getElementById('df');f.action='/changeset/{{ cs.id }}/seqcheck';document.getElementById('ids').innerHTML=`<input type="hidden" name="items" value="${s.join(',')}">`;runJob(f)}
 function nConf(s){const r=JSON.parse(document.getElementById('gdata').textContent).rows,set=new Set(s.map(Number));return r.filter(x=>set.has(x.id)&&x.integrity==='불일치').length}
 function dec(a){const s=ids();if(!s.length){alert('선택된 항목이 없습니다. 체크박스로 고르거나 Select all을 누르세요.');return}
  if(a==='approved'){const n=nConf(s);if(n&&!confirm('선택한 '+s.length+'건 중 '+n+'건은 소스 간 값이 서로 다릅니다(정합성=불일치).\n그래도 승인할까요?'))return}

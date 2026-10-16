@@ -47,6 +47,37 @@ td.cell a{text-decoration:none;color:inherit;display:block}td.cell:hover{backgro
 {% else %}<tr><td colspan="5" class="mut">없음</td></tr>{% endfor %}</table>{% endif %}
 {% endif %}
 
+<h3 id="seq">3-2. 서열로 검증 <span class="mut" style="font-weight:400;font-size:13px">— 메타데이터가 애매할 때, 서열 본문이 같은지로 같은 레코드인지 확인</span></h3>
+{% if seq %}
+<div class="help">길이·버전·해시가 소스마다 다른 항목(<b>{{ '{:,}'.format(seq.targets) }}건</b>)의 서열을 NCBI·BV-BRC·Pathoplexus에서 임시로 받아, <b>헤더를 빼고 서열 본문만</b> 비교합니다(내려받은 서열은 저장하지 않고 결과만 남깁니다).
+ 본문이 같으면 <b>같은 레코드</b>이므로 길이·버전 불일치는 통과 처리되고, 다르면 그 소스는 <b>다른 서열(예: 구버전)</b>이라는 뜻입니다. 기준은 NCBI입니다. 검토 화면에서 항목을 골라 일부만 검증할 수도 있습니다.</div>
+<div class="cards" style="grid-template-columns:repeat(auto-fit,minmax(150px,1fr))">
+ <div class="kpi"><small>검증한 accession</small><b>{{ '{:,}'.format(seq.accessions) }}</b><small>대상 {{ '{:,}'.format(seq.targets) }}건 중</small></div>
+ <div class="kpi"><small>서열 동일 (소스 기준)</small><b class="ok">{{ '{:,}'.format(seq.same) }}</b></div>
+ <div class="kpi"><small>서열 다름</small><b class="{{ 'fail' if seq.diff else 'ok' }}">{{ '{:,}'.format(seq.diff) }}</b></div>
+ <div class="kpi"><small>받지 못함/오류</small><b class="{{ 'warn' if seq.missing + seq.error else 'ok' }}">{{ '{:,}'.format(seq.missing + seq.error) }}</b></div></div>
+<form method="post" action="/integrity/seqplan" onsubmit="runJob(this);return false" style="display:inline">
+ <input type="hidden" name="watch" value="{{ wid }}"><button class="p" {% if not seq.targets %}disabled{% endif %}>① 계획 확인 (dry-run) — 서열 관련 불일치 {{ '{:,}'.format(seq.targets) }}건</button></form>
+<span class="mut" style="font-size:12.5px"> 링크와 길이만 조회하며 서열은 받지 않습니다. 계획을 보고 실행 여부를 정합니다.</span>
+{% if plan %}{% set ps = plan.summary %}{% set nm = {'ncbi': 'NCBI', 'bvbrc': 'BV-BRC', 'pathoplexus': 'Pathoplexus'} %}{% set sl = {'download': '서열을 받아 비교', 'diff_len': '길이가 달라 다름 확정(받지 않음)', 'done': '이미 검증됨(생략)', 'missing': '소스에 없음', 'error': '조회 오류'} %}
+<div class="card" style="margin-top:10px;border-left:4px solid var(--acc)"><b>실행 계획</b> <span class="mut">{{ plan.created }} 작성 · 대상 {{ '{:,}'.format(ps.accessions) }}건</span>
+ <table style="margin-top:8px"><tr><th>소스</th>{% for k, v in sl.items() %}<th>{{ v }}</th>{% endfor %}</tr>
+ {% for src, d in ps.sources.items() %}<tr><td><b>{{ nm[src] }}</b></td>{% for k in sl %}<td class="{{ 'warn' if (k in ('missing','error') and d.get(k)) }}">{{ '{:,}'.format(d.get(k, 0)) if d.get(k) else '·' }}</td>{% endfor %}</tr>{% endfor %}</table>
+ <div class="cards" style="margin-top:10px;grid-template-columns:repeat(auto-fit,minmax(150px,1fr))">
+  <div class="kpi"><small>실제로 받을 용량</small><b>{{ '%.1f' % (ps.bytes / 1e6) }} MB</b></div>
+  <div class="kpi"><small>다운로드 요청</small><b>{{ '{:,}'.format(ps.requests) }}회</b></div>
+  <div class="kpi"><small>예상 시간</small><b>{{ ps.seconds if ps.seconds < 90 else (ps.seconds // 60 ~ '분') }}{{ '초' if ps.seconds < 90 }}</b></div>
+  <div class="kpi"><small>길이 비교로 생략한 용량</small><b class="ok">{{ '%.0f' % (ps.avoided_bytes / 1e6) }} MB</b></div></div>
+ <form method="post" action="/integrity/seqcheck" style="margin-top:10px" onsubmit="if(!confirm('이 계획대로 실행합니다.\n서열 {{ '%.1f' % (ps.bytes / 1e6) }} MB를 받아 비교하고, 길이가 달라 확정된 결과를 기록합니다.'))return false;runJob(this);return false">
+  <input type="hidden" name="watch" value="{{ wid }}"><button class="p">② 이 계획대로 실행</button> <span class="mut" style="font-size:12.5px">받은 서열은 저장하지 않고 결과만 남깁니다.</span></form></div>
+{% endif %}
+{% if seq_rows %}<table style="margin-top:10px"><tr><th>accession</th><th>소스</th><th>결과</th><th>길이(bp)</th><th>설명</th></tr>
+{% for r in seq_rows %}<tr><td><a href="https://www.ncbi.nlm.nih.gov/nuccore/{{ r.accession }}" target="_blank" rel="noopener">{{ r.accession }}</a></td><td>{{ label.get(r.source, r.source) }}</td>
+<td class="{{ {'same': 'ok', 'diff': 'fail', 'missing': 'warn', 'error': 'warn'}.get(r.status, '') }}"><b>{{ {'same': '서열 동일', 'diff': '서열 다름', 'missing': '받지 못함', 'error': '오류'}.get(r.status, r.status) }}</b></td>
+<td class="n">{{ '{:,}'.format(r.length) if r.length else '' }}{% if r.ref_length and r.length != r.ref_length %} (NCBI {{ '{:,}'.format(r.ref_length) }}){% endif %}</td><td class="mut">{{ r.detail }}</td></tr>{% endfor %}</table>
+<p class="mut" style="font-size:12.5px">다른 서열이 위에 먼저 나옵니다 (최대 300건).</p>{% endif %}
+{% endif %}
+
 <h3>4. 로컬 데이터 무결성 <span class="mut" style="font-weight:400;font-size:13px">— 받아서 저장한 데이터 자체의 검사</span></h3>
 <p style="margin:0 0 6px">{% if files %}FASTA 파일까지 검사한 결과입니다.{% else %}빠른 검사입니다. <a href="?watch={{ wid }}&files=1#vf">FASTA 파일 길이·md5까지 검사</a> (파일 수에 따라 오래 걸립니다){% endif %}</p>
 <table id="vf"><tr><th>검사</th><th>결과</th><th>건수</th><th>설명 / 예</th></tr>

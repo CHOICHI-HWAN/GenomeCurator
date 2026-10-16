@@ -269,3 +269,31 @@ def test_source_agreement_marks_conflicting_items(tmp_path, monkeypatch):
     ag = curate.source_agreement(1)
     assert ag["A1"]["conflict"] == {"genome_length"} and ag["A1"]["cosmetic"] == {"collection_date"}
     assert "A2" not in ag
+
+
+def test_seqcheck_compare():
+    from genomecurator.seqcheck import _norm, compare
+    assert _norm(" acg\nT ") == "ACGT"
+    assert compare("ACGTACGT", "ACGTACGT")["status"] == "same"
+    d = compare("ACGTACGTAA", "ACGTTTTTAA")
+    assert d["status"] == "diff" and d["prefix"] == 4 and d["suffix"] == 3
+    assert compare("AAAC", "GTTT")["status"] == "diff" and "역상보" in compare("AAAC", "GTTT")["detail"]
+    assert "길이" in compare("ACGT", "ACG")["detail"]
+
+
+def test_seq_verdict_resolves_length_conflict(tmp_path, monkeypatch):
+    from genomecurator import config, curate, reconcile
+    from genomecurator.db import connect
+    monkeypatch.setattr(config, "DATA_DIR", tmp_path)
+    monkeypatch.setattr(config, "DB_PATH", tmp_path / "g.db")
+    con = connect()
+    rep, rows = reconcile.analyze({"ncbi": {"A1": {"genome_length": 1, "strain": "x1"}, "A2": {"genome_length": 1}},
+                                   "bvbrc": {"A1": {"genome_length": 2, "strain": "y9"}, "A2": {"genome_length": 2}}})
+    reconcile.store(con, 1, rep, rows)
+    con.executemany("INSERT INTO sequence_check(watch_id,accession,source,status) VALUES(1,?,?,?)",
+                    [("A1", "bvbrc", "same"), ("A2", "bvbrc", "diff")])
+    con.commit()
+    con.close()
+    ag = curate.source_agreement(1)
+    assert ag["A1"]["conflict"] == {"strain"} and ag["A1"]["resolved"] == {"genome_length"} and ag["A1"]["seq"] == "same"
+    assert ag["A2"]["conflict"] == {"genome_length"} and ag["A2"]["seq"] == "diff"

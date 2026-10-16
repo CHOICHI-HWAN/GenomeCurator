@@ -6,7 +6,7 @@ import shutil
 from pathlib import Path
 from datetime import datetime
 
-from . import config, reconcile, sources
+from . import config, reconcile, seqcheck, sources
 from .db import audit, connect, tx
 
 GENOME_COLS = [
@@ -56,8 +56,21 @@ def source_agreement(watch_id: int) -> dict[str, dict]:
     con = connect()
     try:
         out: dict[str, dict] = {}
-        for acc, field, kind in con.execute("SELECT accession, field, kind FROM source_conflict WHERE watch_id=?", (watch_id,)):
-            out.setdefault(acc, {"conflict": set(), "cosmetic": set()})[kind].add(field)
+        verdict = seqcheck.verdicts(watch_id)
+        blank = lambda: {"conflict": set(), "cosmetic": set(), "resolved": set()}
+        for acc, field, kind, sa, sb in con.execute("SELECT accession, field, kind, src_a, src_b FROM source_conflict WHERE watch_id=?", (watch_id,)):
+            d = out.setdefault(acc, blank())
+            # a pair's length/version/hash conflict is settled when every non-reference source in it holds NCBI's exact sequence
+            srcs = [x for x in (sa, sb) if x != "ncbi"]
+            sv = verdict.get(acc, {}).get("sources", {})
+            if kind == "conflict" and field in seqcheck.SEQ_FIELDS and srcs and all(sv.get(x) == "same" for x in srcs):
+                d["resolved"].add(field)
+            else:
+                d[kind].add(field)
+        for acc, v in verdict.items():
+            d = out.setdefault(acc, blank())
+            d["conflict"] -= d["resolved"] - {f for f in d["conflict"] if f not in seqcheck.SEQ_FIELDS}
+            d["seq"] = "same" if v["same"] else ("diff" if v["diff"] else "other")
         return out
     finally:
         con.close()

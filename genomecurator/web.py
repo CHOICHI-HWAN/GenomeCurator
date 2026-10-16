@@ -50,7 +50,7 @@ def start_job(fn) -> JSONResponse:
     return JSONResponse({"job": jid})
 
 
-CS_COLS = [("kind", "종류", True, True), ("decision", "결정", True, True), ("integrity", "정합성", True, True),
+CS_COLS = [("kind", "종류", True, True), ("decision", "결정", True, True), ("integrity", "정합성", True, True), ("seq", "서열 검증", True, True),
            ("conflict_fields", "불일치 필드", True, False), ("accession", "Accession", True, False),
            ("accession_version", "Ver", True, False), ("genome_name", "Genome Name", True, False),
            ("genome_status", "Status", True, False), ("genome_length", "Length", True, False),
@@ -64,7 +64,7 @@ CS_COLS = [("kind", "종류", True, True), ("decision", "결정", True, True), (
            ("assembly_method", "Assembly Method", False, False), ("has_sra", "SRA", False, False),
            ("submitter", "Submitter", False, False), ("bvbrc_genome_id", "BV-BRC ID", False, False),
            ("release_date", "Release Date", False, False)]
-CS_FACETS = [("kind", "종류"), ("decision", "결정"), ("integrity", "정합성(소스 간 일치)"), ("genome_status", "Genome Status"), ("host_name", "Host"),
+CS_FACETS = [("kind", "종류"), ("decision", "결정"), ("integrity", "정합성(소스 간 일치)"), ("seq", "서열 검증"), ("genome_status", "Genome Status"), ("host_name", "Host"),
              ("isolation_country", "Country"), ("collection_year", "Collection Year"), ("has_sra", "SRA")]
 GN_COLS = [("genome_name", "Genome Name", True), ("strain", "Strain", True), ("genbank", "GenBank Accessions", True),
            ("genome_length", "Size", True), ("genome_status", "Genome Status", True), ("collection_date", "Collection Date", True),
@@ -343,6 +343,7 @@ def create_app(scheduler: bool = True) -> FastAPI:
             r.update(id=i["id"], kind=i["kind"], decision=i["decision"], accession=i["accession"],
                      has_sra="Yes" if r.get("sra_accession") else "No",
                      integrity="불일치" if ag.get("conflict") else ("표기차이" if ag.get("cosmetic") else "일치"),
+                     seq={"same": "서열 동일", "diff": "서열 다름", "other": "확인 불가"}.get(ag.get("seq"), "미검증"),
                      conflict_fields=", ".join(sorted(ag.get("conflict", []))))
             if i["kind"] == "changed":
                 r["_diff"] = json.loads(i["diff_json"] or "{}")
@@ -454,9 +455,39 @@ def create_app(scheduler: bool = True) -> FastAPI:
         return _tsv(_rows("SELECT g.*, s.gc_content, s.md5, s.file_path FROM genome g "
                           "LEFT JOIN genome_sequence s ON s.accession=g.accession ORDER BY g.genome_id"), "genomes.tsv")
 
+    @app.post("/integrity/seqplan")
+    def integrity_seqplan(request: Request, watch: int = Form(0)):
+        if not _same_origin(request):
+            return JSONResponse({"error": "cross-site request refused"}, 403)
+        from . import seqcheck
+        return start_job(lambda p: (seqcheck.build_plan(watch, None, progress=p), f"/integrity?watch={watch}#seq")[1])
+
+    @app.post("/integrity/seqcheck")
+    def integrity_seqcheck(request: Request, watch: int = Form(0)):
+        """Execute the saved plan (the user has seen and confirmed it)."""
+        if not _same_origin(request):
+            return JSONResponse({"error": "cross-site request refused"}, 403)
+        from . import seqcheck
+        return start_job(lambda p: (seqcheck.execute(watch, progress=p), f"/integrity?watch={watch}#seq")[1])
+
+    @app.post("/changeset/{cid}/seqcheck")
+    async def changeset_seqcheck(request: Request, cid: int):
+        """Plan (dry-run) for the selected items, then send the user to the plan page to confirm."""
+        if not _same_origin(request):
+            return JSONResponse({"error": "cross-site request refused"}, 403)
+        from . import seqcheck
+        form = await request.form()
+        ids = _item_ids(form)
+        cs = _rows("SELECT watch_id FROM changeset WHERE id=?", cid)
+        if not cs or not ids:
+            return JSONResponse({"error": "선택된 항목이 없습니다."}, 400)
+        accs = [r["accession"] for r in _rows("SELECT accession FROM changeset_item WHERE changeset_id=? AND id IN (%s)" % ",".join("?" * len(ids)), cid, *ids)]
+        wid = cs[0]["watch_id"]
+        return start_job(lambda p: (seqcheck.build_plan(wid, accs, progress=p), f"/integrity?watch={wid}#seq")[1])
+
     @app.get("/integrity")
     def integrity(request: Request, watch: int = 0, field: str = "", kind: str = "conflict", files: int = 0):
-        from . import reconcile, verify
+        from . import reconcile, seqcheck, verify
         watches = _rows("SELECT id, name FROM watchlist ORDER BY name")
         wid = watch or (int(request.cookies.get("gc_watch") or 0) if request.cookies.get("gc_watch", "").isdigit() else 0)
         if wid not in {w["id"] for w in watches}:
@@ -473,7 +504,8 @@ def create_app(scheduler: bool = True) -> FastAPI:
                       label=reconcile.LABEL, agree=100 * cmp_ / tot if tot else 100.0, tot_cmp=tot,
                       ext=sum(rep["coverage"]["not_in_ncbi"].values()) if rep else 0,
                       field=field, kind=kind, examples=reconcile.conflicts(wid, field, kind) if field and wid else [],
-                      checks=verify.run(wid or None, check_files=bool(files)), files=files)
+                      checks=verify.run(wid or None, check_files=bool(files)), files=files,
+                      seq=seqcheck.summary(wid) if wid else None, plan=seqcheck.load_plan(wid) if wid else None, seq_rows=seqcheck.results(wid) if wid else [])
 
     @app.get("/dashboard")
     def dashboard(request: Request, watch: int = 0):

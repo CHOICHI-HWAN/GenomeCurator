@@ -32,10 +32,19 @@ button.tbn,.tbn{height:auto}
 button{cursor:pointer}button:hover{border-color:var(--acc)}button:disabled{opacity:.45;cursor:not-allowed}
 button.p{background:var(--acc);color:#fff;border-color:var(--acc)}
 .msg{padding:8px 12px;background:var(--chip);border-left:4px solid var(--acc);margin-bottom:12px}
-#toast{position:fixed;right:18px;bottom:18px;width:320px;background:var(--card);border:1px solid var(--bd);border-left:4px solid var(--acc);border-radius:4px;box-shadow:0 6px 20px rgba(0,0,0,.25);padding:12px 14px;display:none;z-index:50}
-#toast.err{border-left-color:var(--bad)}#toast.ok{border-left-color:var(--ok)}#toast .bar{height:6px;background:var(--th);border-radius:3px;margin:8px 0 4px;overflow:hidden}
-#toast .bar i{display:block;height:100%;width:0;background:var(--acc);transition:width .4s}#toast.ok .bar i{background:var(--ok)}#toast.err .bar i{background:var(--bad)}
-#toast .x{float:right;cursor:pointer;color:var(--mut);display:none}#toast.err .x{display:inline}
+#toast{position:fixed;inset:0;background:rgba(10,15,20,.55);display:none;align-items:center;justify-content:center;z-index:100}
+#toast .jm{width:min(640px,94vw);background:var(--card);border:1px solid var(--bd);border-top:5px solid var(--acc);border-radius:6px;box-shadow:0 12px 40px rgba(0,0,0,.4);padding:18px 24px 20px}
+#toast.err .jm{border-top-color:var(--bad)}#toast.ok .jm{border-top-color:var(--ok)}
+#toast .jh{display:flex;justify-content:space-between;align-items:center;margin-bottom:10px;font-size:16px}
+#toast .x{cursor:pointer;color:var(--mut);font-size:13px;display:none;padding:2px 8px;border:1px solid var(--bd);border-radius:3px}#toast.err .x{display:inline-block}
+#toast #tmsg{font-size:14px;margin-bottom:10px;min-height:20px;overflow-wrap:anywhere}
+#toast .bar{height:22px;background:var(--th);border-radius:11px;overflow:hidden}
+#toast .bar i{display:block;height:100%;width:0;background:var(--acc);border-radius:11px;transition:width .5s;background-image:linear-gradient(45deg,rgba(255,255,255,.22) 25%,transparent 25%,transparent 50%,rgba(255,255,255,.22) 50%,rgba(255,255,255,.22) 75%,transparent 75%);background-size:28px 28px;animation:jstripe 1s linear infinite}
+#toast.ok .bar i{background-color:var(--ok);animation:none}#toast.err .bar i{background-color:var(--bad);animation:none}
+@keyframes jstripe{to{background-position:28px 0}}
+#toast .pr{display:flex;justify-content:space-between;align-items:baseline;margin:6px 0 10px}#toast #tpct{font-size:22px;font-weight:700;font-variant-numeric:tabular-nums}
+#toast .jl{height:170px;overflow:auto;background:var(--stripe);border:1px solid var(--bd);border-radius:4px;padding:6px 10px;font:12px/1.55 Consolas,Menlo,monospace}
+#toast .jl div{white-space:pre-wrap;overflow-wrap:anywhere}#toast .jl .t{color:var(--mut);margin-right:8px}#toast .jl .e{color:var(--bad)}
 .mut{color:var(--mut)}code{font-size:12.5px}a{color:var(--acc)}
 @media(max-width:700px){main{padding:10px}header{overflow:auto}}
 </style></head><body>
@@ -43,17 +52,26 @@ button.p{background:var(--acc);color:#fff;border-color:var(--acc)}
 <a href="/" class="{{ 'on' if nav=='cur' }}">큐레이션{% if badge %}<span class="badge">{{ badge }}</span>{% endif %}</a>
 <a href="/dashboard{{ '?watch=' ~ watch if watch }}" class="{{ 'on' if nav=='dash' }}">대시보드</a><a href="/genomes{{ '?watch=' ~ watch if watch }}" class="{{ 'on' if nav=='gen' }}">유전체</a><a href="/integrity{{ '?watch=' ~ watch if watch }}" class="{{ 'on' if nav=='int' }}">정합성</a><a href="/history" class="{{ 'on' if nav=='his' }}">이력</a><a href="/public" target="_blank" rel="noopener" style="margin-left:auto" title="공개용 읽기 전용 화면">공개 보기 ↗</a><button id="deploybtn" type="button" onclick="deploy()" title="현재 데이터를 공개 사이트(GitHub Pages)에 게시" style="background:#76a72b;border-color:#76a72b;color:#fff;margin-left:6px">배포하기</button></header>
 <main>{% if msg %}<div class="msg">{{ msg }}</div>{% endif %}{% block body %}{% endblock %}</main>
-<div id="toast"><span class="x" onclick="this.parentNode.style.display='none'">✕</span><b id="tmsg"></b><div class="bar"><i id="tbar"></i></div><span class="mut" id="tpct"></span></div>
+<div id="toast"><div class="jm"><div class="jh"><b id="jtitle">작업 진행 중…</b><span class="x" onclick="jclose()">닫기 ✕</span></div>
+<div id="tmsg"></div><div class="bar"><i id="tbar"></i></div><div class="pr"><span id="tpct">0%</span><span class="mut" id="tel"></span></div>
+<div class="jl" id="tlog"></div><div class="mut" style="font-size:12px;margin-top:8px">작업이 끝날 때까지 다른 조작은 잠시 막힙니다. 서버에서 계속 진행되므로 페이지를 새로고침해도 이어서 보입니다.</div></div></div>
 <script>
 const TJ=document.getElementById("toast");
-const tset=(p,m)=>{document.getElementById("tbar").style.width=p+"%";document.getElementById("tmsg").textContent=m;document.getElementById("tpct").textContent=Math.round(p)+"%"};
+let _jt0=0,_jlast="",_jtimer=null;
+const jlog=(m,cls)=>{const l=document.getElementById("tlog"),d=document.createElement("div"),n=new Date(),z=x=>String(x).padStart(2,"0");
+ d.innerHTML='<span class="t">'+z(n.getHours())+":"+z(n.getMinutes())+":"+z(n.getSeconds())+"</span>";const t=document.createElement("span");t.textContent=m;if(cls)t.className=cls;d.appendChild(t);l.appendChild(d);l.scrollTop=l.scrollHeight};
+const tset=(p,m)=>{document.getElementById("tbar").style.width=Math.max(p,3)+"%";document.getElementById("tmsg").textContent=m;document.getElementById("tpct").textContent=Math.round(p)+"%";
+ if(m!==_jlast){_jlast=m;jlog(m+(p>=100||p<=1?"":"  ("+Math.round(p)+"%)"),TJ.className==="err"?"e":"")}};
+const jopen=()=>{TJ.className="";TJ.style.display="flex";document.getElementById("tlog").innerHTML="";_jlast="";_jt0=Date.now();clearInterval(_jtimer);
+ _jtimer=setInterval(()=>{const s=Math.round((Date.now()-_jt0)/1000);document.getElementById("tel").textContent="경과 "+Math.floor(s/60)+"분 "+(s%60)+"초"},500)};
+const jclose=()=>{if(TJ.className==="err"){TJ.style.display="none";clearInterval(_jtimer)}};
 const store=(v)=>{try{v?localStorage.setItem("gcJob",v):localStorage.removeItem("gcJob")}catch(e){}};
-async function pollJob(id){TJ.className="";TJ.style.display="block";
+async function pollJob(id){jopen();
  const tick=async()=>{let j;try{const r=await fetch("/api/job/"+id);j=await r.json();if(r.status===404)j={error:"작업 정보를 찾을 수 없습니다. 서버가 재시작되어 작업이 중단되었을 수 있습니다. 다시 시도하세요. (이미 받은 서열은 이어받습니다)",done:true}}
   catch(e){TJ.className="err";tset(100,"서버에 연결할 수 없습니다. 서버가 꺼졌는지 확인하세요.");store(null);return}
   if(j.error){TJ.className="err";tset(100,"실패: "+j.error);store(null);return}
   tset(j.pct,j.msg);if(j.done){TJ.className="ok";tset(100,"완료");store(null);setTimeout(()=>location.href=j.redirect,500)}else setTimeout(tick,1000)};tick()}
-async function runJob(form){TJ.className="";TJ.style.display="block";tset(1,"요청 중…");let r;
+async function runJob(form){jopen();tset(1,"요청 중…");let r;
  try{r=await (await fetch(form.getAttribute("action"),{method:"POST",body:new URLSearchParams(new FormData(form))})).json()}catch(e){TJ.className="err";tset(100,"요청 실패: "+e);return}
  store(r.job);pollJob(r.job)}
 try{const j=localStorage.getItem("gcJob");if(j)pollJob(j)}catch(e){}
