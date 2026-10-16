@@ -92,3 +92,16 @@ Windows에서 `git`이 PATH에 없으면 `C:\Program Files\Git\cmd\git.exe`로 �
 ## 백업 / 복원
 - `python -m genomecurator backup <zip>` / `restore <zip> [--force]` (`genomecurator/backup.py`). 포함: watchlist, genome, genome_sequence, field_provenance, genome_version, changeset, audit_log, 결정이 있는 changeset 항목(rejected/hold/applied/approved), FASTA. 제외(재생성 가능): source_record, pending 항목. zip-slip 방지, 실행 중 DB는 잠금 메시지로 안내.
 - 데이터(`data/`)와 백업 파일은 GitHub에 올리지 않는다(저장소가 공개). 옮길 때는 백업 zip을 직접 복사해 가져가 `restore`한다.
+
+## Superset 분석 (2026-10-16)
+- `scripts/superset.sh init|run|bootstrap`, 설명은 `docs/SUPERSET.md`. 평탄화 뷰 `v_genome_analysis`(앱이 열 때마다 재생성), 읽기 전용 연결, 포트 8089.
+- 검증: Superset 6.1.0 설치·기동, bootstrap으로 연결/데이터셋/차트 10/대시보드 생성 성공. 차트 실제 렌더링은 브라우저 로그인 후 확인 필요(미검증).
+
+## 소스 간 정합성 (일치/불일치) 검증
+- `check`마다 `reconcile.analyze()`가 NCBI·BV-BRC·Pathoplexus를 accession 단위로 대조해 필드별로 **일치 / 표기 차이(같은 사실, 다르게 표기) / 불일치**로 분류한다. 요약은 `reconcile_report`, 건별 목록은 `source_conflict`(체크마다 재생성, 백업 제외)에 저장한다. 채택 값은 여전히 소스 우선순위가 정한다(대조는 측정·기록만).
+- 비교 제외 필드: genome_name, genome_status, release_date, update_date(소스마다 의미가 달라 차이가 정상). 표기 차이로 흡수: 날짜 정밀도/범위/월 이름, 국가 별칭(Zaire 등), `USA: CA`/`USA, CA`, 숙주의 나이·성별 덧붙임, strain 포함 관계, 공백·구두점.
+- 웹 **정합성** 탭(`/integrity`): 일치율·불일치 수·NCBI 밖 레코드 요약 → 소스별 보유 현황 → 필드×소스쌍 막대(칸 클릭 시 건별 목록) → 로컬 무결성 검사. CLI: `genomecurator reconcile <이름>`, `genomecurator verify [--no-files]`(오류 시 종료코드 1).
+- `verify.py`: watch 없는 유전체, 고아 서열 행, 날짜(미래/형식/공개일 역전), 길이 이상, FASTA 실제 길이·md5 ≠ 기록값, Removed, 출처 누락.
+- 실측(mpox, 2026-10-16): NCBI 13,462 / BV-BRC 13,647 / Pathoplexus 13,436. NCBI에 없어 수집 제외되는 레코드 233건(BV-BRC 208 = PDB 체인 등, Pathoplexus 25). 실제 불일치 약 2,000건(strain, genome_length, isolation_source, accession_version 156, 수집일 오타 `2202-07`/`1922-05-30`, 국가 DRC↔South Korea 등). nipah: 불일치 180건.
+- 다음 단계 후보: 불일치 해소 규칙(필드별 '더 구체적인 값' 채택), 버전 불일치 항목에서 Pathoplexus 보강 제외, Superset에 `source_conflict` 연결.
+

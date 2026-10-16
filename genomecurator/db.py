@@ -46,8 +46,42 @@ CREATE TABLE IF NOT EXISTS changeset_item(
   diff_json TEXT, new_record_json TEXT, provenance_json TEXT, fingerprint TEXT,
   decision TEXT DEFAULT 'pending');  -- pending|approved|rejected|hold
 
+-- cross-source disagreements found at the last check (regenerated each check); see reconcile.py
+CREATE TABLE IF NOT EXISTS source_conflict(
+  id INTEGER PRIMARY KEY, watch_id INTEGER, accession TEXT, field TEXT, kind TEXT,  -- cosmetic|conflict
+  src_a TEXT, val_a TEXT, src_b TEXT, val_b TEXT);
+CREATE INDEX IF NOT EXISTS ix_conflict_watch ON source_conflict(watch_id, field, kind);
+CREATE TABLE IF NOT EXISTS reconcile_report(watch_id INTEGER PRIMARY KEY, checked_at TEXT, report_json TEXT);
+
 CREATE TABLE IF NOT EXISTS audit_log(
   id INTEGER PRIMARY KEY, ts TEXT DEFAULT CURRENT_TIMESTAMP, action TEXT, detail TEXT);
+"""
+
+ANALYSIS_VIEW = """
+CREATE VIEW v_genome_analysis AS
+SELECT g.genome_id, g.accession, w.name AS virus, g.genome_name, g.strain, g.genome_status, g.genome_quality,
+  g.genome_length,
+  CASE WHEN g.genome_length IS NULL THEN NULL WHEN g.genome_length < 1000 THEN '<1 kb'
+       WHEN g.genome_length < 5000 THEN '1-5 kb' WHEN g.genome_length < 10000 THEN '5-10 kb'
+       WHEN g.genome_length < 50000 THEN '10-50 kb' ELSE '>=50 kb' END AS length_bin,
+  COALESCE(NULLIF(g.host_name,''), '(unknown)') AS host,
+  COALESCE(NULLIF(g.isolation_country,''), '(unknown)') AS country,
+  g.geographic_location, g.isolation_source,
+  g.collection_date,
+  CASE WHEN g.collection_date GLOB '[12][0-9][0-9][0-9]*' THEN CAST(substr(g.collection_date,1,4) AS INTEGER) END AS collection_year,
+  CASE WHEN g.collection_date GLOB '[12][0-9][0-9][0-9]-[01][0-9]*' THEN substr(g.collection_date,1,7) END AS collection_month,
+  CASE WHEN g.release_date GLOB '[12][0-9][0-9][0-9]*' THEN CAST(substr(g.release_date,1,4) AS INTEGER) END AS release_year,
+  g.release_date, g.update_date,
+  g.clade, g.lineage, g.genotype, g.subtype, g.serotype, g.outbreak,
+  g.sequencing_platform, g.assembly_method, g.submitter,
+  CASE WHEN g.sra_accession IS NOT NULL AND g.sra_accession != '' THEN 'Yes' ELSE 'No' END AS has_sra,
+  CASE WHEN g.pathoplexus_accession IS NOT NULL AND g.pathoplexus_accession != '' THEN 'Yes' ELSE 'No' END AS in_pathoplexus,
+  CASE WHEN s.file_path IS NOT NULL THEN 'Yes' ELSE 'No' END AS has_fasta,
+  g.bioproject_accession, g.biosample_accession,
+  1 AS n
+FROM genome g
+LEFT JOIN watchlist w ON w.id = g.watch_id
+LEFT JOIN genome_sequence s ON s.genome_id = g.genome_id
 """
 
 
@@ -61,6 +95,8 @@ def migrate(con: sqlite3.Connection) -> None:
     wcols = {r[1] for r in con.execute("PRAGMA table_info(watchlist)")}
     if "pathoplexus_organism" not in wcols:
         con.execute("ALTER TABLE watchlist ADD COLUMN pathoplexus_organism TEXT")
+    con.execute("DROP VIEW IF EXISTS v_genome_analysis")   # flat view for BI tools (Superset); rebuilt on every start
+    con.execute(ANALYSIS_VIEW)
 
 
 def connect() -> sqlite3.Connection:

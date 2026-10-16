@@ -6,7 +6,7 @@ import shutil
 from pathlib import Path
 from datetime import datetime
 
-from . import config, sources
+from . import config, reconcile, sources
 from .db import audit, connect, tx
 
 GENOME_COLS = [
@@ -231,7 +231,11 @@ def check(watch_name: str, progress=None) -> int | None:
         ppx = sources.pathoplexus_resolve(w["name"], w["taxon"], w["taxon_id"])
         if ppx and ppx[0] != w["pathoplexus_organism"]:
             con.execute("UPDATE watchlist SET pathoplexus_organism=? WHERE id=?", (ppx[0], w["id"]))
-        p(75, "로컬 데이터와 비교 중…")
+        p(75, "소스 간 일치 여부 대조 중…")
+        rep, conflict_rows = reconcile.analyze(per_source)
+        reconcile.store(con, w["id"], rep, conflict_rows)
+        con.commit()
+        p(78, "로컬 데이터와 비교 중…")
         if not per_source["ncbi"]:
             raise SystemExit(f"NCBI returned no records for '{w['taxon']}' (taxon {w['taxon_id']}); check that the watch is a virus taxon. "
                              "Refusing to compute removals")

@@ -418,6 +418,27 @@ def create_app(scheduler: bool = True) -> FastAPI:
         return _tsv(_rows("SELECT g.*, s.gc_content, s.md5, s.file_path FROM genome g "
                           "LEFT JOIN genome_sequence s ON s.accession=g.accession ORDER BY g.genome_id"), "genomes.tsv")
 
+    @app.get("/integrity")
+    def integrity(request: Request, watch: int = 0, field: str = "", kind: str = "conflict", files: int = 0):
+        from . import reconcile, verify
+        watches = _rows("SELECT id, name FROM watchlist ORDER BY name")
+        wid = watch or (int(request.cookies.get("gc_watch") or 0) if request.cookies.get("gc_watch", "").isdigit() else 0)
+        if wid not in {w["id"] for w in watches}:
+            wid = watches[0]["id"] if watches else 0
+        rep = reconcile.load(wid) if wid else None
+        tot = cmp_ = 0
+        for byp in (rep or {}).get("fields", {}).values():
+            for d in byp.values():
+                tot += d["match"] + d["cosmetic"] + d["conflict"]
+                cmp_ += d["match"] + d["cosmetic"]
+        pairs = [{"key": f"{a}|{b}", "label": f"{reconcile.LABEL[a]} ↔ {reconcile.LABEL[b]}"}
+                 for a, b in (("ncbi", "bvbrc"), ("ncbi", "pathoplexus"), ("bvbrc", "pathoplexus"))]
+        return render(request, "integrity.html", nav="int", watch=wid, wid=wid, watches=watches, rep=rep, pairs=pairs,
+                      label=reconcile.LABEL, agree=100 * cmp_ / tot if tot else 100.0, tot_cmp=tot,
+                      ext=sum(rep["coverage"]["not_in_ncbi"].values()) if rep else 0,
+                      field=field, kind=kind, examples=reconcile.conflicts(wid, field, kind) if field and wid else [],
+                      checks=verify.run(wid or None, check_files=bool(files)), files=files)
+
     @app.get("/dashboard")
     def dashboard(request: Request, watch: int = 0):
         watches = _rows("SELECT w.id, w.name, (SELECT COUNT(*) FROM genome g WHERE g.watch_id=w.id) n FROM watchlist w")

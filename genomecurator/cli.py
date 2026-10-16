@@ -34,6 +34,10 @@ def main(argv=None):
     ap = sub.add_parser("apply", help="apply approved items of a READY changeset")
     ap.add_argument("changeset", type=int)
     ap.add_argument("--approve-all", action="store_true", help="CLI shortcut; the web page is the intended review path")
+    rc = sub.add_parser("reconcile", help="show the cross-source agreement report stored by the last check")
+    rc.add_argument("name")
+    vf = sub.add_parser("verify", help="integrity checks on local data (FASTA length/md5, dates, orphans)")
+    vf.add_argument("--no-files", action="store_true", help="skip reading FASTA files")
     bk = sub.add_parser("backup", help="write a portable backup (curated data + FASTA) to a .zip")
     bk.add_argument("path", nargs="?", default="genomecurator-backup.zip")
     rs = sub.add_parser("restore", help="restore a backup .zip into the data folder")
@@ -57,6 +61,21 @@ def main(argv=None):
         print(f"changeset {cs}" if cs else "no changes")
         if cs:
             print(json.dumps(curate.dryrun(cs), indent=2, ensure_ascii=False))
+    elif args.cmd == "reconcile":
+        from . import reconcile
+        w = connect().execute("SELECT id FROM watchlist WHERE name=?", (args.name,)).fetchone()
+        r = reconcile.load(w[0]) if w else None
+        if not r:
+            raise SystemExit("no report yet: run check first")
+        print(json.dumps(r, indent=2, ensure_ascii=False))
+    elif args.cmd == "verify":
+        from . import verify
+        bad = 0
+        for c in verify.run(check_files=not args.no_files):
+            mark = {"ok": "OK  ", "warn": "WARN", "fail": "FAIL"}[c["status"]]
+            print(f"[{mark}] {c['name']}: {c['count']} {c['detail']} {c['examples'] or ''}")
+            bad += c["status"] == "fail"
+        raise SystemExit(1 if bad else 0)
     elif args.cmd == "dry-run":
         print(json.dumps(curate.dryrun(args.changeset), indent=2, ensure_ascii=False))
     elif args.cmd == "apply":

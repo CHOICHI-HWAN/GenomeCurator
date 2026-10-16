@@ -196,3 +196,60 @@ def test_delete_changeset(tmp_path, monkeypatch):
     assert db.execute("SELECT COUNT(*) FROM genome").fetchone()[0] == 1                    # applied genomes stay
     with pytest.raises(ValueError):
         curate.delete_changeset(5)
+
+
+def test_reconcile_classify():
+    from genomecurator.reconcile import classify
+    assert classify("date", "2022-07", "2022-07-11") == "cosmetic"
+    assert classify("date", "2024", "2024-01-01/2024-12-09") == "cosmetic"
+    assert classify("date", "2026-03", "Mar-2026") == "cosmetic"
+    assert classify("date", "2022-05-30", "1922-05-30") == "conflict"
+    assert classify("place", "USA: California", "USA, California") == "cosmetic"
+    assert classify("country", "Zaire", "Democratic Republic of the Congo") == "cosmetic"
+    assert classify("country", "Democratic Republic of the Congo", "South Korea") == "conflict"
+    assert classify("host", "Homo sapiens", "Homo sapiens; 32; male") == "cosmetic"
+    assert classify("strain", "843593", "hMpxV/USA/ID-IBL-843593/2022") == "cosmetic"
+    assert classify("strain", "Monkeypox_PT1009_2027", "Monkeypox_PT1009_2026") == "conflict"
+    assert classify("num", 2, "1") == "conflict" and classify("num", 5, "5") == "match"
+    assert classify("set", "SRR1; SRR2", "SRR2,SRR1") == "cosmetic"
+
+
+def test_reconcile_analyze_and_store(tmp_path, monkeypatch):
+    from genomecurator import config, reconcile
+    from genomecurator.db import connect
+    monkeypatch.setattr(config, "DATA_DIR", tmp_path)
+    monkeypatch.setattr(config, "DB_PATH", tmp_path / "g.db")
+    ps = {"ncbi": {"A1": {"genome_length": 100, "collection_date": "2022-07"}, "A2": {"genome_length": 5}},
+          "bvbrc": {"A1": {"genome_length": 99, "collection_date": "2022-07-11"}, "B9": {"genome_length": 7}},
+          "pathoplexus": {"A1": {"accession_version": 1}, "A3": {}}}
+    rep, rows = reconcile.analyze(ps)
+    assert rep["coverage"]["not_in_ncbi"] == {"bvbrc": 1, "pathoplexus": 1}
+    assert rep["coverage"]["all_sources"] == 1
+    assert rep["fields"]["genome_length"]["ncbi|bvbrc"]["conflict"] == 1
+    assert rep["fields"]["collection_date"]["ncbi|bvbrc"]["cosmetic"] == 1
+    con = connect()
+    reconcile.store(con, 1, rep, rows)
+    con.commit()
+    con.close()
+    assert reconcile.load(1)["totals"] == rep["totals"]
+    assert [r["field"] for r in reconcile.conflicts(1)] == ["genome_length"]
+
+
+def test_verify_detects_problems(tmp_path, monkeypatch):
+    from genomecurator import config, verify
+    from genomecurator.db import connect
+    monkeypatch.setattr(config, "DATA_DIR", tmp_path)
+    monkeypatch.setattr(config, "DB_PATH", tmp_path / "g.db")
+    con = connect()
+    con.execute("INSERT INTO watchlist(id,name,taxon,taxon_id) VALUES(1,'V','V',9)")
+    con.execute("INSERT INTO genome(genome_id,watch_id,accession,accession_version,genome_length,collection_date,genome_status) VALUES('1',1,'AB1',1,8,'2999-01-01','Complete')")
+    fa = tmp_path / "genomes" / "V" / "1.fna"
+    fa.parent.mkdir(parents=True)
+    fa.write_text(">AB1.1\nACGT\n", encoding="utf-8")
+    con.execute("INSERT INTO genome_sequence(accession,genome_id,length,md5,file_path) VALUES('AB1','1',8,'x','genomes/V/1.fna')")
+    con.commit()
+    con.close()
+    res = {c["name"]: c for c in verify.run()}
+    assert res["수집일이 미래"]["count"] == 1
+    assert res["FASTA 실제 길이 ≠ 기록 길이"]["count"] == 1 and res["FASTA md5 ≠ 기록 md5"]["count"] == 1
+    assert res["watch가 없는 유전체"]["count"] == 0

@@ -1,0 +1,6 @@
+# conda: mamba create -n gc-superset -c conda-forge python=3.11 pip && pip install -r superset/requirements.txt
+apache-superset==6.1.0
+# missing from apache-superset 6.1.0's own dependency list (found by running it):
+rich
+cachetools
+flask-caching<2.4

@@ -1,0 +1,57 @@
+{% extends "base.html" %}{% block body %}
+<style>
+.sg{display:grid;grid-template-columns:repeat(auto-fit,minmax(190px,1fr));gap:12px;margin-bottom:14px}
+.sg .card{margin:0}.sg b{font-size:26px;display:block;line-height:1.1}.sg small{color:var(--mut)}
+.bar{display:flex;height:14px;border-radius:3px;overflow:hidden;background:var(--th);min-width:140px}
+.bar i{display:block;height:100%}.m{background:var(--ok)}.c{background:#e0a100}.x{background:var(--bad)}
+.lg span{display:inline-block;margin-right:14px}.lg i{display:inline-block;width:11px;height:11px;border-radius:2px;margin-right:5px;vertical-align:-1px}
+td.cell a{text-decoration:none;color:inherit;display:block}td.cell:hover{background:var(--hover)}
+.n{font-variant-numeric:tabular-nums;font-size:12px;color:var(--mut)}
+.ok{color:var(--ok)}.warn{color:var(--warn)}.fail{color:var(--bad)}
+.val{max-width:360px;overflow-wrap:anywhere}
+</style>
+<h2>데이터 정합성</h2>
+<form method="get" style="margin-bottom:10px">바이러스
+ <select name="watch" onchange="this.form.submit()">{% for w in watches %}<option value="{{ w.id }}" {{ 'selected' if w.id == wid }}>{{ w.name }}</option>{% endfor %}</select></form>
+{% if not rep %}<div class="msg">아직 소스 간 대조 결과가 없습니다. 큐레이션 화면에서 <b>지금 확인</b>을 한 번 실행하세요.</div>
+{% else %}
+{% set cov = rep.coverage %}
+<div class="lg mut" style="margin-bottom:8px">마지막 대조: {{ rep.checked_at }} · <span><i class="m"></i>일치</span><span><i class="c"></i>표기 차이 (같은 사실, 다르게 적음)</span><span><i class="x"></i>불일치 (실제로 다름 — 확인 필요)</span></div>
+<div class="sg">
+ <div class="card"><small>소스 간 일치율 (표기 차이 포함)</small><b class="{{ 'ok' if agree >= 99 else 'warn' }}">{{ '%.1f' % agree }}%</b><small>비교한 값 {{ '{:,}'.format(tot_cmp) }}개</small></div>
+ <div class="card"><small>실제 불일치</small><b class="{{ 'fail' if rep.totals.conflict else 'ok' }}">{{ '{:,}'.format(rep.totals.conflict) }}</b><small>표기 차이 {{ '{:,}'.format(rep.totals.cosmetic) }}건은 제외</small></div>
+ <div class="card"><small>세 소스 모두 보유한 accession</small><b>{{ '{:,}'.format(cov.all_sources) }}</b><small>전체 {{ '{:,}'.format(cov.union) }}개 중 {{ '%.1f' % (100 * cov.all_sources / cov.union if cov.union else 0) }}%</small></div>
+ <div class="card"><small>NCBI에 없어 수집되지 않는 레코드</small><b class="{{ 'warn' if ext else 'ok' }}">{{ '{:,}'.format(ext) }}</b><small>NCBI가 accession 집합을 정합니다</small></div>
+</div>
+
+<h3>1. 어떤 accession을 어느 소스가 가지고 있나</h3>
+<table><tr><th>소스</th><th>레코드 수</th><th>NCBI와 공통</th><th>NCBI에 없음 (수집 제외)</th><th>NCBI에만 있음 (이 소스에 없음)</th><th>NCBI에 없는 예</th></tr>
+{% for s, n in cov.sources.items() %}<tr><td><b>{{ label[s] }}</b></td><td>{{ '{:,}'.format(n) }}</td>
+{% if s == 'ncbi' %}<td colspan="4" class="mut">기준 소스</td>{% else %}
+<td>{{ '{:,}'.format(cov.pairs.get('ncbi|' ~ s, 0)) }}</td>
+<td class="{{ 'warn' if cov.not_in_ncbi[s] }}">{{ cov.not_in_ncbi[s] }}</td><td class="{{ 'warn' if cov.only_in_ncbi[s] }}">{{ cov.only_in_ncbi[s] }}</td>
+<td class="mut">{{ cov.examples_not_in_ncbi[s][:5] | join(', ') }}</td>{% endif %}</tr>{% endfor %}</table>
+
+<h3>2. 같은 accession인데 값이 같은가 (필드 × 소스 쌍)</h3>
+<p class="mut" style="margin:0 0 6px">칸을 누르면 아래에 해당 불일치 목록이 나옵니다.</p>
+<table><tr><th>필드</th>{% for pr in pairs %}<th>{{ pr.label }}</th>{% endfor %}</tr>
+{% for f, byp in rep.fields.items() %}<tr><td><code>{{ f }}</code></td>
+{% for pr in pairs %}{% set d = byp.get(pr.key) %}<td class="cell">{% if d %}{% set t = d.match + d.cosmetic + d.conflict %}
+<a href="?watch={{ wid }}&field={{ f }}&kind={{ 'conflict' if d.conflict else 'cosmetic' }}#ex">
+<div class="bar"><i class="m" style="width:{{ 100 * d.match / t }}%"></i><i class="c" style="width:{{ 100 * d.cosmetic / t }}%"></i><i class="x" style="width:{{ 100 * d.conflict / t }}%;min-width:{{ 2 if d.conflict else 0 }}px"></i></div>
+<span class="n">{{ '{:,}'.format(d.match) }} 일치 · {{ '{:,}'.format(d.cosmetic) }} 표기 · <b class="{{ 'fail' if d.conflict }}">{{ '{:,}'.format(d.conflict) }}</b> 불일치</span></a>
+{% else %}<span class="mut">비교할 값 없음</span>{% endif %}</td>{% endfor %}</tr>{% endfor %}</table>
+<p class="mut" style="font-size:12.5px">비교하지 않는 필드: {% for k, why in rep.excluded.items() %}<code>{{ k }}</code>({{ why }}){{ ', ' if not loop.last }}{% endfor %}</p>
+
+<h3 id="ex">3. {{ field or '필드를 선택하세요' }} {{ ('— ' ~ ('불일치' if kind == 'conflict' else '표기 차이')) if field }}</h3>
+{% if field %}<p class="mut" style="margin:0 0 6px"><a href="?watch={{ wid }}&field={{ field }}&kind=conflict#ex">불일치</a> · <a href="?watch={{ wid }}&field={{ field }}&kind=cosmetic#ex">표기 차이</a> · 최대 200건</p>
+<table><tr><th>accession</th><th>소스 A</th><th>값 A</th><th>소스 B</th><th>값 B</th></tr>
+{% for r in examples %}<tr><td><a href="https://www.ncbi.nlm.nih.gov/nuccore/{{ r.accession }}" target="_blank" rel="noopener">{{ r.accession }}</a></td><td>{{ label.get(r.src_a, r.src_a) }}</td><td class="val">{{ r.val_a }}</td><td>{{ label.get(r.src_b, r.src_b) }}</td><td class="val">{{ r.val_b }}</td></tr>
+{% else %}<tr><td colspan="5" class="mut">없음</td></tr>{% endfor %}</table>{% endif %}
+{% endif %}
+
+<h3>4. 로컬 데이터 무결성 <span class="mut" style="font-weight:400;font-size:13px">— 받아서 저장한 데이터 자체의 검사</span></h3>
+<p style="margin:0 0 6px">{% if files %}FASTA 파일까지 검사한 결과입니다.{% else %}빠른 검사입니다. <a href="?watch={{ wid }}&files=1#vf">FASTA 파일 길이·md5까지 검사</a> (파일 수에 따라 오래 걸립니다){% endif %}</p>
+<table id="vf"><tr><th>검사</th><th>결과</th><th>건수</th><th>설명 / 예</th></tr>
+{% for c in checks %}<tr><td>{{ c.name }}</td><td class="{{ c.status }}"><b>{{ {'ok': '정상', 'warn': '주의', 'fail': '오류'}[c.status] }}</b></td><td>{{ '{:,}'.format(c.count) }}</td><td class="mut">{{ c.detail }} {{ c.examples | join(', ') }}</td></tr>{% endfor %}</table>
+{% endblock %}
