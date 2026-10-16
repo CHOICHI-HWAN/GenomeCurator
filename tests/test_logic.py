@@ -376,3 +376,18 @@ def test_schema_local_check_finds_missing_column(tmp_path, monkeypatch):
     raw.close()
     out = sc.local_checks({})
     assert any(f["severity"] == "fail" and f["kind"] == "column" and "segment" in f["detail"] for f in out)
+
+
+def test_schema_daily_modes_avoid_false_alarms():
+    from genomecurator import schema_check as sc
+    full = [{"accession": "A.1", "length": 5, "host": {"organism_name": "H"}} for _ in range(10)]
+    seen, _ = sc._read_set("ncbi", full)
+    base = sc.profile(full)
+    old3 = [{"accession": "A.1", "length": 5} for _ in range(3)]          # three old records of one virus that simply have no host
+    sh = {"top": ["reports"]}
+    assert sc._compare("ncbi", sc.profile(old3), seen, base, sh, ["reports"], mode="virus", n=3) == []   # one virus' 3 records prove nothing
+    assert sc._compare("ncbi", sc.profile(old3 + full[:3]), seen, base, sh, ["reports"], mode="pooled", n=6) == []   # present elsewhere: fine
+    gone = [{"accession": "A.1", "length": 5} for _ in range(6)]
+    f = sc._compare("ncbi", sc.profile(gone), seen, base, sh, ["reports"], mode="pooled", n=6)
+    assert any(x["kind"] == "removed" and x["path"].startswith("host") for x in f)   # gone from every virus: real
+    assert sc._compare("ncbi", sc.profile(old3), seen, base, {"top": ["results"]}, ["reports"], mode="virus", n=3)[0]["kind"] == "shape"

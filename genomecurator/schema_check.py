@@ -77,21 +77,21 @@ def profile(records: list[dict]) -> dict:
 
 
 # ----------------------------------------------------------------------------- live samples
-def _ncbi_sample(c, taxon):
-    r = sources._ncbi_get(c, f"{config.NCBI_BASE}/taxon/{sources.quote(taxon)}/dataset_report", page_size=SAMPLE)
+def _ncbi_sample(c, taxon, n=SAMPLE):
+    r = sources._ncbi_get(c, f"{config.NCBI_BASE}/taxon/{sources.quote(taxon)}/dataset_report", page_size=n)
     j = r.json()
     return j.get("reports", []), {"top": sorted(j), "status": r.status_code}
 
 
-def _bvbrc_sample(c, taxon_id):
-    r = sources._get(c, f"{config.BVBRC_BASE}?eq(taxon_lineage_ids,{taxon_id})&limit({SAMPLE})", headers={"Accept": "application/json"})
+def _bvbrc_sample(c, taxon_id, n=SAMPLE):
+    r = sources._get(c, f"{config.BVBRC_BASE}?eq(taxon_lineage_ids,{taxon_id})&limit({n})", headers={"Accept": "application/json"})
     r.raise_for_status()
     rows = r.json()
     return (rows if isinstance(rows, list) else []), {"top": ["<list>"] if isinstance(rows, list) else ["<" + type(rows).__name__ + ">"], "status": r.status_code}
 
 
-def _ppx_sample(c, slug):
-    r = sources._get(c, f"{config.PATHOPLEXUS_BASE}/{slug}/sample/details", params={**sources._PPX_FILTER, "limit": SAMPLE})
+def _ppx_sample(c, slug, n=SAMPLE):
+    r = sources._get(c, f"{config.PATHOPLEXUS_BASE}/{slug}/sample/details", params={**sources._PPX_FILTER, "limit": n})
     r.raise_for_status()
     j = r.json()
     return j.get("data", []), {"top": sorted(j), "status": r.status_code}
@@ -115,32 +115,40 @@ def _read_set(source: str, rows: list[dict]) -> tuple[set, list[dict]]:
 
 
 # ----------------------------------------------------------------------------- comparison
-def _compare(source: str, live: dict, read: set, prev: dict | None, shape: dict, prev_shape: list | None) -> list[dict]:
+def _compare(source: str, live: dict, read: set, prev: dict | None, shape: dict, prev_shape: list | None, mode: str = "full", n: int = SAMPLE) -> list[dict]:
+    """mode: full = everything; virus = daily per-virus (shape and type only: three records of one virus cannot prove a field is gone);
+    pooled = daily, all viruses together (only fields that were (almost) always filled and are now absent everywhere)."""
     out: list[dict] = []
     where = WHERE[source]
 
     def add(sev, kind, path, detail, hint=""):
         out.append({"source": source, "severity": sev, "kind": kind, "path": path, "detail": detail, "hint": hint})
 
-    if prev_shape is not None and shape["top"] != prev_shape:
+    if mode != "pooled" and prev_shape is not None and shape["top"] != prev_shape:
         add("fail", "shape", ", ".join(shape["top"]), f"응답의 최상위 구조가 바뀌었습니다: {', '.join(prev_shape)} → {', '.join(shape['top'])}", f"{where}의 응답 파싱 확인")
     live_paths = set(live)
     for p in sorted(read):
         info = live.get(p)
         was = (prev or {}).get(p)
         if info is None or info["fill"] == 0:
+            if mode == "virus":
+                continue
+            if mode == "pooled" and not (was and was.get("fill", 0) >= 0.9):
+                continue
             if was and was.get("fill", 0) > 0:
                 close = difflib.get_close_matches(p.split(".")[-1], [q.split(".")[-1] for q in live_paths], n=2, cutoff=0.6)
                 alt = [q for q in live_paths if q.split(".")[-1] in close and q not in read][:3]
-                add("fail", "removed", p, f"코드가 읽는 필드인데 지난번엔 값이 {was['fill']:.0%} 있었고 지금은 샘플 {SAMPLE}건에서 모두 비어 있습니다.",
+                add("fail", "removed", p, f"코드가 읽는 필드인데 지난번엔 값이 {was['fill']:.0%} 있었고 지금은 샘플 {n}건에서 모두 비어 있습니다.",
                     f"{where}에서 '{p}'를 읽는 부분을 확인하세요." + (f" 이름이 바뀐 것일 수 있습니다: {', '.join(alt)}" if alt else ""))
             elif prev is None:   # first run: nothing to compare with, so rare optional fields are only noted
                 add("info", "unseen", p, f"코드가 읽는 필드인데 샘플 {SAMPLE}건에서 값이 없었습니다. 원래 드문 필드일 수 있어 기준으로 저장하고, 다음 점검부터 변화를 비교합니다.", "")
-        elif was and set(was.get("types", [])) and set(info["types"]) - set(was["types"]):
+        elif mode != "pooled" and was and set(was.get("types", [])) and set(info["types"]) - set(was["types"]):
             add("warn", "type", p, f"값의 형태가 바뀌었습니다: {'/'.join(was['types'])} → {'/'.join(info['types'])}", f"{where}에서 '{p}' 처리 확인")
+        elif mode == "pooled":
+            continue
         elif was and was.get("fill", 0) >= 0.5 and info["fill"] < was["fill"] * 0.5:
             add("warn", "dropped", p, f"채워진 비율이 크게 줄었습니다: {was['fill']:.0%} → {info['fill']:.0%}", "소스가 이 필드를 덜 채우기 시작했을 수 있습니다.")
-    for p, info in live.items():
+    for p, info in ({} if mode != "full" else live).items():
         if p in read or any(r.startswith(p + ".") or r.startswith(p + "[].") for r in read):   # read, or a container whose children are read
             continue
         if info["fill"] == 0:
@@ -250,37 +258,58 @@ def run(watch_id: int | None = None, progress=None) -> dict:
         con.close()
     if not w:
         raise ValueError("등록된 바이러스가 없어 샘플을 가져올 수 없습니다. 먼저 바이러스를 추가하세요.")
-    slug = w["pathoplexus_organism"] or ("mpox" if "mpox" in sources.PPX_KNOWN else sources.PPX_KNOWN[0])
     findings: list[dict] = []
     produced: dict[str, list[dict]] = {}
     snapshots: dict[str, dict] = {}
     info: dict[str, dict] = {}
+    con = connect()
+    try:
+        allw = [dict(r) for r in con.execute("SELECT * FROM watchlist ORDER BY name")]
+    finally:
+        con.close()
+    targets = [x for x in allw if watch_id is None or x["id"] == watch_id] or [dict(w)]
+    ppx_slugs = sorted({x["pathoplexus_organism"] for x in targets if x["pathoplexus_organism"]}) or \
+        [("mpox" if "mpox" in sources.PPX_KNOWN else sources.PPX_KNOWN[0])]
     with sources._client() as c:
-        for i, (src, label, getter) in enumerate((
-                ("ncbi", "NCBI Virus", lambda: _ncbi_sample(c, w["taxon"])),
-                ("bvbrc", "BV-BRC", lambda: _bvbrc_sample(c, w["taxon_id"])),
-                ("pathoplexus", "Pathoplexus", lambda: _ppx_sample(c, slug)))):
+        plans = [("ncbi", "NCBI Virus", [(x["name"], (lambda x=x: _ncbi_sample(c, x["taxon"]))) for x in targets]),
+                 ("bvbrc", "BV-BRC", [(x["name"], (lambda x=x: _bvbrc_sample(c, x["taxon_id"]))) for x in targets]),
+                 ("pathoplexus", "Pathoplexus", [(sl, (lambda sl=sl: _ppx_sample(c, sl))) for sl in ppx_slugs])]
+        for i, (src, label, getters) in enumerate(plans):
             p(10 + i * 25, f"{label} 응답 구조 확인 중…")
+            rows: list[dict] = []
+            shape = None
+            tags: list[str] = []
+            err = None
+            for tag, getter in getters:   # every watched virus contributes, so the baseline is not one virus' peculiarities
+                try:
+                    r, sh = getter()
+                except Exception as e:
+                    _log.error("schema check: %s (%s) failed: %s: %s", src, tag, type(e).__name__, e, exc_info=True)
+                    err = f"{type(e).__name__}: {e}"
+                    continue
+                if r:
+                    rows += r
+                    shape = shape or sh
+                    tags.append(tag)
             try:
-                rows, shape = getter()
                 if not rows:
-                    raise RuntimeError("샘플 응답이 비어 있습니다")
+                    raise RuntimeError(err or "샘플 응답이 비어 있습니다")
                 read, prod = _read_set(src, rows)
             except Exception as e:
-                _log.error("schema check: %s failed: %s: %s", src, type(e).__name__, e, exc_info=True)
                 findings.append({"source": src, "severity": "fail", "kind": "unreachable", "path": "-", "detail": f"{label} 점검 실패: {type(e).__name__}: {e}",
                                  "hint": f"{WHERE[src]} 와 소스 상태 확인"})
                 continue
             live = profile(rows)
             prev = snaps.get(src)
-            findings += _compare(src, live, read, prev["fields"] if prev else None, shape, prev["shape"] if prev else None)
+            findings += _compare(src, live, read, prev["fields"] if prev else None, shape, prev["shape"] if prev else None, n=len(rows))
             produced[src] = prod
             snapshots[src] = {"fields": live, "shape": shape["top"], "read": sorted(read)}
             info[src] = {"label": label, "sample": len(rows), "fields": len(live), "read": len(read), "shape": shape["top"],
-                         "previous": prev_taken.get(src), "sample_of": (w["taxon"] if src != "pathoplexus" else slug)}
-            _log.info("schema check %s: %d sample rows, %d fields, code reads %d", src, len(rows), len(live), len(read))
+                         "previous": prev_taken.get(src), "sample_of": ", ".join(tags)}
+            _log.info("schema check %s: %d sample rows from %s, %d fields, code reads %d", src, len(rows), tags, len(live), len(read))
+        _wid = w["id"]
         p(88, "서열 엔드포인트 확인 중…")
-        findings += _sequence_probe(c, w["id"])
+        findings += _sequence_probe(c, _wid)
     p(94, "로컬 DB 스키마 확인 중…")
     findings += local_checks(produced)
     sev = {"fail": 0, "warn": 1, "info": 2, "ok": 3}
@@ -288,7 +317,7 @@ def run(watch_id: int | None = None, progress=None) -> dict:
     n_fail = sum(f["severity"] == "fail" for f in findings)
     n_warn = sum(f["severity"] == "warn" for f in findings)
     verdict = ("update" if n_fail else ("review" if n_warn else "ok"))
-    report = {"checked_at": datetime.now().isoformat(timespec="seconds"), "watch": w["name"], "verdict": verdict, "fail": n_fail, "warn": n_warn,
+    report = {"checked_at": datetime.now().isoformat(timespec="seconds"), "watch": (w["name"] if len(targets) == 1 else f"{len(targets)}종 합산"), "verdict": verdict, "fail": n_fail, "warn": n_warn,
               "info": sum(f["severity"] == "info" for f in findings), "sources": info, "findings": findings}
     dirty = {f["source"] for f in findings if f["severity"] in ("fail", "warn")}
     kept = sorted(src for src in snapshots if src in snaps and src in dirty)
@@ -316,7 +345,8 @@ def accept() -> list[str]:
     """After the code was updated (or the change judged harmless): make the latest live profile the new baseline."""
     con = connect()
     try:
-        r = con.execute("SELECT id, report_json FROM schema_report ORDER BY id DESC LIMIT 1").fetchone()
+        r = next(((i, rj) for i, rj in con.execute("SELECT id, report_json FROM schema_report ORDER BY id DESC LIMIT 40")
+                  if json.loads(rj).get("mode", "full") != "daily"), None)
         if not r:
             raise ValueError("먼저 스키마 점검을 실행하세요.")
         rep = json.loads(r[1])
@@ -332,14 +362,115 @@ def accept() -> list[str]:
         con.close()
 
 
+def run_light(progress=None, sample: int | None = None) -> dict:
+    """Daily check: every watched virus, `sample` records (default 3) per source. Cheap and strict: it reports only what
+    three records can prove - a changed response shape, a field that is always filled and is now gone, a changed value type,
+    or a source that cannot be read. Never overwrites the baseline. Without a baseline it runs the full check first."""
+    p = progress or (lambda *a: None)
+    n = sample or config.SCHEMA_CHECK_SAMPLE
+    con = connect()
+    try:
+        watches = [dict(r) for r in con.execute("SELECT * FROM watchlist ORDER BY name")]
+        snaps = {r[0]: json.loads(r[1]) for r in con.execute("SELECT source, snapshot_json FROM schema_snapshot")}
+    finally:
+        con.close()
+    if not watches:
+        raise ValueError("등록된 바이러스가 없습니다.")
+    if not all(s in snaps for s in LABEL):
+        _log.info("daily schema check: no baseline yet, running the full check first")
+        p(5, "기준이 없어 전체 점검을 먼저 실행합니다…")
+        rep = run(None, progress=lambda pc, m: p(5 + pc * 0.9, m))
+        rep["mode"] = "full-baseline"
+        return rep
+    findings: list[dict] = []
+    matrix: dict[str, dict[str, dict]] = {}
+    pooled: dict[str, dict] = {s: {"rows": [], "read": set(), "shape": None} for s in LABEL}
+    with sources._client() as c:
+        for i, w in enumerate(watches):
+            p(5 + 90 * i / len(watches), f"{w['name']}: 소스별 {n}건 확인 중…")
+            row = matrix.setdefault(w["name"], {})
+            jobs = [("ncbi", lambda w=w: _ncbi_sample(c, w["taxon"], n)), ("bvbrc", lambda w=w: _bvbrc_sample(c, w["taxon_id"], n))]
+            if w["pathoplexus_organism"]:
+                jobs.append(("pathoplexus", lambda w=w: _ppx_sample(c, w["pathoplexus_organism"], n)))
+            for src, getter in jobs:
+                with log.context(watch=w["name"]):
+                    try:
+                        rows, shape = getter()
+                        if not rows:
+                            row[src] = {"status": "empty", "n": 0}   # e.g. a virus BV-BRC has no genomes for: not a schema problem
+                            continue
+                        read, _ = _read_set(src, rows)
+                        fs = _compare(src, profile(rows), read, snaps[src]["fields"], shape, snaps[src]["shape"], mode="virus", n=len(rows))
+                        pooled[src]["rows"] += rows
+                        pooled[src]["read"] |= read
+                        pooled[src]["shape"] = shape
+                    except Exception as e:
+                        _log.error("daily schema check %s/%s failed: %s: %s", w["name"], src, type(e).__name__, e, exc_info=True)
+                        fs = [{"source": src, "severity": "warn", "kind": "unreachable", "path": "-",
+                               "detail": f"점검 실패(일시적인 장애일 수 있음): {type(e).__name__}: {e}", "hint": f"{WHERE[src]} 와 소스 상태 확인"}]
+                        rows = []
+                    for f in fs:
+                        f["virus"] = w["name"]
+                    findings += fs
+                    worst = "ok" if not fs else min((f["severity"] for f in fs), key=lambda x: {"fail": 0, "warn": 1, "info": 2}.get(x, 3))
+                    row[src] = {"status": worst, "n": len(rows)}
+            _log.info("daily schema check %r: %s", w["name"], {k: v["status"] for k, v in row.items()})
+    for src, pl in pooled.items():   # "a field is gone" is judged over all viruses together, never from one virus' 3 records
+        if pl["rows"]:
+            for f in _compare(src, profile(pl["rows"]), pl["read"], snaps[src]["fields"], pl["shape"], snaps[src]["shape"], mode="pooled", n=len(pl["rows"])):
+                f["virus"] = "(전체 합산)"
+                findings.append(f)
+    n_fail = sum(f["severity"] == "fail" for f in findings)
+    n_warn = sum(f["severity"] == "warn" for f in findings)
+    report = {"mode": "daily", "checked_at": datetime.now().isoformat(timespec="seconds"), "sample": n, "verdict": "update" if n_fail else ("review" if n_warn else "ok"),
+              "fail": n_fail, "warn": n_warn, "info": 0, "matrix": matrix, "findings": findings}
+    con = connect()
+    try:
+        con.execute("INSERT INTO schema_report(checked_at, report_json) VALUES(?,?)", (report["checked_at"], json.dumps(report, ensure_ascii=False)))
+        con.execute("DELETE FROM schema_report WHERE id NOT IN (SELECT id FROM schema_report ORDER BY id DESC LIMIT 40)")
+        db.audit(con, "schema_daily", f"{len(watches)}종 × 소스당 {n}건: verdict {report['verdict']} (fail {n_fail}, warn {n_warn})")
+        con.commit()
+    finally:
+        con.close()
+    if n_fail or n_warn:
+        _log.error("daily schema check: verdict=%s fail=%d warn=%d", report["verdict"], n_fail, n_warn)
+    else:
+        _log.info("daily schema check: all %d viruses ok", len(watches))
+    p(100, "매일 점검 완료")
+    return report
+
+
+def _latest_of(modes: tuple[str, ...]) -> dict | None:
+    con = connect()
+    try:
+        for (rj,) in con.execute("SELECT report_json FROM schema_report ORDER BY id DESC LIMIT 40"):
+            rep = json.loads(rj)
+            if rep.get("mode", "full") in modes:
+                rep.pop("_snapshots", None)
+                return rep
+        return None
+    finally:
+        con.close()
+
+
+def latest_daily() -> dict | None:
+    return _latest_of(("daily",))
+
+
+def alert() -> dict | None:
+    """The newest report of either kind, if it says something needs attention (for the badge / banner)."""
+    rep = _latest_of(("full", "daily", "full-baseline"))
+    return rep if rep and rep.get("verdict") in ("update", "review") else None
+
+
 def latest() -> dict | None:
     con = connect()
     try:
-        r = con.execute("SELECT report_json FROM schema_report ORDER BY id DESC LIMIT 1").fetchone()
-        if not r:
-            return None
-        rep = json.loads(r[0])
-        rep.pop("_snapshots", None)
-        return rep
+        for (rj,) in con.execute("SELECT report_json FROM schema_report ORDER BY id DESC LIMIT 40"):
+            rep = json.loads(rj)
+            if rep.get("mode", "full") != "daily":
+                rep.pop("_snapshots", None)
+                return rep
+        return None
     finally:
         con.close()

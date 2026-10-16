@@ -61,6 +61,9 @@ NCBI_API_KEY = os.environ.get("NCBI_API_KEY") or None
 # Minimum gap between any two outgoing web requests (NCBI, BV-BRC, Pathoplexus).
 REQUEST_DELAY_S = float(os.environ.get("GC_REQUEST_DELAY_MS", "300")) / 1000
 CHECK_INTERVAL_HOURS = float(os.environ.get("GC_CHECK_INTERVAL_HOURS", "24"))
+# Daily schema check: every watched virus is sampled with this many records per source, at this local hour.
+SCHEMA_CHECK_HOUR = int(os.environ.get("GC_SCHEMA_CHECK_HOUR", "3"))
+SCHEMA_CHECK_SAMPLE = int(os.environ.get("GC_SCHEMA_CHECK_SAMPLE", "3"))
 DRYRUN_SAMPLE_SIZE = int(os.environ.get("GC_DRYRUN_SAMPLE", "3"))
 MIN_FREE_BYTES = int(os.environ.get("GC_MIN_FREE_BYTES", str(500 * 1024 * 1024)))
 

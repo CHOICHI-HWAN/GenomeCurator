@@ -36,7 +36,8 @@ def _main(argv=None):
     ap = sub.add_parser("apply", help="apply approved items of a READY changeset")
     ap.add_argument("changeset", type=int)
     ap.add_argument("--approve-all", action="store_true", help="CLI shortcut; the web page is the intended review path")
-    sub.add_parser("schema-check", help="dry-run: compare the live schema of NCBI/BV-BRC/Pathoplexus and the local DB with what the code expects")
+    sc = sub.add_parser("schema-check", help="dry-run: compare the live schema of NCBI/BV-BRC/Pathoplexus and the local DB with what the code expects")
+    sc.add_argument("--daily", action="store_true", help="the light per-virus check (3 records per source) that the scheduler runs every day")
     rc = sub.add_parser("reconcile", help="show the cross-source agreement report stored by the last check")
     rc.add_argument("name")
     vf = sub.add_parser("verify", help="integrity checks on local data (FASTA length/md5, dates, orphans)")
@@ -66,12 +67,12 @@ def _main(argv=None):
             print(json.dumps(curate.dryrun(cs), indent=2, ensure_ascii=False))
     elif args.cmd == "schema-check":
         from . import schema_check
-        r = schema_check.run()
+        r = schema_check.run_light() if args.daily else schema_check.run()
         word = {"ok": "소스 코드 업데이트 필요 없음", "review": "확인 권장", "update": "소스 코드 업데이트 필요"}[r["verdict"]]
-        print(f"[{r['verdict'].upper()}] {word} (fail {r['fail']}, warn {r['warn']}, info {r['info']}) - sample from {r['watch']}")
+        print(f"[{r['verdict'].upper()}] {word} (fail {r['fail']}, warn {r['warn']}, info {r['info']}) - {('per-virus daily check' if r.get('mode') == 'daily' else 'sample from ' + r['watch'])}")
         for f in r["findings"]:
             if f["severity"] in ("fail", "warn"):
-                print(f"  {f['severity'].upper():4} {f['source']:11} {f['kind']:10} {f['path']}: {f['detail']} -> {f['hint']}")
+                print(f"  {f['severity'].upper():4} {f.get('virus', ''):24} {f['source']:11} {f['kind']:10} {f['path']}: {f['detail']} -> {f['hint']}")
         raise SystemExit(1 if r["verdict"] == "update" else 0)
     elif args.cmd == "reconcile":
         from . import reconcile

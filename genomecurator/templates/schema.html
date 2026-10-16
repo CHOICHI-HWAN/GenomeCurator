@@ -10,6 +10,19 @@
 <div class="help">소스의 응답 구조는 예고 없이 바뀔 수 있습니다. <b>점검 실행</b>은 소스마다 실제 응답 샘플 200건을 읽기만 하고(서열은 받지 않고, 서열 엔드포인트는 가장 작은 유전체 1건으로만 확인),
  <b>우리 코드가 실제로 읽는 필드</b>를 측정해 ① 사라지거나 이름·형태가 바뀐 필드, ② 응답 최상위 구조 변화, ③ 새로 생긴 필드, ④ 로컬 DB가 코드의 기대와 맞는지를 알려 줍니다. 아무것도 수정하지 않습니다.
  지난 점검과 비교하기 때문에 처음 실행은 기준(baseline)만 저장합니다.</div>
+
+<h3 id="daily">매일 점검 — 바이러스별 소스당 {{ sample }}건 <span class="mut" style="font-weight:400;font-size:13px">매일 {{ '%02d' % hour }}시 자동 실행 (서버가 켜져 있을 때)</span></h3>
+<p class="mut" style="margin:0 0 8px">등록된 바이러스마다 각 소스에서 {{ sample }}건씩만 읽어, 응답 구조 변화·항상 채워지던 필드의 소멸·값 형태 변경·접속 실패를 확인합니다. 기준(baseline)은 바꾸지 않습니다. 문제가 생기면 상단 <b>스키마</b> 탭에 <b>!</b>가 뜹니다.</p>
+<form method="post" action="/schema/daily" onsubmit="runJob(this);return false" style="margin-bottom:10px"><button>지금 바이러스별 점검 실행</button></form>
+{% if daily %}{% set dn = {'ncbi': 'NCBI Virus', 'bvbrc': 'BV-BRC', 'pathoplexus': 'Pathoplexus'} %}
+<div class="vd {{ daily.verdict }}" style="padding:8px 14px"><b>{% if daily.verdict == 'update' %}⚠ 확인 필요{% elif daily.verdict == 'review' %}확인 권장{% else %}✔ 이상 없음{% endif %}</b>
+ <span class="mut"> · 오류 {{ daily.fail }} · 경고 {{ daily.warn }} · {{ daily.checked_at }} · 바이러스 {{ daily.matrix|length }}종 × 소스당 {{ daily.sample }}건</span></div>
+<table><tr><th>바이러스</th>{% for k in dn %}<th>{{ dn[k] }}</th>{% endfor %}</tr>
+{% for v, row in daily.matrix.items() %}<tr><td><b>{{ v }}</b></td>{% for k in dn %}{% set c = row.get(k) %}<td>{% if not c %}<span class="mut">해당 없음</span>{% elif c.status == 'ok' %}<span class="sev ok">정상</span> <span class="mut">{{ c.n }}건</span>{% elif c.status == 'empty' %}<span class="mut">레코드 없음</span>{% elif c.status == 'fail' %}<span class="sev fail">오류</span>{% else %}<span class="sev warn">경고</span>{% endif %}</td>{% endfor %}</tr>{% endfor %}</table>
+{% if daily.findings %}<table style="margin-top:10px"><tr><th>수준</th><th>바이러스</th><th>대상</th><th>필드</th><th>내용</th><th>조치</th></tr>
+{% for f in daily.findings %}<tr><td><span class="sev {{ f.severity }}">{{ {'fail': '오류', 'warn': '경고'}.get(f.severity, f.severity) }}</span></td><td>{{ f.virus }}</td><td class="nw">{{ dn[f.source] }}</td><td><code>{{ f.path }}</code></td><td>{{ f.detail }}</td><td class="mut">{{ f.hint }}</td></tr>{% endfor %}</table>{% endif %}
+{% else %}<div class="card mut">아직 매일 점검 기록이 없습니다. 위 버튼을 누르거나 다음 {{ '%02d' % hour }}시를 기다리세요(처음에는 기준이 없으면 전체 점검을 먼저 실행합니다).</div>{% endif %}
+<h3>전체 점검 (한 바이러스, 소스당 200건)</h3>
 <form method="post" action="/schema/check" onsubmit="runJob(this);return false" style="margin-bottom:12px"><button class="p">스키마 점검 실행 (dry-run)</button>
  <span class="mut" style="font-size:12.5px"> 소요 시간 약 5~10초</span></form>
 {% if not rep %}<div class="card mut">아직 점검한 기록이 없습니다. 위 버튼으로 처음 실행하면 현재 상태가 기준으로 저장됩니다.</div>

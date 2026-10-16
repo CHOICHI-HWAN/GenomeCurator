@@ -13,6 +13,7 @@ from . import config, curate, log
 from .db import audit_now, connect
 
 _log = log.get("web")
+_alert_cache = {"t": 0.0, "v": None}
 
 T = Jinja2Templates(directory=str(Path(__file__).parent / "templates"))
 JOBS: dict[str, dict] = {}
@@ -227,8 +228,20 @@ def create_app(scheduler: bool = True) -> FastAPI:
             return c
         return next((x["id"] for x in watches if x["n"]), watches[0]["id"] if watches else 0)
 
+    def schema_alert():
+        """Latest schema check says something needs attention? Cached for a minute (it is read on every page)."""
+        if time.time() - _alert_cache["t"] > 60:
+            try:
+                from . import schema_check
+                a = schema_check.alert()
+                _alert_cache.update(t=time.time(), v={"verdict": a["verdict"], "at": a["checked_at"]} if a else None)
+            except Exception:
+                _log.warning("could not read the schema alert", exc_info=True)
+                _alert_cache.update(t=time.time(), v=None)
+        return _alert_cache["v"]
+
     def render(request, name, **ctx):
-        resp = T.TemplateResponse(request, name, {"badge": pending_count(), "watch": ctx.get("watch") or request.cookies.get("gc_watch", ""), **ctx})
+        resp = T.TemplateResponse(request, name, {"badge": pending_count(), "schema_alert": schema_alert(), "watch": ctx.get("watch") or request.cookies.get("gc_watch", ""), **ctx})
         if ctx.get("watch"):
             resp.set_cookie("gc_watch", str(ctx["watch"]), max_age=86400 * 365, samesite="lax")
         return resp
@@ -519,7 +532,8 @@ def create_app(scheduler: bool = True) -> FastAPI:
     @app.get("/schema")
     def schema_page(request: Request, msg: str = ""):
         from . import schema_check
-        return render(request, "schema.html", nav="sch", msg=msg, rep=schema_check.latest(), label=schema_check.LABEL)
+        return render(request, "schema.html", nav="sch", msg=msg, rep=schema_check.latest(), daily=schema_check.latest_daily(),
+                      label=schema_check.LABEL, sample=config.SCHEMA_CHECK_SAMPLE, hour=config.SCHEMA_CHECK_HOUR)
 
     @app.post("/schema/check")
     def schema_run(request: Request):
@@ -528,6 +542,18 @@ def create_app(scheduler: bool = True) -> FastAPI:
         from . import schema_check
         return start_job(lambda p: (schema_check.run(None, progress=p), "/schema")[1], "스키마 점검")
 
+    @app.post("/schema/daily")
+    def schema_daily(request: Request):
+        if not _same_origin(request):
+            return JSONResponse({"error": "cross-site request refused"}, 403)
+        from . import schema_check
+
+        def work(p):
+            r = schema_check.run_light(progress=p)
+            _alert_cache["t"] = 0
+            return "/schema"
+        return start_job(work, "바이러스별 스키마 점검")
+
     @app.post("/schema/accept")
     def schema_accept(request: Request):
         if not _same_origin(request):
@@ -535,6 +561,7 @@ def create_app(scheduler: bool = True) -> FastAPI:
         from . import schema_check
         try:
             msg = "새 기준으로 저장했습니다: " + ", ".join(schema_check.LABEL.get(x, x) for x in schema_check.accept())
+            _alert_cache["t"] = 0
         except ValueError as e:
             msg = str(e)
         return RedirectResponse(f"/schema?msg={msg}", 303)
@@ -623,8 +650,22 @@ def create_app(scheduler: bool = True) -> FastAPI:
                     _log.error("scheduled check failed for %r: %s: %s", w["name"], type(e).__name__, e, exc_info=True)
                     audit_now("scheduled_check_failed", f"{w['name']}: {type(e).__name__}: {e}")
 
+        def schema_job():
+            from . import schema_check
+            _log.info("daily schema check start (%d records per source per virus)", config.SCHEMA_CHECK_SAMPLE)
+            try:
+                rep = schema_check.run_light()
+                _alert_cache["t"] = 0   # show a new problem right away
+                _log.info("daily schema check verdict: %s", rep["verdict"])
+            except BaseException as e:
+                _log.error("daily schema check failed: %s: %s", type(e).__name__, e, exc_info=True)
+                audit_now("schema_daily_failed", f"{type(e).__name__}: {e}")
+
         sched = BackgroundScheduler()
         sched.add_job(sched_job, "interval", hours=config.CHECK_INTERVAL_HOURS, id="check")
+        sched.add_job(schema_job, "cron", hour=config.SCHEMA_CHECK_HOUR, minute=0, id="schema_daily", misfire_grace_time=3600, coalesce=True)
         sched.start()
+        for j in sched.get_jobs():
+            _log.info("scheduled job %s: next run %s", j.id, j.next_run_time)
         app.router.on_shutdown.append(lambda: sched.shutdown(wait=False))
     return app
