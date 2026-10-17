@@ -6,7 +6,7 @@ from fastapi import FastAPI, Form, Request
 from fastapi.responses import HTMLResponse, JSONResponse, RedirectResponse, Response
 from fastapi.templating import Jinja2Templates
 
-from . import __version__, completeness, config, curate, jobs, log
+from . import __version__, analysis, completeness, config, curate, jobs, log
 from .db import audit_now, connect
 
 _log = log.get("web")
@@ -428,6 +428,26 @@ def create_app(scheduler: bool = True) -> FastAPI:
             out.append({"title": title, "what": what, "next": j.next_run_time.strftime("%Y-%m-%d %H:%M:%S") if j.next_run_time else None,
                         "last": last[0] if last else None})
         return out
+
+    @app.get("/analysis")
+    def analysis_page(request: Request):
+        return render(request, "analysis.html", nav="ana", st=analysis.status())
+
+    @app.get("/api/superset/status")
+    def api_superset_status():
+        return analysis.status()
+
+    @app.post("/api/superset/start")
+    def api_superset_start(request: Request):
+        if not _same_origin(request):
+            return JSONResponse({"error": "cross-site request refused"}, 403)
+        return start_job(lambda p: {"redirect": "/analysis", "result": {"url": analysis.start(p)}}, "Superset 켜기", "superset")
+
+    @app.post("/api/superset/stop")
+    def api_superset_stop(request: Request):
+        if not _same_origin(request):
+            return JSONResponse({"error": "cross-site request refused"}, 403)
+        return {"stopped": analysis.stop()}
 
     @app.get("/jobs")
     def jobs_page(request: Request):

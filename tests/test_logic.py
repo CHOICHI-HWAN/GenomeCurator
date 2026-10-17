@@ -780,3 +780,27 @@ def test_jobs_api_and_server_side_add_and_lookup(tmp_path, monkeypatch):
     assert {r["kind"] for r in c.get("/api/jobs").json()} == {"watch_add", "lookup"}
     assert c.get("/api/jobs/summary").json()["failed"] >= 1
     assert c.get("/jobs").status_code == 200 and c.get("/history?q=job%3D" + j["id"]).status_code == 200
+
+
+def test_analysis_page_and_superset_start_reports_not_installed(tmp_path, monkeypatch):
+    from fastapi.testclient import TestClient
+    from genomecurator import analysis, config, db, web
+    monkeypatch.setattr(config, "DATA_DIR", tmp_path)
+    monkeypatch.setattr(config, "DB_PATH", tmp_path / "g.db")
+    monkeypatch.setattr(analysis, "HOME", tmp_path / "nohome")           # not initialised
+    monkeypatch.setattr(analysis, "listening", lambda: False)
+    db.connect().close()
+    c = TestClient(web.create_app(scheduler=False))
+    r = c.get("/analysis")
+    assert r.status_code == 200 and "아직 설치되지 않았습니다" in r.text
+    assert c.get("/api/superset/status").json()["installed"] is False
+    import time
+    jid = c.post("/api/superset/start").json()["job"]
+    for _ in range(100):
+        j = c.get(f"/api/job/{jid}").json()
+        if j["done"]:
+            break
+        time.sleep(0.05)
+    assert j["status"] == "error" and "설치" in j["error"]              # the reason is shown, nothing is launched
+    monkeypatch.setattr(analysis, "listening", lambda: True)
+    assert analysis.start() == f"http://127.0.0.1:{analysis.port()}/"    # already running: nothing to start

@@ -1,0 +1,27 @@
+{% extends "base.html" %}{% block body %}
+<div class="pagehead"><h2>분석 (Apache Superset)</h2><span class="mut">메타데이터를 바이러스·숙주·국가·연도·clade로 돌려 보는 다차원 분석</span></div>
+<div class="help">Superset은 이 앱과 <b>별도 프로그램</b>(별도 conda 환경)입니다. 데이터베이스를 <b>읽기 전용</b>으로 연결하므로 여기서 아무리 만져도 큐레이션 데이터는 바뀌지 않습니다.
+평탄화된 뷰 <code>v_genome_analysis</code>(완성도·참조 대비 길이 포함)가 준비되어 있습니다.</div>
+<div class="card" id="box">
+ {% if not st.installed %}
+  <p><b>아직 설치되지 않았습니다.</b> 한 번만 아래를 실행하세요 (자세한 설명은 <code>docs/SUPERSET.md</code>).</p>
+  <pre style="background:var(--stripe);padding:8px 10px;border-radius:4px">mamba env create -f superset/environment.yml
+scripts/superset.sh init</pre>
+ {% else %}
+  <p style="font-size:15px">상태: <b id="stt" style="color:{{ 'var(--ok)' if st.running else 'var(--warn)' }}">{{ '실행 중' if st.running else '꺼져 있음' }}</b>
+   <span class="mut">· 포트 {{ st.port }}{% if st.running and not st.started_by_app %} · 직접 켜신 Superset입니다(여기서 끄지 않습니다){% endif %}</span></p>
+  <div style="display:flex;gap:8px;flex-wrap:wrap">
+   {% if st.running %}<a href="{{ st.url }}" target="_blank" rel="noopener"><button class="p" type="button">Superset 열기 ↗</button></a>
+    {% if st.started_by_app %}<button type="button" onclick="stopSs()">끄기</button>{% endif %}
+   {% else %}<button class="p" type="button" onclick="startSs()">Superset 켜기</button>{% endif %}
+   <form id="sf" method="post" action="/api/superset/start" style="display:none"></form>
+  </div>
+  <p class="mut" style="font-size:12.5px;margin-top:10px">로그인: 사용자 <code>admin</code>, 비밀번호는 <code>{{ st.password_file }}</code> 파일에 있습니다. 처음이거나 뷰가 바뀐 뒤에는 터미널에서 <code>scripts/superset.sh bootstrap</code>을 한 번 실행하면 연결·차트·대시보드가 만들어집니다.
+   켜는 데 처음엔 1분 가까이 걸리며 진행 상황은 <a href="/jobs">작업</a> 탭에도 남습니다. 앱을 끄면 여기서 켠 Superset도 같이 꺼집니다. 로그: <code>{{ st.log }}</code></p>
+ {% endif %}
+</div>
+<script>
+function startSs(){runJob(document.getElementById("sf"))}
+async function stopSs(){await fetch("/api/superset/stop",{method:"POST"});location.reload()}
+</script>
+{% endblock %}

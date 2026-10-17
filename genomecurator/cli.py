@@ -53,6 +53,7 @@ def _main(argv=None):
     s.add_argument("--host", default="127.0.0.1")
     s.add_argument("--port", type=int, default=8000)
     s.add_argument("--no-scheduler", action="store_true")
+    s.add_argument("--superset", action="store_true", help="also start Apache Superset (port 8089) next to the app")
     s.add_argument("--open", action="store_true", help="open the browser when the server is up")
     args = p.parse_args(argv)
 
@@ -115,7 +116,17 @@ def _main(argv=None):
         from .web import create_app
         if args.open:
             threading.Timer(1.5, lambda: webbrowser.open(f"http://{'127.0.0.1' if args.host in ('0.0.0.0', '::') else args.host}:{args.port}/")).start()
+        if args.superset:
+            from . import analysis
+            threading.Thread(target=lambda: _start_superset(analysis), daemon=True).start()
         uvicorn.run(create_app(scheduler=not args.no_scheduler), host=args.host, port=args.port)
+
+
+def _start_superset(analysis):
+    try:
+        print("Superset:", analysis.start())
+    except Exception as e:
+        print("Superset을 시작하지 못했습니다:", e)
 
 
 def main(argv=None):

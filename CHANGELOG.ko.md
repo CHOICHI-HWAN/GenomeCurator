@@ -12,6 +12,7 @@ Virus Genome Metadata Curator(패키지 `genomecurator`, 이전 표시 이름 "G
 ## [Unreleased]
 
 ### 추가
+- **분석 탭**: 앱에서 Apache Superset을 켜고 끄고(여전히 별도 conda 환경의 별도 프로그램), 설치·실행 여부를 보고 바로 엽니다. `serve --superset`은 앱과 함께 켭니다. 앱이 켠 Superset은 앱이 꺼질 때 같이 꺼집니다.
 - `Dockerfile`(`environment.yml` 기반, linux/amd64·linux/arm64 공용), 두 아키텍처를 빌드하고 버전 태그 때 GHCR에 게시하는 `docker` 워크플로, CI의 ARM 작업.
 - **작업 탭**: 오래 걸리는 모든 작업(바이러스 추가·조회, 확인, 적용, FASTA 받기, 서열 검증, 스키마 점검, 배포, 스케줄러 실행)이 서버 작업으로 기록됩니다: 진행 중 / 완료 / 오류 / 중단, 진행률, 시각이 붙은 로그, 오류와 발생 위치, 해당 작업의 서버 로그 링크. 진행 중인 작업 수나 못 본 오류가 탭에 표시되고, 다른 페이지에 있을 때 작업이 끝나면 알림이 뜹니다.
 - 진행 창에 **백그라운드로** 버튼.

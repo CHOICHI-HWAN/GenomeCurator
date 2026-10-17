@@ -149,6 +149,7 @@ python -m genomecurator serve --open
 | **유전체** | 엑셀처럼 필터·정렬·열 선택·TSV 내보내기. 오른쪽 상세 패널은 **끌어서 너비를 조절**할 수 있고, Pathoplexus 변이 정보도 불러옵니다. |
 | **정합성** | 세 소스가 서로 얼마나 일치하는지 한눈에. 일치(초록) / 표기만 다름(노랑) / 진짜 다름(빨강). 서열로 검증하는 버튼도 여기. |
 | **스키마** | 소스와 내 DB의 *구조*가 코드의 기대와 맞는지 점검. **간단히 보기**(내 열 × 소스 3곳 표, 확인이 필요한 열이 맨 위에 모임)와 **자세히 보기**(소스 필드가 내 `genome` 열에 이어지는 선까지 보이는 구조도)를 탭으로 오가며, 이상이 있는 필드·열을 색으로 강조합니다. 문제가 있으면 탭에 `!` 배지가 뜹니다. |
+| **분석** | Apache Superset 켜기/끄기/열기(설치 여부도 안내). 별도 프로그램이라 처음 한 번만 `superset.sh init`이 필요합니다. |
 | **작업** | 서버에서 도는 모든 작업(추가·조회·확인·적용·다운로드·검증·점검·배포·자동 실행)의 상태·진행률·로그·오류. 다른 메뉴로 가도 계속되고 여기서 다시 봅니다. |
 | **이력** | 누가 언제 무엇을 했는지 + 서버 로그(경고만 / 오류만 필터). |
 | **공개 보기 / 배포하기** | 읽기 전용 정적 페이지를 GitHub Pages로 게시. |
@@ -308,7 +309,7 @@ data/
 
 ```bash
 mamba env create -f superset/environment.yml
-scripts/superset.sh init && scripts/superset.sh run          # http://127.0.0.1:8089
+scripts/superset.sh init && scripts/superset.sh run          # http://127.0.0.1:8089 (또는 앱의 '분석' 탭에서 켜기, 또는 python -m genomecurator serve --superset)
 scripts/superset.sh bootstrap                                # 연결·데이터셋·차트·대시보드 자동 생성
 ```
 
