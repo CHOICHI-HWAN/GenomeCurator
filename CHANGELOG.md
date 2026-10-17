@@ -11,6 +11,23 @@ re-pinned (the full list with licences is in [docs/DEPENDENCIES.md](docs/DEPENDE
 
 ## [Unreleased]
 
+### Added
+- **Table structure board** on the **Schema** tab: the fields of NCBI (nested objects kept as groups), BV-BRC and Pathoplexus on the left, the columns of
+  the local `genome` table on the right, joined by lines that show which source field fills which column. The links are *measured*, not declared:
+  the real adapters are run on a row holding one field at a time, and the columns that change are the ones it feeds (so fallbacks such as
+  "A, else B" and one field feeding two columns are found too). Vanished fields turn red, the columns they fed turn orange (a warning when
+  another source still fills the column, an error when none does), new fields blue; hovering highlights a connection, clicking shows the source
+  fields behind a column in priority order, with type, fill rate and an example. A source whose response shape changed gets a red banner.
+
+### Changed
+- The Schema tab now starts with the full check and its board; the daily per-virus check moved below it.
+- Vanished-field detection also considers the fields the code read at the last good baseline. What the code reads depends on the data
+  (an absent `host` object hides `host.organism_name`), so a vanished parent used to hide its children.
+
+### Fixed
+- The schema check reported a fill rate above 100% for lists of objects (such as the lineage of an NCBI record) because each list element was counted;
+  a record now counts once.
+
 ## [0.1.0] - 2026-10-17
 
 First release. It collects virus genomes from three public sources, lets a person review and approve every change, and checks

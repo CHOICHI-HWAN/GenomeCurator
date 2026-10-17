@@ -268,6 +268,7 @@ def normalize_bvbrc(g: dict) -> tuple[list[str], dict]:
         "taxon_id": g.get("taxon_id"),
         "taxon_lineage_ids": ",".join(g.get("taxon_lineage_ids") or []) or None,
         "taxon_lineage_names": ",".join(g.get("taxon_lineage_names") or []) or None,
+        "bvbrc_genome_id": g.get("genome_id"),
     }
     rec = {k: v for k, v in rec.items() if v not in (None, "")}
     accs = []
@@ -292,7 +293,7 @@ def fetch_bvbrc(taxon_id: int | None) -> dict[str, dict]:
             for g in rows:
                 accs, rec = normalize_bvbrc(g)
                 for acc in accs:
-                    out[acc] = {**rec, "bvbrc_genome_id": g.get("genome_id")}
+                    out[acc] = rec
             if len(rows) < page:
                 return out
             offset += page

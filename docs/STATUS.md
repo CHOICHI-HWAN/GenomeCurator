@@ -181,3 +181,11 @@ Windows에서 `git`이 PATH에 없으면 `C:\Program Files\Git\cmd\git.exe`로 �
 - `docs/DEPENDENCIES.md`는 `scripts/dependencies.py`가 설치된 패키지에서 버전·라이선스를 측정해 만든다(역할은 수기). `test_every_declared_dependency_is_documented`가 pyproject·superset requirements의 모든 라이브러리가 문서에 있는지 검사한다.
 - 태그 `v0.1.0`. 태그를 push하면 그 커밋까지의 모든 커밋이 올라가므로, 워크플로 파일을 바꾼 커밋(`3223f0e`)이 앞에 섞이면 `workflow` 권한이 필요하다 — 그래서 CI 커밋은 릴리스 커밋 뒤에 둔다.
 
+## 스키마 탭: 테이블 구조도 (2026-10-17, Unreleased)
+- 스키마 탭 상단에 구조도: 소스 3곳의 필드(NCBI는 중첩 객체를 그룹으로) → 내 `genome` 열을 선으로 잇고 상태를 색으로 칠한다(`schema_check.build_board`, 리포트 JSON의 `board`).
+- 필드→열 연결은 **측정값**이다(`schema_check.field_map`): 어댑터(`normalize_*`)를 필드 하나만 든 행에 돌려 바뀌는 열을 읽는다(탐침 값 3개: 임의 문자열 / `RefSeq` / `COMPLETE`로 값 비교 분기까지). 시험 행에는 어댑터가 버리지 않도록 기본 accession을 넣고, 목록 안 형제 필드는 채워 둔다. `bvbrc_genome_id`가 측정에 잡히도록 `normalize_bvbrc`로 옮겼다(동작 동일).
+- 상태: 소스 필드 = 정상/경고/오류/새 필드/샘플에 값 없음/읽지 않음. 열 = 채우는 필드가 모두 오류면 오류, 일부만 문제면 경고(다른 소스가 대신 채울 수 있음), 로컬 DB에 열이 없으면 오류, 소스에서 안 오면 "앱이 채움". 부모 객체가 사라지면 자식도 같이 표시한다.
+- `_compare`/`field_map`은 이번 실행의 읽기 기록 ∪ 지난 기준의 읽기 기록을 쓴다(읽기 기록은 데이터에 따라 달라짐). 채움 비율은 레코드당 한 번만 센다(이전에는 목록 원소마다 세어 500%가 나왔다).
+- 시연용 가짜 드리프트는 `scripts/demo/demo_server.py`(깃 추적, 실제 앱 영향 없음). `03-schema.gif`를 구조도 중심으로 다시 녹화했다.
+- 아직 릴리스하지 않았다(`CHANGELOG`의 [Unreleased]). 다음 릴리스는 새 기능이므로 0.2.0이 맞다.
+

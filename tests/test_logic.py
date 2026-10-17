@@ -470,3 +470,53 @@ def test_every_declared_dependency_is_documented():
     assert {"fastapi", "httpx", "apscheduler", "pytest", "pillow"} <= {n.lower() for n in names}   # the parser found the lists
     missing = sorted(n for n in names if n.lower() not in doc)
     assert not missing, f"not documented in docs/DEPENDENCIES.md: {missing} (run scripts/dependencies.py)"
+
+
+def test_schema_board_maps_fields_to_columns_and_propagates_problems():
+    from genomecurator import schema_check as sc
+    m = sc.field_map("ncbi", {"length", "virus.organism_name", "location.geographic_location", "host.organism_name", "virus.lineage[].tax_id", "virus.lineage[].name"})
+    assert m["length"] == ["genome_length"] and m["virus.organism_name"] == ["genome_name"]
+    assert m["location.geographic_location"] == ["geographic_location", "isolation_country"]       # one field feeding two columns
+    assert m["virus.lineage[].tax_id"] == ["taxon_lineage_ids"] and m["virus.lineage[].name"] == ["taxon_lineage_names"]
+    mp = sc.field_map("pathoplexus", {"hostNameScientific", "hostNameCommon", "accessionVersion"})
+    assert mp["hostNameCommon"] == ["host_name"] and mp["accessionVersion"] == ["pathoplexus_accession"]   # fallbacks and renames are found too
+    rows = [{"accession": "A.1", "length": 5, "host": {"organism_name": "H"}} for _ in range(4)]
+    assert sc.profile([{"virus": {"lineage": [{"tax_id": 1}, {"tax_id": 2}, {"tax_id": 3}]}}])["virus.lineage[].tax_id"]["fill"] == 1.0   # not 300%
+    read = {"accession", "length", "host.organism_name"}
+    fm = {"length": ["genome_length"], "host.organism_name": ["host_name"], "accession": ["accession"]}
+    live_bad = sc.profile([{"accession": "A.1", "seqLength": 5} for _ in range(4)])
+    findings = [{"source": "ncbi", "severity": "fail", "kind": "removed", "path": "host.organism_name", "detail": "gone", "hint": ""},
+                {"source": "ncbi", "severity": "fail", "kind": "removed", "path": "length", "detail": "gone", "hint": ""}]
+    cols = ["genome_length", "host_name", "accession", "clade"]
+    b = sc.build_board({"ncbi": {"live": live_bad, "read": read, "fmap": fm}}, findings, set(), cols)
+    st = {c["name"]: c["status"] for c in b["local"]["columns"]}
+    assert st == {"genome_length": "fail", "host_name": "fail", "accession": "ok", "clade": "internal"}   # every feeder broken -> fail; app-filled -> internal
+    assert b["sources"]["ncbi"]["status"] == "fail"
+    fl = {f["path"]: f for f in b["sources"]["ncbi"]["fields"]}
+    assert fl["host.organism_name"]["status"] == "fail" and fl["host.organism_name"]["group"] == "host" and fl["host.organism_name"]["name"] == "organism_name"
+    # a second source that still fills the column makes the problem partial (a warning), not a failure
+    b2 = sc.build_board({"ncbi": {"live": live_bad, "read": read, "fmap": fm},
+                         "bvbrc": {"live": sc.profile([{"genome_length": 5}]), "read": {"genome_length"}, "fmap": {"genome_length": ["genome_length"]}}}, findings, set(), cols)
+    assert {c["name"]: c["status"] for c in b2["local"]["columns"]}["genome_length"] == "warn"
+    b3 = sc.build_board({"ncbi": {"live": live_bad, "read": read, "fmap": fm}}, [], {"genome_length"}, cols)
+    assert {c["name"]: c["status"] for c in b3["local"]["columns"]}["genome_length"] == "fail"     # missing in the real database
+
+
+def test_schema_check_does_not_cry_wolf_about_sparse_fields_or_legacy_baselines():
+    from genomecurator import schema_check as sc
+    base = [{"accession": "A.1", "length": 5, "isolate": {"collection_date": "2020"}} for _ in range(100)]
+    read = {"accession", "length", "isolate.collection_date"}
+    sh = {"top": ["reports"]}
+    # a field that was filled in 1% of records: 200 records without it prove nothing (~13% by pure chance)
+    prev = sc.profile([{**r, "biosample": "SAMN1"} if i == 0 else r for i, r in enumerate(base)])
+    now = sc.profile(base * 2)
+    assert prev["biosample"]["fill"] == 0.01
+    assert sc._compare("ncbi", now, read | {"biosample"}, prev, sh, ["reports"], n=200) == []
+    # a field that was filled in 94% of records and is gone from 200 is real
+    prev94 = sc.profile([{**r, "host": {"organism_name": "H"}} if i < 94 else r for i, r in enumerate(base)])
+    f = sc._compare("ncbi", now, read | {"host.organism_name"}, prev94, sh, ["reports"], n=200)
+    assert any(x["kind"] == "removed" and x["path"] == "host.organism_name" for x in f)
+    # a baseline written by older code with an impossible fill (500%) must not trigger a bogus "dropped" warning
+    legacy = {p: dict(v) for p, v in sc.profile(base).items()}
+    legacy["length"]["fill"] = 5.0
+    assert sc._compare("ncbi", sc.profile(base), read, legacy, sh, ["reports"], n=100) == []
