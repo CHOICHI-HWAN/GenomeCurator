@@ -341,7 +341,7 @@ def test_logging_context_masking_and_audit(tmp_path, monkeypatch):
     monkeypatch.setattr(config, "DATA_DIR", tmp_path)
     monkeypatch.setattr(config, "DB_PATH", tmp_path / "g.db")
     audit_now("x_failed", "d" * 1000)
-    detail = connect().execute("SELECT detail FROM audit_log").fetchone()[0]
+    detail = connect().execute("SELECT detail FROM audit_log WHERE action=?", ("x_failed",)).fetchone()[0]
     assert len(detail) < 700 and "(+400자)" in detail
     lg.removeHandler(h)
 
@@ -391,3 +391,82 @@ def test_schema_daily_modes_avoid_false_alarms():
     f = sc._compare("ncbi", sc.profile(gone), seen, base, sh, ["reports"], mode="pooled", n=6)
     assert any(x["kind"] == "removed" and x["path"].startswith("host") for x in f)   # gone from every virus: real
     assert sc._compare("ncbi", sc.profile(old3), seen, base, {"top": ["results"]}, ["reports"], mode="virus", n=3)[0]["kind"] == "shape"
+
+
+def test_version_is_recorded_in_db_backup_and_changeset(tmp_path, monkeypatch):
+    import json
+    import zipfile
+    import pytest
+    from genomecurator import DB_SCHEMA_VERSION, __version__, backup, config, db
+    from genomecurator.db import connect, parse_version, version_info
+    monkeypatch.setattr(config, "DATA_DIR", tmp_path / "a")
+    monkeypatch.setattr(config, "DB_PATH", tmp_path / "a" / "g.db")
+    db._recorded.discard(str(config.DB_PATH))
+    connect().close()
+    meta = {r[0]: r[1] for r in connect().execute("SELECT key, value FROM app_meta")}
+    assert meta["app_version"] == __version__ and meta["first_version"] == __version__ and int(meta["db_schema_version"]) == DB_SCHEMA_VERSION
+    assert sum(1 for r in connect().execute("SELECT 1 FROM audit_log WHERE action='version'")) == 1      # recorded once, not on every connect
+    assert version_info()["version"] == __version__
+    # a database last handled by an older version: the change is written to the audit log and first_version is kept
+    con = connect()
+    con.execute("UPDATE app_meta SET value='0.0.9' WHERE key='app_version'")
+    con.execute("UPDATE app_meta SET value='0.0.9' WHERE key='first_version'")
+    con.commit()
+    con.close()
+    db._recorded.discard(str(config.DB_PATH))
+    con = connect()
+    assert [r[0] for r in con.execute("SELECT value FROM app_meta WHERE key IN ('app_version','first_version') ORDER BY key")] == [__version__, "0.0.9"]
+    assert "이전 0.0.9" in con.execute("SELECT detail FROM audit_log WHERE action='version' ORDER BY id DESC").fetchone()[0]
+    con.close()
+    # backups carry the version; one from a newer database layout is refused
+    zpath = tmp_path / "b.zip"
+    info = backup.export_backup(zpath)
+    assert info["app_version"] == __version__ and info["db_schema_version"] == DB_SCHEMA_VERSION
+    newer = tmp_path / "newer.zip"
+    with zipfile.ZipFile(zpath) as zi, zipfile.ZipFile(newer, "w") as zo:
+        for n in zi.namelist():
+            zo.writestr(n, json.dumps({**json.loads(zi.read(n)), "db_schema_version": DB_SCHEMA_VERSION + 1}) if n == "manifest.json" else zi.read(n))
+    monkeypatch.setattr(config, "DATA_DIR", tmp_path / "b")
+    monkeypatch.setattr(config, "DB_PATH", tmp_path / "b" / "g.db")
+    with pytest.raises(ValueError, match="더 새로운"):
+        backup.restore_backup(newer)
+    assert parse_version("0.10.2") > parse_version("0.9.9") and parse_version("v1.0") == (1, 0, 0)
+
+
+def test_changelog_matches_the_code_version():
+    """The release rules in docs/RELEASING.md, enforced: pyproject reads the version from the package, both changelogs (English and
+    Korean) have an entry for it with a date, keep an [Unreleased] section on top, list releases newest first, and agree with each other."""
+    import re
+    from pathlib import Path
+    from genomecurator import __version__
+    root = Path(__file__).resolve().parents[1]
+    per_file = {}
+    for name in ("CHANGELOG.md", "CHANGELOG.ko.md"):
+        log = (root / name).read_text(encoding="utf-8")
+        heads = re.findall(r"^## \[([^\]]+)\](?: - (\d{4}-\d{2}-\d{2}))?", log, re.M)
+        assert heads and heads[0][0] == "Unreleased", f"{name} must start with an [Unreleased] section"
+        released = [h for h in heads if h[0] != "Unreleased"]
+        assert released and released[0][0] == __version__, f"{name}: newest release {released[0][0] if released else None} != code version {__version__}"
+        assert all(d for _, d in released), f"{name}: every released version needs a date"
+        vs = [tuple(int(x) for x in v.split(".")) for v, _ in released]
+        assert vs == sorted(vs, reverse=True) and len(set(vs)) == len(vs), f"{name}: versions must be unique and newest first"
+        assert f"[{__version__}]:" in log, f"{name}: link reference for the current version is missing at the bottom"
+        per_file[name] = released
+    assert per_file["CHANGELOG.md"] == per_file["CHANGELOG.ko.md"], "English and Korean changelogs list different versions/dates"
+    assert 'dynamic = ["version"]' in (root / "pyproject.toml").read_text(encoding="utf-8")
+
+
+def test_every_declared_dependency_is_documented():
+    """docs/DEPENDENCIES.md must mention every library declared in pyproject.toml and superset/requirements.txt."""
+    import re
+    from pathlib import Path
+    root = Path(__file__).resolve().parents[1]
+    doc = (root / "docs" / "DEPENDENCIES.md").read_text(encoding="utf-8").lower()
+    py = (root / "pyproject.toml").read_text(encoding="utf-8")
+    names = set(re.findall(r'"([A-Za-z0-9_.-]+)\s*(?:[<>=!~][^"]*)?"', py[py.index("dependencies = ["):py.index("[build-system]")]))
+    names |= {re.split(r"[<>=!~ ]", ln.strip())[0] for ln in (root / "superset" / "requirements.txt").read_text(encoding="utf-8").splitlines()
+              if ln.strip() and not ln.startswith("#")}
+    names = {n for n in names if n and n not in ("genomecurator",)}
+    assert {"fastapi", "httpx", "apscheduler", "pytest", "pillow"} <= {n.lower() for n in names}   # the parser found the lists
+    missing = sorted(n for n in names if n.lower() not in doc)
+    assert not missing, f"not documented in docs/DEPENDENCIES.md: {missing} (run scripts/dependencies.py)"

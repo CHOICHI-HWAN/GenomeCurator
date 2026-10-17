@@ -57,6 +57,8 @@ CREATE TABLE IF NOT EXISTS sequence_check(
   length INTEGER, sha256 TEXT, ref_length INTEGER, prefix_same INTEGER, suffix_same INTEGER, detail TEXT, checked_at TEXT,
   PRIMARY KEY(watch_id, accession, source));
 CREATE TABLE IF NOT EXISTS sequence_plan(watch_id INTEGER PRIMARY KEY, created TEXT, plan_json TEXT);  -- dry-run of seqcheck
+-- which version of the code wrote / last opened this database (see record_version)
+CREATE TABLE IF NOT EXISTS app_meta(key TEXT PRIMARY KEY, value TEXT, updated TEXT DEFAULT CURRENT_TIMESTAMP);
 -- schema dry-run (schema_check.py): last live field profile per source, and the report history
 CREATE TABLE IF NOT EXISTS schema_snapshot(source TEXT PRIMARY KEY, taken TEXT, snapshot_json TEXT);
 CREATE TABLE IF NOT EXISTS schema_report(id INTEGER PRIMARY KEY, checked_at TEXT, report_json TEXT);
@@ -108,6 +110,48 @@ def migrate(con: sqlite3.Connection) -> None:
     con.execute(ANALYSIS_VIEW)
 
 
+_recorded: set[str] = set()
+
+
+def record_version(con: sqlite3.Connection) -> None:
+    """Remember which GenomeCurator version works on this database: `app_meta` holds first/current version and the DB
+    schema version, and every change of version is written to the audit log (so "which code produced this data" is answerable).
+    Runs once per process and database file. A database written by a NEWER layout than this code knows is only warned about."""
+    key = str(config.DB_PATH)
+    if key in _recorded:
+        return
+    from . import DB_SCHEMA_VERSION, __version__, log
+    meta = {r[0]: r[1] for r in con.execute("SELECT key, value FROM app_meta")}
+    prev, prev_schema = meta.get("app_version"), int(meta.get("db_schema_version") or 0)
+    if prev_schema > DB_SCHEMA_VERSION:
+        log.get("db").error("this database uses schema v%s, newer than this code (v%s, GenomeCurator %s); update GenomeCurator before changing data",
+                            prev_schema, DB_SCHEMA_VERSION, __version__)
+    if prev != __version__:
+        con.execute("INSERT OR IGNORE INTO app_meta(key, value) VALUES('first_version', ?)", (prev or __version__,))
+        for k, v in (("app_version", __version__), ("db_schema_version", str(DB_SCHEMA_VERSION))):
+            con.execute("INSERT INTO app_meta(key, value, updated) VALUES(?,?,CURRENT_TIMESTAMP) ON CONFLICT(key) DO UPDATE SET value=excluded.value, updated=CURRENT_TIMESTAMP", (k, v))
+        audit(con, "version", f"GenomeCurator {__version__} (DB schema {DB_SCHEMA_VERSION})" + (f" - 이전 {prev}" if prev else " - 이 데이터베이스를 처음 열었습니다"))
+        log.get("db").info("database now handled by GenomeCurator %s (was %s)", __version__, prev or "new")
+    _recorded.add(key)
+
+
+def version_info() -> dict:
+    from . import DB_SCHEMA_VERSION, __version__
+    con = connect()
+    try:
+        meta = {r[0]: r[1] for r in con.execute("SELECT key, value FROM app_meta")}
+    finally:
+        con.close()
+    return {"version": __version__, "db_schema_version": DB_SCHEMA_VERSION, "first_version": meta.get("first_version"),
+            "db_recorded_version": meta.get("app_version")}
+
+
+def parse_version(v: str) -> tuple:
+    """'0.10.2' -> (0, 10, 2); anything non-numeric sorts as 0 (good enough for "is this backup newer than me")."""
+    import re
+    return tuple(int(x) for x in (re.findall(r"\d+", v or "")[:3] + ["0", "0", "0"])[:3])
+
+
 def connect() -> sqlite3.Connection:
     config.DATA_DIR.mkdir(parents=True, exist_ok=True)
     con = sqlite3.connect(config.DB_PATH, timeout=30)
@@ -119,6 +163,7 @@ def connect() -> sqlite3.Connection:
     con.execute("PRAGMA foreign_keys=ON")
     con.executescript(SCHEMA)
     migrate(con)
+    record_version(con)
     con.commit()
     return con
 

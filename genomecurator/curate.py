@@ -316,7 +316,8 @@ def _check(watch_name: str, progress=None) -> int | None:
 
         con.execute("UPDATE changeset SET status='DISCARDED' WHERE watch_id=? AND status IN ('PENDING','READY','BLOCKED')",
                     (w["id"],))
-        summary = {"new": 0, "changed": 0, "removed": 0, "notes": notes,
+        from . import __version__
+        summary = {"new": 0, "changed": 0, "removed": 0, "notes": notes, "app_version": __version__,
                    "sources": {s: len(r) for s, r in per_source.items()}}
         cur = con.execute("INSERT INTO changeset(watch_id, summary_json) VALUES(?,?)", (w["id"], "{}"))
         cs = cur.lastrowid

@@ -1,6 +1,6 @@
 [project]
 name = "genomecurator"
-version = "0.1.0"
+dynamic = ["version"]
 description = "Local web tool to collect, check and curate virus genomes (Pathoplexus > NCBI Virus > BV-BRC)"
 requires-python = ">=3.10"
 dependencies = [
@@ -23,6 +23,9 @@ genomecurator = "genomecurator.cli:main"
 [build-system]
 requires = ["setuptools>=68"]
 build-backend = "setuptools.build_meta"
+
+[tool.setuptools.dynamic]
+version = {attr = "genomecurator.__version__"}
 
 [tool.setuptools.packages.find]
 include = ["genomecurator*"]

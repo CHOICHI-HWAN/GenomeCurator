@@ -56,8 +56,9 @@ def export_backup(dest: str | Path) -> dict:
             z.write(compact, "genomecurator.db")
             for f in fasta:
                 z.write(f, "genomes/" + f.relative_to(config.DATA_DIR / "genomes").as_posix())
-            manifest = {"format": "genomecurator-backup", "version": VERSION, "created": datetime.now().isoformat(timespec="seconds"),
-                        "platform": sys.platform, "tables": counts, "fasta_files": len(fasta)}
+            from . import DB_SCHEMA_VERSION, __version__
+            manifest = {"format": "genomecurator-backup", "version": VERSION, "app_version": __version__, "db_schema_version": DB_SCHEMA_VERSION,
+                        "created": datetime.now().isoformat(timespec="seconds"), "platform": sys.platform, "tables": counts, "fasta_files": len(fasta)}
             z.writestr("manifest.json", json.dumps(manifest, ensure_ascii=False, indent=2))
     return {**manifest, "path": str(dest), "size_mb": round(dest.stat().st_size / 1e6, 1)}
 
@@ -72,6 +73,10 @@ def restore_backup(src: str | Path, force: bool = False) -> dict:
             raise ValueError("backup manifest.json 이(가) 없습니다. GenomeCurator 백업 파일이 아닌 것 같습니다.") from None
         if manifest.get("format") != "genomecurator-backup":
             raise ValueError("GenomeCurator 백업 파일이 아닙니다.")
+        from . import DB_SCHEMA_VERSION, __version__
+        if int(manifest.get("db_schema_version") or 0) > DB_SCHEMA_VERSION:
+            raise ValueError(f"이 백업은 더 새로운 GenomeCurator({manifest.get('app_version')}, DB 스키마 {manifest.get('db_schema_version')})로 만들어졌습니다. "
+                             f"현재 {__version__}(DB 스키마 {DB_SCHEMA_VERSION})에서는 열 수 없으니 먼저 업데이트하세요.")
         if config.DB_PATH.exists() and not force:
             raise FileExistsError(f"{config.DB_PATH} 이(가) 이미 있습니다. 덮어쓰려면 --force (기존 데이터는 사라집니다).")
         config.DATA_DIR.mkdir(parents=True, exist_ok=True)

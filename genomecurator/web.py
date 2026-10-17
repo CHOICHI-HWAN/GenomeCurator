@@ -9,7 +9,7 @@ from fastapi import FastAPI, Form, Request
 from fastapi.responses import HTMLResponse, JSONResponse, RedirectResponse, Response
 from fastapi.templating import Jinja2Templates
 
-from . import config, curate, log
+from . import __version__, config, curate, log
 from .db import audit_now, connect
 
 _log = log.get("web")
@@ -241,7 +241,7 @@ def create_app(scheduler: bool = True) -> FastAPI:
         return _alert_cache["v"]
 
     def render(request, name, **ctx):
-        resp = T.TemplateResponse(request, name, {"badge": pending_count(), "schema_alert": schema_alert(), "watch": ctx.get("watch") or request.cookies.get("gc_watch", ""), **ctx})
+        resp = T.TemplateResponse(request, name, {"badge": pending_count(), "schema_alert": schema_alert(), "app_version": __version__, "watch": ctx.get("watch") or request.cookies.get("gc_watch", ""), **ctx})
         if ctx.get("watch"):
             resp.set_cookie("gc_watch", str(ctx["watch"]), max_age=86400 * 365, samesite="lax")
         return resp
@@ -350,6 +350,11 @@ def create_app(scheduler: bool = True) -> FastAPI:
             curate.dryrun(cs, progress=p)
             return f"/changeset/{cs}"
         return start_job(work, f"확인 {name}")
+
+    @app.get("/api/version")
+    def version_api():
+        from .db import version_info
+        return version_info()
 
     @app.get("/api/job/{jid}")
     def job(jid: str):

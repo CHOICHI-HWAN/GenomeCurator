@@ -11,6 +11,7 @@
 
 [![tests](https://github.com/CHOICHI-HWAN/GenomeCurator/actions/workflows/ci.yml/badge.svg)](https://github.com/CHOICHI-HWAN/GenomeCurator/actions/workflows/ci.yml)
 ![python](https://img.shields.io/badge/python-3.10%20%7C%203.12-blue)
+![version](https://img.shields.io/github/v/tag/CHOICHI-HWAN/GenomeCurator?label=version&sort=semver)
 ![license](https://img.shields.io/badge/license-MIT-green)
 ![os](https://img.shields.io/badge/Windows%20%7C%20macOS%20%7C%20Linux-ok-lightgrey)
 
@@ -83,7 +84,7 @@ git clone https://github.com/CHOICHI-HWAN/GenomeCurator.git
 cd GenomeCurator
 mamba env create -f environment.yml      # conda 쓰시면 mamba 대신 conda
 mamba activate genomecurator
-python -m pytest -q                      # 선택: 24개쯤 초록불이면 정상
+python -m pytest -q                      # 선택: 전부 초록불이면 정상
 ```
 
 ### 한 번에 시작 (환경 생성 → 실행 → 브라우저 열기)
@@ -334,6 +335,8 @@ Windows ↔ macOS ↔ Linux 어디서든 풀립니다. 제외된 것은 다음 "
 | `genomecurator/log.py` | 로깅 (파일 회전 + job/watch 맥락) |
 | `genomecurator/db.py`, `config.py` | 스키마·마이그레이션, 설정 |
 | `scripts/` | 시작 스크립트, 정적 페이지 생성, Superset 도우미 |
+| `CHANGELOG.md` · `CHANGELOG.ko.md` | 버전별 변경 이력 (영문 · 한글) |
+| `docs/RELEASING.md` · `docs/DEPENDENCIES.md` | 릴리스 절차, 사용한 라이브러리 |
 | `docs/STATUS.md` | 진행 상황과 결정 사항 (다른 곳에서 이어서 작업할 때 먼저 읽을 문서) |
 
 개발할 때는 `python -m pytest -q`. CI는 Windows·macOS·Linux × Python 3.10/3.12, 그리고 `environment.yml`이 실제로 빌드되는지도 매번 확인합니다.
@@ -349,6 +352,33 @@ python scripts/demo/make_gifs.py explore       # quickstart가 만든 데이터�
 ```
 
 시연은 임시 복사본에서 돌기 때문에 진짜 `data/`는 건드리지 않습니다. `integrity`와 `schema`는 미리 준비한 시연 데이터가 필요합니다 (`GC_DEMO_ROOT`, 자세한 내용은 `make_gifs.py` 맨 위 설명).
+
+## 버전과 변경 이력
+
+현재 버전은 **0.1.0** 입니다. 버전은 `genomecurator/__init__.py` 한 곳에서만 정하고, 화면 하단·`/api/version`·`--version`에 보입니다.
+또한 **DB·changeset·백업**이 "어느 버전이 만들었는지"를 기록하므로, 나중에 이 데이터가 어느 코드에서 나왔는지 추적할 수 있습니다.
+
+```bash
+python -m genomecurator --version      # genomecurator 0.1.0 (DB schema 1)
+```
+
+* 변경 이력: [CHANGELOG.ko.md](CHANGELOG.ko.md) (한국어) · [CHANGELOG.md](CHANGELOG.md) (English)
+* 릴리스 방법과 버전 규칙: [docs/RELEASING.md](docs/RELEASING.md)
+
+## 사용한 라이브러리
+
+| 라이브러리 | 하는 일 | 라이선스 |
+|---|---|---|
+| [FastAPI](https://fastapi.tiangolo.com/) · [Uvicorn](https://www.uvicorn.org/) | 웹 앱과 서버 | MIT · BSD-3 |
+| [Jinja2](https://jinja.palletsprojects.com/) | HTML 템플릿 | BSD-3 |
+| [HTTPX](https://www.python-httpx.org/) | 소스 3곳 호출 (재시도·시간제한) | BSD-3 |
+| [APScheduler](https://apscheduler.readthedocs.io/) | 매일 확인·스키마 점검 | MIT |
+| [python-multipart](https://github.com/Kludex/python-multipart) | 웹 폼 해석 | Apache-2.0 |
+| [Chart.js](https://www.chartjs.org/) 4.4.1 (CDN) | 대시보드·공개 페이지 차트 | MIT |
+| 선택: [pytest](https://pytest.org/) · [Pillow](https://python-pillow.org/) · [websocket-client](https://github.com/websocket-client/websocket-client) · [Apache Superset](https://superset.apache.org/) | 테스트 · GIF 만들기 · 분석 | MIT · MIT-CMU · Apache-2.0 · Apache-2.0 |
+
+테스트한 버전, 전체 라이선스, 간접 의존성, 데이터를 가져오는 외부 서비스(NCBI·BV-BRC·Pathoplexus·ICTV)는 [docs/DEPENDENCIES.md](docs/DEPENDENCIES.md)에 있습니다
+(설치된 패키지에서 `scripts/dependencies.py`가 뽑아 만든 문서라 코드와 어긋나지 않습니다).
 
 ## 라이선스 · 만든 사람 · 문의
 

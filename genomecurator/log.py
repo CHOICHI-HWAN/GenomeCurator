@@ -75,7 +75,8 @@ def setup(console: bool = True) -> None:
         ch.addFilter(flt)
         root.addHandler(ch)
     _ready = True
-    get("log").info("logging started (file level %s) -> %s", os.environ.get("GC_LOG_LEVEL", "INFO").upper(), log_dir())
+    from . import __version__
+    get("log").info("logging started: GenomeCurator %s (file level %s) -> %s", __version__, os.environ.get("GC_LOG_LEVEL", "INFO").upper(), log_dir())
 
 
 def tail(n: int = 200, level: str = "") -> list[str]:

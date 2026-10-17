@@ -173,3 +173,11 @@ Windows에서 `git`이 PATH에 없으면 `C:\Program Files\Git\cmd\git.exe`로 �
 - 시연은 임시 복사본에서 돌아 실제 `data/`를 건드리지 않는다. 녹화 도구는 Chrome 연결이 실패해도 Chrome을 남기지 않고 빈 포트를 골라 쓴다(이전 실행의 Chrome에 잘못 붙는 문제를 겪고 고침).
 - 같은 날 사용자 요청으로 실제 `data/`에서 nipah(유전체 442·FASTA 90·changeset 1)를 삭제했다. 삭제 전 백업: `~/genomecurator-backup-before-nipah-delete-20261017-1008.zip`(`restore --force`로 복구 가능). mpox 13,462건은 그대로.
 
+## 버전 관리 / 변경 이력 / 라이브러리 (2026-10-17, v0.1.0)
+- **0.1.0이 첫 릴리스**다(지금까지 만든 것 전체). 이후 `0.1.1`(버그), `0.2.0`(기능·동작 변화)처럼 올린다. 규칙과 절차: `docs/RELEASING.md`(한·영).
+- 버전은 `genomecurator/__init__.py`의 `__version__` 한 곳(pyproject는 `dynamic`으로 읽음). `DB_SCHEMA_VERSION`(=1)은 앱 버전과 별개로, 오래된 코드가 못 읽는 DB 구조 변경일 때만 올린다.
+- 기록: DB `app_meta`(first/current version, schema version) + 버전이 바뀔 때 이력 `version`, 각 changeset `summary.app_version`, 백업 `manifest.json`(`app_version`, `db_schema_version`; 더 새로운 DB 구조의 백업은 복원 거부). 노출: `--version`, 화면 하단, `/api/version`, 로그 첫 줄.
+- `CHANGELOG.md`(영문)·`CHANGELOG.ko.md`(한글), Keep a Changelog 형식(Added/Changed/Fixed/Data & compatibility/Dependencies). 테스트 `test_changelog_matches_the_code_version`이 코드 버전·날짜·순서·링크·영한 일치를 강제한다.
+- `docs/DEPENDENCIES.md`는 `scripts/dependencies.py`가 설치된 패키지에서 버전·라이선스를 측정해 만든다(역할은 수기). `test_every_declared_dependency_is_documented`가 pyproject·superset requirements의 모든 라이브러리가 문서에 있는지 검사한다.
+- 태그 `v0.1.0`. 태그를 push하면 그 커밋까지의 모든 커밋이 올라가므로, 워크플로 파일을 바꾼 커밋(`3223f0e`)이 앞에 섞이면 `workflow` 권한이 필요하다 — 그래서 CI 커밋은 릴리스 커밋 뒤에 둔다.
+
