@@ -167,3 +167,9 @@ Windows에서 `git`이 PATH에 없으면 `C:\Program Files\Git\cmd\git.exe`로 �
 - `.claude/launch.json`은 `mamba run -n genomecurator ...`, 포트 8001. 이 컴퓨터 전용 절대 경로를 저장소에 넣지 않는다.
 - README를 새로 썼다(철칙·소스 삼형제·정합성 3종·명령어·환경변수·FAQ·한계·코드 지도).
 
+## README 시연 GIF (2026-10-17)
+- `scripts/demo/`: `recorder.py`(헤드리스 Chrome을 DevTools로 조종, 커서·자막 오버레이, 프레임 수집, GIF 조립), `make_gifs.py`(시나리오 4개), `demo_server.py`(시연 전용: 스키마 화면에서 "소스가 바뀐 척"하는 서버, 실제 앱에는 쓰이지 않음). 의존성은 `pip install -e ".[demo]"`.
+- 결과: `docs/demo/01-quickstart.gif`(빈 폴더에서 nipah 등록→확인→승인→적용, 실제 인터넷), `02-integrity.gif`(mpox), `03-schema.gif`(앞쪽 실제, 뒤쪽은 시연용 가정 — README에 명시), `04-explore.gif`. 합계 약 4MB.
+- 시연은 임시 복사본에서 돌아 실제 `data/`를 건드리지 않는다. 녹화 도구는 Chrome 연결이 실패해도 Chrome을 남기지 않고 빈 포트를 골라 쓴다(이전 실행의 Chrome에 잘못 붙는 문제를 겪고 고침).
+- 같은 날 사용자 요청으로 실제 `data/`에서 nipah(유전체 442·FASTA 90·changeset 1)를 삭제했다. 삭제 전 백업: `~/genomecurator-backup-before-nipah-delete-20261017-1008.zip`(`restore --force`로 복구 가능). mpox 13,462건은 그대로.
+

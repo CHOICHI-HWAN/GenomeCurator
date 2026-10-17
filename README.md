@@ -30,6 +30,14 @@ python -m genomecurator serve --open                         # 그리고 웹에�
 
 그게 전부입니다. 나머지는 이 문서가 아니라 웹 화면이 알려 줍니다.
 
+<div align="center">
+
+![빈 화면에서 바이러스를 등록하고, 확인하고, 승인해서 반영하기까지](docs/demo/01-quickstart.gif)
+
+<sub>▶ 빈 화면에서 Henipavirus nipahense를 등록 → 소스 3곳 확인 → 442건 승인 → 반영까지 (실제 NCBI·BV-BRC·Pathoplexus에 접속한 화면, 약 2분을 30초로 줄였습니다)</sub>
+
+</div>
+
 ## 왜 만들었나 (그리고 왜 이렇게 깐깐한가)
 
 유전체 메타데이터를 NCBI에서 받고, BV-BRC에서 받고, Pathoplexus에서도 받다 보면 이런 일이 생깁니다.
@@ -128,6 +136,14 @@ python -m genomecurator serve --open
 
 오래 걸리는 작업은 화면 가운데에 진행 모달(큰 진행 막대 + 로그)이 뜨고, 새로고침해도 이어집니다.
 
+<div align="center">
+
+![유전체 표: 키워드 검색, 필터, 상세 패널, 패널 너비 조절](docs/demo/04-explore.gif)
+
+<sub>▶ 유전체 표 — 키워드·필터·상세 패널(값마다 <i>어느 소스에서 왔는지</i> 표시)·끌어서 너비 조절</sub>
+
+</div>
+
 ## 승인 흐름 (changeset)
 
 ```
@@ -158,6 +174,14 @@ python -m genomecurator serve --open
 
 mpox 1만 3천 건에서는 소스 간 일치율 99%대였고, 남은 불일치 중에는 오타(`1922-05-30`)와 국가 충돌(콩고민주공화국 ↔ 대한민국)이 있었습니다. 이런 걸 잡으려고 만들었습니다.
 
+<div align="center">
+
+![정합성 탭: 소스별 일치 막대, 실제로 다른 값 목록, 서열 검증 dry-run 계획](docs/demo/02-integrity.gif)
+
+<sub>▶ mpox 1만 3천 건으로 본 정합성 탭 — 필드별 일치 막대 → 실제로 다른 값 → 서열 검증 계획(dry-run)</sub>
+
+</div>
+
 ### 2. 서열로 확인 (seqcheck)
 
 메타데이터로 판단이 안 되면 서열 본문을 비교합니다 (헤더·공백 제거, 대문자, SHA-256). 기준은 NCBI.
@@ -168,6 +192,14 @@ mpox 1만 3천 건에서는 소스 간 일치율 99%대였고, 남은 불일치 
 
 소스의 응답 구조는 예고 없이 바뀝니다. **우리 코드가 실제로 읽는 필드를 측정**해서 사라지거나(이름이 바뀐 후보도 알려 줌) 형태가 바뀌거나 응답 구조가 달라지면 "소스 코드 업데이트 필요"라고 말해 줍니다.
 매일 새벽 3시에 바이러스마다 소스당 3건씩 가볍게 점검하고, 바뀐 게 있으면 **스키마** 탭에 `!`가 켜집니다.
+
+<div align="center">
+
+![스키마 탭: 정상일 때와 소스 구조가 바뀌었다고 가정했을 때](docs/demo/03-schema.gif)
+
+<sub>▶ 스키마 점검 — 처음은 실제 결과(이상 없음), 뒤쪽은 <b>시연을 위해 "소스가 필드 이름과 응답 구조를 바꿨다"고 가정</b>한 화면입니다 (실제로 바뀐 것이 아닙니다)</sub>
+
+</div>
 
 ### 4. 내 데이터가 멀쩡한지 (verify)
 
@@ -305,6 +337,18 @@ Windows ↔ macOS ↔ Linux 어디서든 풀립니다. 제외된 것은 다음 "
 | `docs/STATUS.md` | 진행 상황과 결정 사항 (다른 곳에서 이어서 작업할 때 먼저 읽을 문서) |
 
 개발할 때는 `python -m pytest -q`. CI는 Windows·macOS·Linux × Python 3.10/3.12, 그리고 `environment.yml`이 실제로 빌드되는지도 매번 확인합니다.
+
+## 이 GIF들은 어떻게 만들었나
+
+위 GIF는 손으로 찍은 게 아니라 **스크립트가 실제 앱을 조종해서** 만듭니다 (`scripts/demo/`). 헤드리스 Chrome을 DevTools 프로토콜로 움직이면서 프레임을 모으고, 커서·자막을 화면 위에 얹어 GIF로 조립합니다. 앱이 바뀌면 GIF도 다시 뽑으면 됩니다.
+
+```bash
+pip install -e ".[demo]"                       # Pillow + websocket-client (Google Chrome도 필요)
+python scripts/demo/make_gifs.py quickstart    # 빈 폴더에서 시작, 실제 인터넷 접속, 3~4분
+python scripts/demo/make_gifs.py explore       # quickstart가 만든 데이터를 보여 줌
+```
+
+시연은 임시 복사본에서 돌기 때문에 진짜 `data/`는 건드리지 않습니다. `integrity`와 `schema`는 미리 준비한 시연 데이터가 필요합니다 (`GC_DEMO_ROOT`, 자세한 내용은 `make_gifs.py` 맨 위 설명).
 
 ## 라이선스 · 만든 사람 · 문의
 
