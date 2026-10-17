@@ -560,3 +560,134 @@ def test_completeness_classes_and_sql_view_agree(tmp_path, monkeypatch):
     assert sql["edge90"] == "Partial" and C.classify("Partial", 900, 1000, 90)[0] == "Near complete"   # 95% setting is stricter than 90%
     assert sql["c-short"] == "Complete" and sql["noref"] == "Partial" and sql["gone"] == "Removed"
     assert "판정하지 않습니다" in C.describe(None) and "NC_000001" in C.describe(("NC_000001", 1000)) and "90%" in C.describe(("NC_000001", 1000), 90)
+
+
+def test_reconcile_host_ignores_a_parenthesised_common_name():
+    from genomecurator.reconcile import classify
+    assert classify("host", "Sus scrofa", "Sus scrofa (pig)") == "cosmetic"
+    assert classify("host", "Pteropus hypomelanus", "Pteropus hypomelanus (Island flying-fox)") == "cosmetic"
+    assert classify("host", "Homo sapiens", "Homo sapiens; 32; male") == "cosmetic"
+    assert classify("host", "Pteropus vampyrus", "Pteropus giganteus (bat)") == "conflict"
+
+
+def test_resolve_suggestions_follow_the_stated_rules():
+    from genomecurator import resolve as R
+    g = lambda *pairs: [{"value": v, "sources": s} for v, s in pairs]
+    # same fact, different writing: the most specific date, ISO preferred at equal precision
+    s = R.suggest("collection_date", g(("2022-07", ["ncbi"]), ("2022-07-11", ["bvbrc", "pathoplexus"])))
+    assert s["value"] == "2022-07-11" and s["confidence"] == "high"
+    s = R.suggest("collection_date", g(("2022-06-19", ["ncbi"]), ("19-Jun-2022", ["bvbrc"])))
+    assert s["value"] == "2022-06-19" and s["confidence"] == "high"
+    # an impossible date (in the future, or before 1900) is never suggested, even when it is the priority source
+    s = R.suggest("collection_date", g(("2099-05-30", ["ncbi"]), ("2019-05-30", ["bvbrc"])))
+    assert s["value"] == "2019-05-30" and "불가능" in s["reason"]
+    s = R.suggest("collection_date", g(("1822-05-30", ["pathoplexus"]), ("2022-05-30", ["bvbrc"])))
+    assert s["value"] == "2022-05-30" and "불가능" in s["reason"]
+    # ... but 1922 is a *possible* date (historical specimens exist), so two sources that disagree on it leave the decision to the person
+    s = R.suggest("collection_date", g(("1922-05-30", ["ncbi"]), ("2022-05-30", ["bvbrc"])))
+    assert s["confidence"] == "low"
+    # a majority wins and is MEDIUM; a minority date that disagrees is outvoted
+    s = R.suggest("collection_date", g(("2022-07-25", ["ncbi", "pathoplexus"]), ("2023", ["bvbrc"])))
+    assert s["value"] == "2022-07-25" and s["confidence"] == "medium" and "3개 소스 중 2개" in s["reason"]
+    # length / version: NCBI, with the reason (the sequence is downloaded from NCBI and verified against it)
+    s = R.suggest("genome_length", g(("197179", ["ncbi", "pathoplexus"]), ("197157", ["bvbrc"])), {"pathoplexus": "same", "bvbrc": "diff"})
+    assert s["value"] == "197179" and s["confidence"] == "high" and "Pathoplexus" in s["reason"]
+    # host: the scientific name is the canonical writing
+    s = R.suggest("host_name", g(("Sus scrofa", ["ncbi"]), ("Sus scrofa (pig)", ["bvbrc"])))
+    assert s["value"] == "Sus scrofa" and s["confidence"] == "high"
+    # two sources, really different values: no basis to choose -> LOW and the person is told to look
+    s = R.suggest("isolation_source", g(("oronasopharynx", ["ncbi"]), ("throat swab", ["bvbrc"])))
+    assert s["confidence"] == "low" and "직접 확인" in s["reason"] and s["value"] == "oronasopharynx"
+    # more specific wording for a pure rewording
+    assert R.suggest("isolation_source", g(("urine", ["ncbi"]), ("urine sample", ["bvbrc"])))["value"] == "urine sample"
+
+
+def test_resolve_contained_wording_is_medium_not_high():
+    from genomecurator import resolve as R
+    g = lambda *pairs: [{"value": v, "sources": s} for v, s in pairs]
+    assert R.suggest("isolation_source", g(("liver, spleen", ["ncbi"]), ("Liver/Spleen", ["bvbrc"])))["confidence"] == "high"      # only punctuation / case differ
+    s = R.suggest("isolation_source", g(("urine", ["ncbi"]), ("urine of Pteropus vampyrus", ["bvbrc"])))
+    assert s["confidence"] == "medium" and s["value"] == "urine of Pteropus vampyrus" and "포함" in s["reason"]
+
+
+def _resolve_fixture(tmp_path, monkeypatch):
+    import json
+    from genomecurator import config, db
+    from genomecurator.db import connect
+    monkeypatch.setattr(config, "DATA_DIR", tmp_path)
+    monkeypatch.setattr(config, "DB_PATH", tmp_path / "g.db")
+    db._recorded.discard(str(config.DB_PATH))
+    con = connect()
+    con.execute("INSERT INTO watchlist(id,name,taxon,taxon_id) VALUES(1,'V','V',9)")
+    src = {"ncbi": {"A1": {"collection_date": "2022-07", "host_name": "Chiroptera", "genome_length": 100}},
+           "bvbrc": {"A1": {"collection_date": "2022-07-11", "host_name": "bat", "genome_length": 90}},
+           "pathoplexus": {"A1": {"collection_date": "2022-07-11", "host_name": "Chiroptera"}}}
+    for s, recs in src.items():
+        for a, r in recs.items():
+            con.execute("INSERT INTO source_record(source,accession,watch_id,payload_json) VALUES(?,?,1,?)", (s, a, json.dumps(r)))
+    merged = {"collection_date": "2022-07-11", "host_name": "Chiroptera", "genome_length": 100}      # what the priority merge gave
+    con.execute("INSERT INTO changeset(id,watch_id,status) VALUES(1,1,'READY')")
+    con.execute("INSERT INTO changeset_item(id,changeset_id,accession,kind,diff_json,new_record_json,provenance_json,fingerprint,decision) VALUES(7,1,'A1','new','{}',?,?,'x','pending')",
+                (json.dumps(merged), json.dumps({"collection_date": "pathoplexus", "host_name": "pathoplexus", "genome_length": "ncbi"})))
+    con.commit()
+    return con, src
+
+
+def test_resolve_save_applies_to_the_item_and_survives_the_next_merge(tmp_path, monkeypatch):
+    import json
+    from genomecurator import curate, resolve as R
+    con, src = _resolve_fixture(tmp_path, monkeypatch)
+    view = R.item_view(con, 1, 7)
+    fields = {f["field"]: f for f in view["fields"]}
+    assert set(fields) == {"collection_date", "host_name", "genome_length"} and fields["genome_length"]["suggestion"]["value"] == "100"
+    assert fields["collection_date"]["suggestion"]["value"] == "2022-07-11" and fields["collection_date"]["suggestion"]["confidence"] == "high"
+    assert fields["host_name"]["suggestion"]["value"] == "Chiroptera" and fields["host_name"]["suggestion"]["confidence"] == "medium"    # 2 of 3 sources
+    # the person picks BV-BRC's host and types their own date
+    con.execute("BEGIN")
+    out = R.save(con, 1, "A1", [{"field": "host_name", "source": "bvbrc", "value": "bat"}, {"field": "collection_date", "source": "custom", "value": "2022-07-12"}])
+    con.commit()
+    assert out == {"saved": 2, "reset": 0, "items": 1}
+    row = con.execute("SELECT * FROM changeset_item WHERE id=7").fetchone()
+    rec, prov = json.loads(row["new_record_json"]), json.loads(row["provenance_json"])
+    assert rec["host_name"] == "bat" and prov["host_name"] == "bvbrc" and rec["collection_date"] == "2022-07-12" and prov["collection_date"] == "manual"
+    assert row["fingerprint"] != "x" and json.loads(row["diff_json"])["host_name"] == [None, "bat"]
+    # a later check merges again from scratch: the choices must still win
+    merged = curate.merge({"ncbi": {"A1": src["ncbi"]["A1"]}, "bvbrc": {"A1": src["bvbrc"]["A1"]}, "pathoplexus": {"A1": src["pathoplexus"]["A1"]}}, R.load_choices(con, 1))
+    assert merged["A1"][0]["host_name"] == "bat" and merged["A1"][1]["host_name"] == "bvbrc" and merged["A1"][0]["collection_date"] == "2022-07-12"
+    # the chosen source's CURRENT value is used (it changed), and if that source loses the field the priority merge stands
+    changed = {"ncbi": {"A1": src["ncbi"]["A1"]}, "bvbrc": {"A1": {**src["bvbrc"]["A1"], "host_name": "Bat"}}, "pathoplexus": {"A1": src["pathoplexus"]["A1"]}}
+    assert curate.merge(changed, R.load_choices(con, 1))["A1"][0]["host_name"] == "Bat"
+    gone = {"ncbi": {"A1": src["ncbi"]["A1"]}, "bvbrc": {"A1": {"genome_length": 90}}, "pathoplexus": {"A1": src["pathoplexus"]["A1"]}}
+    assert curate.merge(gone, R.load_choices(con, 1))["A1"][0]["host_name"] == "Chiroptera"
+    # decided fields no longer count as open disagreements
+    con.executemany("INSERT INTO source_conflict(watch_id,accession,field,kind,src_a,val_a,src_b,val_b) VALUES(1,'A1',?,?,'ncbi','a','bvbrc','b')",
+                    [("host_name", "conflict"), ("collection_date", "cosmetic"), ("genome_length", "conflict")])
+    con.commit()
+    ag = curate.source_agreement(1)["A1"]
+    assert ag["conflict"] == {"genome_length"} and ag["cosmetic"] == set() and ag["chosen"] == {"host_name", "collection_date"}
+    # back to the default for one field
+    con.execute("BEGIN")
+    R.save(con, 1, "A1", [{"field": "host_name", "source": None}])
+    con.commit()
+    assert json.loads(con.execute("SELECT new_record_json FROM changeset_item WHERE id=7").fetchone()[0])["host_name"] == "Chiroptera"
+    assert set(R.load_choices(con, 1)["A1"]) == {"collection_date"}
+    import pytest
+    for bad in ({"field": "nope", "source": "ncbi"}, {"field": "host_name", "source": "custom", "value": " "}, {"field": "genome_length", "source": "pathoplexus"}):
+        with pytest.raises(ValueError):
+            R.save(con, 1, "A1", [bad])
+
+
+def test_resolve_auto_pick_applies_medium_and_leaves_low(tmp_path, monkeypatch):
+    import json
+    from genomecurator import resolve as R
+    con, _ = _resolve_fixture(tmp_path, monkeypatch)
+    con.execute("DELETE FROM source_record WHERE source='pathoplexus'")          # two sources only: host is now a 1-vs-1 disagreement = LOW
+    con.commit()
+    pv = R.preview_auto(con, 1, "medium")
+    assert pv["counts"]["low"] == 1 and pv["counts"]["high"] == 2 and pv["fields"] == 2         # dates and length are certain, the host is left to the person
+    res = R.apply_auto(con, 1, "medium")
+    con.commit()
+    assert res["applied"] == 2 and set(R.load_choices(con, 1)["A1"]) == {"collection_date", "genome_length"}
+    assert all(r[0] == 1 for r in con.execute("SELECT auto FROM field_choice"))             # marked as automatic
+    assert R.preview_auto(con, 1, "medium")["fields"] == 0                                    # nothing left to pick automatically
+    assert "field_choice" in __import__("genomecurator.backup", fromlist=["x"]).KEEP_TABLES   # decisions are part of backups

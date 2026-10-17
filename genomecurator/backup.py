@@ -14,7 +14,7 @@ from pathlib import Path
 
 from . import config, db
 
-KEEP_TABLES = ["watchlist", "genome", "genome_sequence", "field_provenance", "genome_version", "changeset", "audit_log"]
+KEEP_TABLES = ["watchlist", "genome", "genome_sequence", "field_provenance", "genome_version", "changeset", "audit_log", "field_choice"]
 VERSION = 1
 
 

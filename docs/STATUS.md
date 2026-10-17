@@ -201,3 +201,11 @@ Windows에서 `git`이 PATH에 없으면 `C:\Program Files\Git\cmd\git.exe`로 �
 - 한계: ① 길이 비율일 뿐 정렬 기반 커버리지·N 비율은 아니다(FASTA가 로컬에 있을 때 N ≤ 5%를 추가할 수 있음). ② 기준이 하나라 계통별로 길이가 다른 종에서는 Complete가 아닌 짧은 계통이 Partial로 보일 수 있다(mpox clade I은 기준 대비 약 95~97%, 그래도 90% 이상이라 Near complete). ③ 사용자가 기준 길이를 직접 지정하는 화면은 아직 없다.
 - 실측: mpox에서 NCBI Partial 8,223건 중 7,583건이 Near complete, 640건만 Partial.
 
+## 소스 값 중 고르기 (resolve, 2026-10-17, Unreleased)
+- `resolve.py`: `analyse`(필드별로 소스 값이 다른 곳 + 표기차이/불일치), `suggest`(추천 규칙·신뢰도·이유), `save`(선택 저장 + 열린 changeset 항목의 `new_record_json`/`provenance_json`/diff/fingerprint 갱신), `preview_auto`/`apply_auto`(Auto-pick). 선택은 `field_choice`(watch, accession, field → source|custom, value)에 저장되고 `curate.merge(per_source, choices)`가 이후 모든 check에서 존중한다(고른 소스의 **현재** 값을 쓰고, 그 소스에 값이 없어지면 우선순위 병합으로 되돌아감). 백업 대상 테이블에 포함. `source_agreement`는 선택한 필드를 열린 불일치에서 뺀다(정합성 열 "선택 완료").
+- 추천 규칙: ① 불가능한 날짜(1900 이전·미래) 제외 ② 길이·버전·해시는 NCBI ③ 같은 사실의 다른 표기는 가장 잘 쓴 값(날짜: 구체성 > ISO > 길이, 지역/포함관계: 가장 자세한 것, 호스트: 학명, 국가: 표준명) = 높음(단, 한쪽이 다른 쪽을 포함할 뿐이면 보통) ④ 소스 다수가 같은 값 = 보통 ⑤ 다수 없음 = 낮음(우선순위로 제안, 직접 확인). Auto-pick 기본은 보통 이상.
+- 실측(nipah, 소스 2개): 충돌 182항목 중 높음 11 · 보통 18 · 낮음 178 필드. 낮음은 `oronasopharynx` ↔ `throat swab`(어휘가 다름), `Pteropus medius` ↔ `Pteropus giganteus`(이명인지 다른 종인지 알 수 없음) 등이라 일부러 사람에게 남긴다. 근거 없이 일괄 적용하는 것이 더 위험하다고 판단.
+- 검증: 선택→항목 반영→되돌리기→직접 입력→잘못된 입력 거부→일괄 적용→**새 check 후에도 29개 선택이 모두 유지**(0개 유실). 화면에서 라디오 클릭+저장으로 행이 "선택 완료"가 되는 것까지 확인.
+- 고친 문제: 일괄 적용이 쓰기 트랜잭션을 연 채 서열 검증 결과를 읽으려고 다른 연결을 열어 "database is locked"가 났다(WAL에서 읽기 스냅샷이 낡은 연결은 쓰기로 올라갈 수 없음). 쓰기 전에 읽도록 순서를 바꿨다 — 중첩 `connect()`는 쓰기 트랜잭션 안에서 부르지 말 것.
+- 한계: 필드별 도메인 지식은 최소만 넣었다(학명 동의어·어휘 매핑은 없음). 소스가 둘뿐인 바이러스는 대부분 "낮음"이다. 소스 3곳(Pathoplexus가 있는 바이러스)이면 다수결이 가능해 "보통"이 늘어난다.
+

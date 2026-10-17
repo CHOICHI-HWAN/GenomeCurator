@@ -57,6 +57,10 @@ CREATE TABLE IF NOT EXISTS sequence_check(
   length INTEGER, sha256 TEXT, ref_length INTEGER, prefix_same INTEGER, suffix_same INTEGER, detail TEXT, checked_at TEXT,
   PRIMARY KEY(watch_id, accession, source));
 CREATE TABLE IF NOT EXISTS sequence_plan(watch_id INTEGER PRIMARY KEY, created TEXT, plan_json TEXT);  -- dry-run of seqcheck
+-- a person's choice between the sources' values (resolve.py); honoured by every later check
+CREATE TABLE IF NOT EXISTS field_choice(
+  watch_id INTEGER, accession TEXT, field TEXT, source TEXT,  -- ncbi|bvbrc|pathoplexus|custom
+  value TEXT, auto INTEGER DEFAULT 0, decided_at TEXT, PRIMARY KEY(watch_id, accession, field));
 -- which version of the code wrote / last opened this database (see record_version)
 CREATE TABLE IF NOT EXISTS app_meta(key TEXT PRIMARY KEY, value TEXT, updated TEXT DEFAULT CURRENT_TIMESTAMP);
 -- schema dry-run (schema_check.py): last live field profile per source, and the report history

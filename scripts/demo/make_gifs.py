@@ -226,7 +226,39 @@ def schema():
         srv.stop()
 
 
-SCENARIOS = {"quickstart": quickstart, "explore": explore, "integrity": integrity, "schema": schema}
+def resolve():
+    """Needs the demo data 'resolve': a virus that has been checked (an open changeset) but not applied."""
+    d = fresh_copy("resolve")
+    srv, c = Server(d, 8024), Chrome(height=760)
+    try:
+        c.goto(srv.url + "/changeset/1")
+        c.js("(()=>{const r=[...document.querySelectorAll('#gb tr')].find(x=>/불일치/.test(x.innerText));r.scrollIntoView({block:'center'})})()")
+        c.caption("<b>검토</b> — 소스끼리 값이 다른 항목은 <b>정합성</b> 열에 <b>불일치 · 표기차이</b>로 표시됩니다")
+        c.hold(2600)
+        c.js("(()=>{const r=[...document.querySelectorAll('#gb tr')].find(x=>/불일치/.test(x.innerText));r.click()})()")
+        c.wait("document.querySelector('#rslv .rf')", 15)
+        c.settle(0.6)
+        c.caption("항목을 누르면 <b>무엇이 다른지</b> 소스별 값으로 보여 주고, <b>★ 추천</b>과 그 이유·신뢰도를 알려 줍니다")
+        c.hold(3600)
+        c.click(css="#rslv input[name=rf0][value='1']", after=0.3)
+        c.caption("마음에 드는 값을 고르고 <b>이대로 선택 저장</b> — 항목에 바로 반영되고 다음 확인에서도 유지됩니다")
+        c.hold(1800)
+        c.click(css="#rslv .btns button.p", after=1.4)
+        c.hold(2400)
+        c.caption("행의 정합성이 <b>선택 완료</b>로 바뀌었습니다")
+        c.hold(1800)
+        c.click(text="Auto-pick", after=0.8)
+        c.caption("신뢰도가 높은 추천은 <b>Auto-pick</b>으로 한 번에 — <b>낮음</b>은 직접 확인하도록 남겨 둡니다")
+        c.wait("document.readyState==='complete'")
+        c.settle(1.6)
+        c.hold(3600)
+        finish(c, "05-resolve.gif")
+    finally:
+        c.close()
+        srv.stop()
+
+
+SCENARIOS = {"quickstart": quickstart, "explore": explore, "integrity": integrity, "schema": schema, "resolve": resolve}
 
 if __name__ == "__main__":
     which = sys.argv[1:] or ["all"]

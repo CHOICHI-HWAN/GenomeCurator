@@ -12,12 +12,20 @@ re-pinned (the full list with licences is in [docs/DEPENDENCIES.md](docs/DEPENDE
 ## [Unreleased]
 
 ### Changed
+- A host that differs only by a common name in parentheses (`Sus scrofa` vs `Sus scrofa (pig)`) is now a *cosmetic* difference, not a conflict.
 - **Scope and name.** The tool is for **viruses only** (NCBI Virus, BV-BRC, Pathoplexus); bacteria will be a separate project because genomes there are
   assemblies made of many contigs and are megabases long. To stop "genome" from being read as *human genome*, the displayed name is now
   **Virus Genome Metadata Curator** (**Virus Genome Curator** in the page header, titles and messages). The repository, the Python package `genomecurator`, the
   command line, the data folder, environment variables and the backup format identifier are **unchanged**, so nothing needs migrating.
 
 ### Added
+- **Choosing between the sources' values** in the review screen. Click an item and the side panel lists every field the sources disagree on, with each source's value and whether
+  it is only written differently or really different. A **suggestion (★)** is pre-selected with its reason and confidence: an impossible date is left out; length/version follow NCBI
+  (the sequence is downloaded from NCBI and its length verified); values that are the same fact in different words go to the best-written one (most specific date, scientific
+  host name, standard country name) = *high*; a value most sources agree on = *medium*; otherwise the source priority decides and the person is told to look = *low*.
+  Pick a value or type your own and save: it is applied to the item at once and **kept by every later check** (the chosen source's current value is used; a typed value stays as typed;
+  *manual* is shown as the source). Choices can be undone per field. **Auto-pick** in the toolbar selects the suggestions of *medium* confidence or better in one go and leaves the *low* ones
+  to the person. Choices are stored in the new table `field_choice` and are part of backups; fields a person has decided no longer count as open disagreements.
 - **Near complete** genomes. NCBI only distinguishes Complete from Partial, but most of the "Partial" genomes are missing just a few hundred bases at the ends. A new
   *Completeness* class sits between them: **Complete** (NCBI says Complete; trusted, so a lineage that is legitimately shorter than the reference is not demoted),
   **Near complete** (not Complete, length at least **90%** of the reference genome) and **Partial** (below that, or no reference). The reference of a virus is its longest

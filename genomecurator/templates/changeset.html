@@ -22,10 +22,27 @@
 <button class="tbn" style="color:var(--bad)" onclick="dec('rejected')"><i>✖</i>Reject</button>
 <button class="tbn" style="color:var(--warn)" onclick="dec('hold')"><i>⏸</i>Hold</button>
 <button class="tbn" title="선택한 항목의 서열 검증 계획(dry-run)을 만듭니다. 서열은 아직 받지 않습니다" onclick="sq()"><i>🧬</i>Verify seq</button>
+<button class="tbn" style="color:var(--acc)" title="소스 간 차이가 있는 항목마다 추천값을 골라 둡니다 (신뢰도 보통 이상). 낮은 것은 직접 확인하도록 남깁니다" onclick="autoResolve()"><i>💡</i>Auto-pick</button>
 <button class="tbn" style="color:var(--bad)" onclick="delCs()"><i>🗑</i>Delete</button>
 <button class="tbn" {% if cs.status != 'READY' %}disabled style="opacity:.4"{% endif %} onclick="aa()"><i>⬆</i>Apply</button>
 <label style="font-size:11px;color:var(--mut);align-self:center;margin-left:4px;cursor:pointer" title="끄면 서열 없이 메타데이터만 먼저 반영합니다 (신규 항목). 서열은 유전체 화면의 Get FASTA로 나중에 받습니다."><input type="checkbox" id="fsq" checked style="vertical-align:-2px"> 서열(FASTA)도 받기</label>
 {% endset %}
+<style>
+.rslv{border:1px solid var(--warn);border-left:5px solid var(--warn);background:var(--card);margin:8px;border-radius:3px;font-size:12.5px}
+.rslv .rs-h{padding:6px 10px;background:rgba(210,153,34,.16);border-bottom:1px solid var(--bd)}
+.rslv .rf{padding:7px 10px;border-bottom:1px solid var(--bd)}.rslv .rf:last-of-type{border-bottom:0}
+.rslv .rf h6{margin:0 0 3px;font-size:13px;display:flex;gap:6px;align-items:center;flex-wrap:wrap}
+.rslv .kd{font-size:11px;border-radius:9px;padding:0 7px;border:1px solid currentColor;font-weight:600}.kd.conflict{color:var(--bad)}.kd.cosmetic{color:var(--warn)}
+.rslv label.opt{display:flex;gap:6px;align-items:flex-start;padding:2px 4px;border-radius:3px;cursor:pointer;line-height:1.45}.rslv label.opt:hover{background:var(--hover)}
+.rslv label.opt code{word-break:break-all;font-size:12px}.rslv .sc{color:var(--mut);font-size:11.5px;white-space:nowrap}
+.rslv .star{color:var(--acc);font-weight:700;font-size:11.5px;white-space:nowrap}
+.rslv .why{margin:4px 0 0 4px;padding:3px 8px;border-left:3px solid var(--bd);background:var(--stripe);font-size:12px}
+.rslv .why.high{border-left-color:var(--ok)}.rslv .why.medium{border-left-color:var(--warn)}.rslv .why.low{border-left-color:var(--bad)}
+.rslv .cf{font-weight:700;margin-left:4px}.rslv .cf.high{color:var(--ok)}.rslv .cf.medium{color:var(--warn)}.rslv .cf.low{color:var(--bad)}
+.rslv .cur{margin:3px 4px;font-size:11.5px;color:var(--mut)}.rslv .done{color:var(--ok);font-weight:600;font-size:11.5px}
+.rslv .btns{display:flex;gap:6px;flex-wrap:wrap;padding:8px 10px;background:var(--stripe)}
+.rslv input.cust{height:24px;width:60%;margin-left:4px}
+</style>
 <script type="application/json" id="gdata">{{ data|tojson }}</script>
 {% include "bvgrid.html" %}
 <script>
@@ -34,6 +51,47 @@ async function delCs(){const i=await (await fetch('/api/changeset/{{ cs.id }}/im
  if(i.rejected||i.hold)m+='\n\n⚠ 거절 '+i.rejected+'건 · 보류 '+i.hold+'건의 결정도 사라져서 다음 확인 때 다시 올라올 수 있습니다.';
  if(confirm(m))document.getElementById('csdel').submit()}
 function ids(){return G.selected()}
+// ------------------------------------------------------------- where the sources disagree: see it, pick, or take the suggestion
+const LBL={ncbi:'NCBI',bvbrc:'BV-BRC',pathoplexus:'Pathoplexus',custom:'직접 입력',manual:'직접 입력'},CONF={high:'높음',medium:'보통',low:'낮음'};
+const E=s=>String(s??'').replace(/[&<>"]/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c]));
+const flabel=k=>{const c=(JSON.parse(document.getElementById('gdata').textContent).cols||[]).find(x=>x.k===k);return c?c.label:k};
+window.rpExtra=r=>(r.integrity&&r.integrity!=='일치')?`<div id="rslv" class="rslv" data-id="${r.id}"><div class="rs-h"><span class="mut">소스 간 차이를 불러오는 중…</span></div></div>`:'';
+window.rpAfter=async r=>{if(!r.integrity||r.integrity==='일치')return;
+ try{const res=await fetch('/api/changeset/{{ cs.id }}/item/'+r.id+'/resolve');const d=await res.json();const box=document.getElementById('rslv');
+  if(!box||box.dataset.id!=String(r.id))return;if(d.error){box.innerHTML='<div class="rs-h">'+E(d.error)+'</div>';return}rslvRender(box,d)}catch(e){}};
+function rslvRender(box,d){box._d=d;if(!d.fields.length){box.innerHTML='<div class="rs-h"><b>소스 간 차이 없음</b></div>';return}
+ const open=d.fields.filter(f=>!f.chosen).length;
+ let h=`<div class="rs-h"><b>소스 간 차이 ${d.fields.length}개 필드</b> — ${open?'<b>'+open+'개를 고르세요</b>':'<span class="done">모두 선택함</span>'}<br><span class="mut">값을 고르면 이 항목에 바로 반영되고, 다음 확인에서도 유지됩니다. ★은 자동 추천입니다.</span></div>`;
+ d.fields.forEach((f,i)=>{const sg=f.suggestion;let sel=f.groups.findIndex(g=>g.value===sg.value);
+  if(f.chosen){sel=f.chosen.source==='custom'?'custom':f.groups.findIndex(g=>g.value===f.chosen.value);if(sel===-1)sel=0}
+  h+=`<div class="rf"><h6>${E(flabel(f.field))} <span class="kd ${f.kind}">${f.kind==='conflict'?'불일치 — 서로 다른 값':'표기 차이 — 같은 내용'}</span>${f.chosen?'<span class="done">✔ 선택함('+E(LBL[f.chosen.source])+')</span>':''}</h6>`;
+  f.groups.forEach((g,gi)=>{h+=`<label class="opt"><input type="radio" name="rf${i}" value="${gi}" ${sel===gi?'checked':''}><span><code>${E(g.value)}</code> <span class="sc">${g.sources.map(s=>E(LBL[s])).join(' · ')}</span>${gi===f.groups.findIndex(x=>x.value===sg.value)?' <span class="star">★ 추천</span>':''}</span></label>`});
+  h+=`<label class="opt"><input type="radio" name="rf${i}" value="custom" ${sel==='custom'?'checked':''}><span>직접 입력 <input class="cust" name="rc${i}" value="${f.chosen&&f.chosen.source==='custom'?E(f.chosen.value):''}" onfocus="this.parentNode.previousElementSibling.checked=true"></span></label>`;
+  h+=`<div class="why ${sg.confidence}">💡 <b>추천 이유</b> · ${E(sg.reason)} <span class="cf ${sg.confidence}">신뢰도 ${CONF[sg.confidence]}</span></div>`;
+  const sq=Object.entries(f.seq||{}).filter(([s])=>s!=='ncbi');if(sq.length)h+=`<div class="cur">서열 검증: ${sq.map(([s,v])=>E(LBL[s])+' '+(v==='same'?'동일':v==='diff'?'다름':'확인 불가')).join(' · ')}</div>`;
+  h+=`<div class="cur">지금 적용될 값: <code>${E(f.current.value??'∅')}</code>${f.current.source?' ('+E(LBL[f.current.source]||f.current.source)+')':''}${f.chosen?' · <a href="#" onclick="rslvReset(${i});return false">기본값으로 되돌리기</a>':''}</div></div>`});
+ h+=`<div class="btns"><button class="p" onclick="rslvSave(false)">이대로 선택 저장</button><button onclick="rslvSave(true)" title="모든 필드를 ★ 추천으로 맞춘 뒤 저장">★ 추천대로 모두 선택</button></div>`;
+ box.innerHTML=h}
+async function rslvPost(choices){const r=G.current();const res=await fetch('/api/changeset/{{ cs.id }}/item/'+r.id+'/resolve',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({choices})});
+ const d=await res.json();if(d.error){alert(d.error);return null}
+ d.view.fields.forEach(f=>{if(f.chosen&&r){r[f.field]=f.chosen.value;r._prov=r._prov||{};r._prov[f.field]=f.chosen.source==='custom'?'manual':f.chosen.source}});
+ if(d.view.fields.length&&d.view.fields.every(f=>f.chosen))r.integrity='선택 완료';
+ const c=r.chosen_fields?r.chosen_fields.split(', '):[];d.view.fields.forEach(f=>{if(f.chosen&&!c.includes(f.field))c.push(f.field)});r.chosen_fields=c.join(', ');
+ G.redraw();return d}
+async function rslvSave(useSuggestion){const box=document.getElementById('rslv'),d=box._d,choices=[];
+ for(let i=0;i<d.fields.length;i++){const f=d.fields[i];let v=(box.querySelector(`input[name=rf${i}]:checked`)||{}).value;
+  if(useSuggestion)v=String(f.groups.findIndex(g=>g.value===f.suggestion.value));
+  if(v===undefined)continue;
+  if(v==='custom'){const t=box.querySelector(`input[name=rc${i}]`).value.trim();if(!t){alert(flabel(f.field)+': 직접 입력한 값이 비어 있습니다.');return}choices.push({field:f.field,source:'custom',value:t})}
+  else{const g=f.groups[+v];choices.push({field:f.field,source:g.sources[0],value:g.value})}}
+ await rslvPost(choices)}
+async function rslvReset(i){const box=document.getElementById('rslv');await rslvPost([{field:box._d.fields[i].field,source:null}])}
+async function autoResolve(){const p=await (await fetch('/api/changeset/{{ cs.id }}/resolve_auto?minimum=medium')).json();
+ if(p.error){alert(p.error);return}if(!p.items||!p.fields){alert('아직 고르지 않은 소스 간 차이가 없습니다.');return}
+ if(!confirm('소스 간 차이가 있는 항목 '+p.items.toLocaleString()+'건의 추천값을 선택합니다.\n\n필드 신뢰도: 높음 '+p.counts.high+' · 보통 '+p.counts.medium+' · 낮음 '+p.counts.low+
+  '\n\n신뢰도 "보통" 이상 '+p.fields+'개 필드를 추천값으로 선택합니다 (값이 실제로 바뀌는 것 '+p.will_change+'개).\n신뢰도 "낮음" '+p.counts.low+'개는 직접 확인하도록 남깁니다.\n\n선택은 항목마다 되돌릴 수 있고 다음 확인에서도 유지됩니다. 진행할까요?'))return;
+ const r=await (await fetch('/changeset/{{ cs.id }}/resolve_auto?minimum=medium',{method:'POST'})).json();
+ if(r.error){alert(r.error);return}alert(r.applied+'개 필드를 추천값으로 선택했습니다 (값이 바뀐 것 '+r.will_change+'개).');location.reload()}
 function sq(){const s=ids();if(!s.length){alert('서열을 검증할 항목을 먼저 선택하세요.');return}
  if(s.length>2000){alert('한 번에 최대 2000건까지 검증할 수 있습니다. 불일치 항목만 골라 보세요(정합성 필터).');return}
  if(!confirm(s.length+'건의 서열 검증 계획(dry-run)을 만듭니다.\n링크와 길이만 확인하고 서열은 받지 않습니다. 계획을 확인한 뒤 실행할 수 있습니다.'))return;

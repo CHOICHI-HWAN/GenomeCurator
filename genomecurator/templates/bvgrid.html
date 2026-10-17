@@ -30,7 +30,7 @@
 #rp h5{margin:0;padding:8px 12px;font-size:13px;background:var(--bvg);color:#fff}
 #rp .hint{margin:12px;padding:10px;background:var(--card);border:1px solid var(--bd);border-radius:3px;color:var(--mut)}
 #rp table{border:0;font-size:12px}#rp td{padding:3px 10px;border-bottom:1px solid var(--bd);vertical-align:top;word-break:break-word}#rp td:first-child{color:var(--mut);width:42%}
-.src{font-size:10px;border-radius:8px;padding:0 6px;margin-left:4px;color:#fff}.src.pathoplexus{background:#8a6bbd}.src.ncbi{background:#2f79b5}.src.bvbrc{background:#3a9d6e}
+.src{font-size:10px;border-radius:8px;padding:0 6px;margin-left:4px;color:#fff}.src.manual{background:#c0762f}.src.pathoplexus{background:#8a6bbd}.src.ncbi{background:#2f79b5}.src.bvbrc{background:#3a9d6e}
 .acts{padding:10px 12px;display:flex;flex-direction:column;gap:6px}
 .pg{display:flex;gap:8px;align-items:center;padding:6px 10px;background:var(--card);border:1px solid var(--bd);border-top:0;font-size:12.5px}
 .pg .pn{cursor:pointer;color:var(--acc);padding:0 4px}.pg .pn.on{font-weight:700;color:var(--fg);text-decoration:underline}
@@ -136,12 +136,12 @@ function rp(){const el=$('rp');$('rz').style.display=st.rpHide?'none':'';$('b_rp
  if(!n&&!st.cur){el.innerHTML='<h5>Nothing selected.</h5><div class="hint">표에서 행을 클릭하면 상세 정보와 값의 출처(Pathoplexus / NCBI / BV-BRC)가 여기에 표시됩니다. 체크박스로 여러 건을 선택하면 일괄 다운로드할 수 있습니다.</div>';return}
  let h=`<h5>${n?n+' genome'+(n>1?'s':'')+' selected':'Genome detail'}</h5>`;
  if(n)h+=`<div class="acts"><button onclick="G.tsv(true)">선택 항목 TSV 다운로드</button><button onclick="G.fasta()">선택 항목 FASTA 다운로드</button></div>`;
- const r=st.cur;if(r&&r._diff&&r.kind==='changed'){h+='<table><tr><td colspan=2><b>변경 내용</b></td></tr>'+Object.entries(r._diff).map(([k,v])=>`<tr><td>${esc(label(k))}</td><td><s class="old">${esc(v[0]??'∅')}</s> → <b>${esc(v[1]??'∅')}</b></td></tr>`).join('')+'</table>'}
+ const r=st.cur;if(r&&window.rpExtra)h+=window.rpExtra(r);if(r&&r._diff&&r.kind==='changed'){h+='<table><tr><td colspan=2><b>변경 내용</b></td></tr>'+Object.entries(r._diff).map(([k,v])=>`<tr><td>${esc(label(k))}</td><td><s class="old">${esc(v[0]??'∅')}</s> → <b>${esc(v[1]??'∅')}</b></td></tr>`).join('')+'</table>'}
  if(r){const keys=cols.map(c=>c.k).concat(['taxon_id','taxon_lineage_names','accession','sequence_md5','sequence_hash','pathoplexus_accession','submitter','publication','segment','genotype','subtype']);
   h+='<table>'+[...new Set(keys)].filter(k=>r[k]!==null&&r[k]!==undefined&&r[k]!=='').map(k=>{const s=r._prov&&r._prov[k];
    return `<tr><td>${esc(label(k))}</td><td>${cell(k,r)}${s?`<span class="src ${s}">${s}</span>`:''}</td></tr>`}).join('')+'</table>';
   if(D.ppx&&r.pathoplexus_accession)h+=ppxSection(D.ppx,r.pathoplexus_accession)}
- el.innerHTML=h;if(r&&D.ppx&&r.pathoplexus_accession)ppxLoad(D.ppx,r.pathoplexus_accession)}
+ el.innerHTML=h;if(r&&D.ppx&&r.pathoplexus_accession)ppxLoad(D.ppx,r.pathoplexus_accession);if(r&&window.rpAfter)window.rpAfter(r)}
 function table(){const vc=cols.filter(c=>st.vis.has(c.k));
  $('gh').innerHTML='<tr><th><input type="checkbox" id="gall"></th>'+vc.map(c=>`<th data-s="${c.k}" class="${st.sort===c.k?'s '+(st.dir<0?'d':''):''}">${esc(c.label)}</th>`).join('')+'</tr>';
  const pages=Math.max(1,Math.ceil(view.length/st.ps));st.pg=Math.min(st.pg,pages-1);const sl=view.slice(st.pg*st.ps,(st.pg+1)*st.ps);
@@ -173,7 +173,7 @@ new URLSearchParams(location.search).getAll('f').forEach(s=>{const i=s.indexOf('
 document.addEventListener('keydown',e=>{if(e.key==='Escape'&&document.getElementById('gbox').classList.contains('max'))G.max()});
 draw();
 const dl=(name,text,type)=>{const a=document.createElement('a');a.href=URL.createObjectURL(new Blob([text],{type}));a.download=name;a.click()};
-return{toggleRp(){st.rpHide=!st.rpHide;try{localStorage.setItem('gcRp',st.rpHide?'0':'1')}catch(e){}rp()},
+return{redraw(){draw()},current:()=>st.cur,toggleRp(){st.rpHide=!st.rpHide;try{localStorage.setItem('gcRp',st.rpHide?'0':'1')}catch(e){}rp()},
  max(){const b=document.getElementById('gbox'),on=b.classList.toggle('max');document.body.style.overflow=on?'hidden':'';
   document.getElementById('b_max').innerHTML=on?'<i>⤡</i>Restore':'<i>⤢</i>Maximize'},
  clear(){st.f={};st.q='';$('gq').value='';st.pg=0;draw()},page(d){st.pg=Math.max(0,st.pg+d);table()},size(v){st.ps=+v;st.pg=0;table()},

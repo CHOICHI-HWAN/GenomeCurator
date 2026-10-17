@@ -85,8 +85,9 @@ def classify(kind: str, a, b) -> str:
         if _words(x) == _words(y):
             return "cosmetic"
         return "cosmetic" if _country(re.split(r"[:,]", x)[0]) == _country(re.split(r"[:,]", y)[0]) else "conflict"
-    if kind == "host":
-        return "cosmetic" if x.split(";")[0].strip().casefold() == y.split(";")[0].strip().casefold() else "conflict"
+    if kind == "host":   # "Sus scrofa (pig)" is "Sus scrofa" with its common name appended; "Homo sapiens; 32; male" carries age and sex
+        bare = lambda v: re.sub(r"\s*\([^)]*\)", "", v.split(";")[0]).strip().casefold()
+        return "cosmetic" if bare(x) == bare(y) else "conflict"
     if kind == "strain":
         s1, s2 = x.casefold(), y.casefold()
         short, long_ = sorted((s1, s2), key=len)

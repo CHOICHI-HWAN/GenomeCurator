@@ -81,7 +81,7 @@ def start_job(fn, label: str = "job") -> JSONResponse:
 
 
 CS_COLS = [("kind", "종류", True, True), ("decision", "결정", True, True), ("integrity", "정합성", True, True), ("seq", "서열 검증", True, True),
-           ("conflict_fields", "불일치 필드", True, False), ("accession", "Accession", True, False),
+           ("conflict_fields", "불일치 필드", True, False), ("chosen_fields", "선택한 필드", False, False), ("accession", "Accession", True, False),
            ("accession_version", "Ver", True, False), ("genome_name", "Genome Name", True, False),
            ("completeness", "Completeness", True, True), ("genome_status", "NCBI Status", False, True), ("genome_length", "Length", True, False),
            ("strain", "Strain", True, False), ("host_name", "Host", True, False),
@@ -358,6 +358,73 @@ def create_app(scheduler: bool = True) -> FastAPI:
         from .db import version_info
         return version_info()
 
+    @app.get("/api/changeset/{cid}/item/{iid}/resolve")
+    def resolve_view(cid: int, iid: int):
+        from . import resolve
+        con = connect()
+        try:
+            return resolve.item_view(con, cid, iid)
+        except ValueError as e:
+            return JSONResponse({"error": str(e)}, 404)
+        finally:
+            con.close()
+
+    @app.post("/api/changeset/{cid}/item/{iid}/resolve")
+    async def resolve_save(request: Request, cid: int, iid: int):
+        """Save a person's choices between the sources' values for one item (choice source null = back to the default)."""
+        if not _same_origin(request):
+            return JSONResponse({"error": "cross-site request refused"}, 403)
+        from . import resolve
+        body = await request.json()
+        con = connect()
+        try:
+            it = con.execute("SELECT i.accession, c.watch_id FROM changeset_item i JOIN changeset c ON c.id=i.changeset_id WHERE i.id=? AND c.id=?", (iid, cid)).fetchone()
+            if not it:
+                return JSONResponse({"error": "항목을 찾을 수 없습니다."}, 404)
+            con.execute("BEGIN")
+            res = resolve.save(con, it["watch_id"], it["accession"], body.get("choices", []))
+            con.commit()
+            _log.info("resolve %s: %s", it["accession"], res)
+            return {**res, "view": resolve.item_view(con, cid, iid)}
+        except ValueError as e:
+            con.rollback()
+            return JSONResponse({"error": str(e)}, 400)
+        finally:
+            con.close()
+
+    @app.get("/api/changeset/{cid}/resolve_auto")
+    def resolve_auto_preview(cid: int, minimum: str = "medium"):
+        from . import resolve
+        con = connect()
+        try:
+            pv = resolve.preview_auto(con, cid, minimum if minimum in resolve.CONF_RANK else "medium")
+            pv.pop("per_acc", None)
+            return pv
+        except ValueError as e:
+            return JSONResponse({"error": str(e)}, 404)
+        finally:
+            con.close()
+
+    @app.post("/changeset/{cid}/resolve_auto")
+    async def resolve_auto_apply(request: Request, cid: int, minimum: str = "medium"):
+        """Choose the suggested value for every open disagreement of at least the given confidence."""
+        if not _same_origin(request):
+            return JSONResponse({"error": "cross-site request refused"}, 403)
+        from . import resolve
+        con = connect()
+        try:
+            # no explicit BEGIN: the preview opens another connection (seqcheck.verdicts) and that must happen before this one writes,
+            # otherwise SQLite refuses the write ("database is locked": the read snapshot of an open transaction is already stale)
+            res = resolve.apply_auto(con, cid, minimum if minimum in resolve.CONF_RANK else "medium")
+            con.commit()
+            _log.info("resolve_auto changeset %s: %s", cid, res)
+            return res
+        except ValueError as e:
+            con.rollback()
+            return JSONResponse({"error": str(e)}, 400)
+        finally:
+            con.close()
+
     @app.get("/api/job/{jid}")
     def job(jid: str):
         return JOBS.get(jid) or JSONResponse({"error": "unknown job", "done": True}, 404)
@@ -399,7 +466,8 @@ def create_app(scheduler: bool = True) -> FastAPI:
             r["completeness"], r["ref_coverage"] = completeness.classify(r.get("genome_status"), r.get("genome_length"), _ref and _ref[1])
             r.update(id=i["id"], kind=i["kind"], decision=i["decision"], accession=i["accession"],
                      has_sra="Yes" if r.get("sra_accession") else "No",
-                     integrity="불일치" if ag.get("conflict") else ("표기차이" if ag.get("cosmetic") else "일치"),
+                     integrity=("불일치" if ag.get("conflict") else "표기차이" if ag.get("cosmetic") else "선택 완료" if ag.get("chosen") else "일치"),
+                     chosen_fields=", ".join(sorted(ag.get("chosen", []))),
                      seq={"same": "서열 동일", "diff": "서열 다름", "other": "확인 불가"}.get(ag.get("seq"), "미검증"),
                      conflict_fields=", ".join(sorted(ag.get("conflict", []))))
             if i["kind"] == "changed":

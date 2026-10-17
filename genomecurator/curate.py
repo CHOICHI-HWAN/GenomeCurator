@@ -6,7 +6,7 @@ import shutil
 from pathlib import Path
 from datetime import datetime
 
-from . import config, log, reconcile, seqcheck, sources
+from . import config, log, reconcile, resolve, seqcheck, sources
 from .db import audit, connect, tx
 
 GENOME_COLS = [
@@ -71,6 +71,13 @@ def source_agreement(watch_id: int) -> dict[str, dict]:
             d = out.setdefault(acc, blank())
             d["conflict"] -= d["resolved"] - {f for f in d["conflict"] if f not in seqcheck.SEQ_FIELDS}
             d["seq"] = "same" if v["same"] else ("diff" if v["diff"] else "other")
+        for acc, fields in resolve.load_choices(con, watch_id).items():   # a field a person has decided is no longer open
+            d = out.get(acc)
+            if d is None:
+                continue
+            d["chosen"] = set(fields)
+            d["conflict"] -= set(fields)
+            d["cosmetic"] -= set(fields)
         return out
     finally:
         con.close()
@@ -201,8 +208,9 @@ def delete_watch(watch_id: int) -> dict:
 
 
 # ---------------------------------------------------------------------- merge
-def merge(per_source: dict[str, dict[str, dict]]) -> dict[str, tuple[dict, dict]]:
-    """NCBI defines the accession set; other sources enrich. -> {acc: (record, provenance)}"""
+def merge(per_source: dict[str, dict[str, dict]], choices: dict[str, dict[str, dict]] | None = None) -> dict[str, tuple[dict, dict]]:
+    """NCBI defines the accession set; other sources enrich. -> {acc: (record, provenance)}.
+    `choices` {accession: {field: {source, value}}} are a person's decisions (resolve.py): they win over the source priority."""
     merged = {}
     for acc in per_source["ncbi"]:
         rec, prov = {}, {}
@@ -212,6 +220,15 @@ def merge(per_source: dict[str, dict[str, dict]]) -> dict[str, tuple[dict, dict]
                     v = "; ".join(str(x) for x in v)
                 if k not in rec and v not in (None, ""):
                     rec[k], prov[k] = v, src
+        for field, ch in ((choices or {}).get(acc) or {}).items():
+            if ch["source"] == "custom":
+                rec[field], prov[field] = resolve._coerce(field, ch["value"]), "manual"
+            else:   # the chosen source's CURRENT value; if it no longer has one, the priority merge stands
+                v = per_source.get(ch["source"], {}).get(acc, {}).get(field)
+                if isinstance(v, (list, tuple, set)):
+                    v = "; ".join(str(x) for x in v)
+                if v not in (None, ""):
+                    rec[field], prov[field] = v, ch["source"]
         merged[acc] = (rec, prov)
     return merged
 
@@ -270,7 +287,7 @@ def _check(watch_name: str, progress=None) -> int | None:
         if not per_source["ncbi"]:
             raise SystemExit(f"NCBI returned no records for '{w['taxon']}' (taxon {w['taxon_id']}); check that the watch is a virus taxon. "
                              "Refusing to compute removals")
-        merged = merge(per_source)
+        merged = merge(per_source, resolve.load_choices(con, w["id"]))
         local = {r["accession"]: dict(r) for r in
                  con.execute("SELECT * FROM genome WHERE watch_id=?", (w["id"],))}
         rejected = {r[0] for r in con.execute(
