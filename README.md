@@ -381,11 +381,11 @@ python scripts/demo/make_gifs.py explore       # quickstart가 만든 데이터�
 
 ## 버전과 변경 이력
 
-현재 버전은 **0.1.0** 입니다. 버전은 `genomecurator/__init__.py` 한 곳에서만 정하고, 화면 하단·`/api/version`·`--version`에 보입니다.
+현재 버전은 **0.2.0** 입니다. 버전은 `genomecurator/__init__.py` 한 곳에서만 정하고, 화면 하단·`/api/version`·`--version`에 보입니다.
 또한 **DB·changeset·백업**이 "어느 버전이 만들었는지"를 기록하므로, 나중에 이 데이터가 어느 코드에서 나왔는지 추적할 수 있습니다.
 
 ```bash
-python -m genomecurator --version      # genomecurator 0.1.0 (DB schema 1)
+python -m genomecurator --version      # genomecurator 0.2.0 (DB schema 1)
 ```
 
 * 변경 이력: [CHANGELOG.ko.md](CHANGELOG.ko.md) (한국어) · [CHANGELOG.md](CHANGELOG.md) (English)

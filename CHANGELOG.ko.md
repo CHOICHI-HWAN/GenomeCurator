@@ -11,6 +11,11 @@ Virus Genome Metadata Curator(패키지 `genomecurator`, 이전 표시 이름 "G
 
 ## [Unreleased]
 
+## [0.2.0] - 2026-10-17
+
+유전체의 완성도와 소스끼리의 불일치를 *바로 손볼 수 있는* 것으로 만든 버전입니다: Near complete 등급, 추천과 함께 소스의 값 중에서 고르는 기능, 스키마 점검을 읽는 두 가지 방법.
+도구가 **바이러스 전용**임도 분명히 했습니다.
+
 ### 변경
 - 호스트가 괄호 속 일반명만 다른 경우(`Sus scrofa` ↔ `Sus scrofa (pig)`)는 이제 불일치가 아니라 *표기 차이*입니다.
 - **범위와 이름.** 이 도구는 **바이러스 전용**입니다(NCBI Virus, BV-BRC, Pathoplexus). 세균은 어셈블리(contig 여러 개)이고 서열이 수 Mb라서 **별도 프로젝트**로 만듭니다.
@@ -44,6 +49,14 @@ Virus Genome Metadata Curator(패키지 `genomecurator`, 이전 표시 이름 "G
 
 ### 수정
 - 스키마 점검이 객체 목록(NCBI 레코드의 lineage 등)의 채움 비율을 100% 넘게 보고하던 문제: 목록의 원소마다 세던 것을 레코드당 한 번으로 고쳤습니다.
+
+### 데이터·호환성
+- 스키마 버전은 **1** 그대로입니다. DB 변경은 새 테이블 `field_choice`(소스 값 중 사람이 고른 선택) 하나뿐이고, 0.2.0이 DB를 처음 열 때 자동으로 만들어지며 기존 것은 바뀌지 않습니다.
+  0.1.0 백업은 0.2.0에 복원되고, 0.2.0 백업에는 `field_choice`가 들어갑니다.
+- 분석용 뷰 `v_genome_analysis`에 `completeness`, `ref_coverage_pct`, `ref_length` 열이 늘었습니다. Superset에서는 `scripts/superset.sh bootstrap`을 한 번 실행해 데이터셋을 새로고침하면 보입니다.
+  뷰는 Near complete 기준 비율을 `app_meta.near_complete_pct`에서 읽으며, 앱이 `GC_NEAR_COMPLETE_PCT`와 맞춰 둡니다.
+- 새 환경변수: `GC_NEAR_COMPLETE_PCT`(기본 90).
+- NCBI가 *Partial*로 표시한 유전체가 *Near complete*로 보일 수 있습니다. 저장된 값을 고쳐 쓰는 것은 아니고 보여 줄 때 계산합니다. NCBI 상태는 별도 열로 그대로 남아 있습니다.
 
 ## [0.1.0] - 2026-10-17
 
@@ -124,5 +137,6 @@ Virus Genome Metadata Curator(패키지 `genomecurator`, 이전 표시 이름 "G
 - 서열 본문이 같다는 것은 두 레코드가 같은 대상이라는 증명이지, 숙주·날짜 같은 메타데이터가 맞다는 증명은 아닙니다.
 - 스케줄러(매일 점검)는 서버가 켜져 있는 동안에만 돕니다.
 
-[Unreleased]: https://github.com/CHOICHI-HWAN/GenomeCurator/compare/v0.1.0...HEAD
+[Unreleased]: https://github.com/CHOICHI-HWAN/GenomeCurator/compare/v0.2.0...HEAD
+[0.2.0]: https://github.com/CHOICHI-HWAN/GenomeCurator/compare/v0.1.0...v0.2.0
 [0.1.0]: https://github.com/CHOICHI-HWAN/GenomeCurator/releases/tag/v0.1.0

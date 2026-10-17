@@ -11,6 +11,11 @@ re-pinned (the full list with licences is in [docs/DEPENDENCIES.md](docs/DEPENDE
 
 ## [Unreleased]
 
+## [0.2.0] - 2026-10-17
+
+Makes the quality of a genome and the disagreement between sources something you can *act on*: a Near complete class, a way to choose between the
+sources' values with a suggestion, and two ways to read the schema check. The tool is now explicitly for viruses only.
+
 ### Changed
 - A host that differs only by a common name in parentheses (`Sus scrofa` vs `Sus scrofa (pig)`) is now a *cosmetic* difference, not a conflict.
 - **Scope and name.** The tool is for **viruses only** (NCBI Virus, BV-BRC, Pathoplexus); bacteria will be a separate project because genomes there are
@@ -50,6 +55,14 @@ re-pinned (the full list with licences is in [docs/DEPENDENCIES.md](docs/DEPENDE
 ### Fixed
 - The schema check reported a fill rate above 100% for lists of objects (such as the lineage of an NCBI record) because each list element was counted;
   a record now counts once.
+
+### Data & compatibility
+- Schema version stays **1**. The only database change is the new table `field_choice` (your choices between source values), created automatically the first time
+  0.2.0 opens a database; nothing existing is altered. A 0.1.0 backup restores into 0.2.0, and 0.2.0 backups include `field_choice`.
+- The analysis view `v_genome_analysis` gained the columns `completeness`, `ref_coverage_pct` and `ref_length`. In Superset run `scripts/superset.sh bootstrap` once
+  to refresh the dataset and see them. The view reads the Near complete threshold from `app_meta.near_complete_pct`, which the app keeps in step with `GC_NEAR_COMPLETE_PCT`.
+- New environment variable: `GC_NEAR_COMPLETE_PCT` (default 90).
+- Genomes that NCBI marks *Partial* may now read *Near complete*; nothing is rewritten, the class is computed when shown. The NCBI status is still available as its own column.
 
 ## [0.1.0] - 2026-10-17
 
@@ -141,5 +154,6 @@ that the sources agree with each other, with the sequences, and with the code's 
 - Identical sequence bodies prove two records are the same entity; they do not prove that host, date or other metadata is correct.
 - The scheduler (daily checks) runs only while the server is running.
 
-[Unreleased]: https://github.com/CHOICHI-HWAN/GenomeCurator/compare/v0.1.0...HEAD
+[Unreleased]: https://github.com/CHOICHI-HWAN/GenomeCurator/compare/v0.2.0...HEAD
+[0.2.0]: https://github.com/CHOICHI-HWAN/GenomeCurator/compare/v0.1.0...v0.2.0
 [0.1.0]: https://github.com/CHOICHI-HWAN/GenomeCurator/releases/tag/v0.1.0

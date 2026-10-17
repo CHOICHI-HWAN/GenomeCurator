@@ -209,3 +209,7 @@ Windows에서 `git`이 PATH에 없으면 `C:\Program Files\Git\cmd\git.exe`로 �
 - 고친 문제: 일괄 적용이 쓰기 트랜잭션을 연 채 서열 검증 결과를 읽으려고 다른 연결을 열어 "database is locked"가 났다(WAL에서 읽기 스냅샷이 낡은 연결은 쓰기로 올라갈 수 없음). 쓰기 전에 읽도록 순서를 바꿨다 — 중첩 `connect()`는 쓰기 트랜잭션 안에서 부르지 말 것.
 - 한계: 필드별 도메인 지식은 최소만 넣었다(학명 동의어·어휘 매핑은 없음). 소스가 둘뿐인 바이러스는 대부분 "낮음"이다. 소스 3곳(Pathoplexus가 있는 바이러스)이면 다수결이 가능해 "보통"이 늘어난다.
 
+## 릴리스 v0.2.0 (2026-10-17)
+- 담은 것: Near complete 등급, 소스 값 중 고르기(추천·신뢰도·Auto-pick, `field_choice`), 스키마 탭의 간단히 보기와 테이블 구조도, 바이러스 전용 범위와 표시 이름(Virus Genome Metadata Curator). 자세한 내용은 `CHANGELOG`.
+- DB 스키마 버전은 1 그대로(`field_choice`는 추가형). 의존성 변경 없음.
+- 절차는 `docs/RELEASING.md`대로: CHANGELOG(한·영) 정리 → `__version__` → 테스트 → 릴리스 커밋 → 주석 태그 `v0.2.0` → push(커밋+태그). 워크플로 파일을 바꾼 커밋(CI)은 릴리스 커밋 **뒤**에 두어야 `workflow` 권한 없이 태그를 올릴 수 있다.
