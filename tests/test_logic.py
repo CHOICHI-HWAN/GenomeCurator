@@ -520,3 +520,13 @@ def test_schema_check_does_not_cry_wolf_about_sparse_fields_or_legacy_baselines(
     legacy = {p: dict(v) for p, v in sc.profile(base).items()}
     legacy["length"]["fill"] = 5.0
     assert sc._compare("ncbi", sc.profile(base), read, legacy, sh, ["reports"], n=100) == []
+
+
+def test_old_schema_reports_still_render_after_the_code_grows():
+    """A board saved before the simple view existed has no column grouping; reading it must not break the Schema tab."""
+    from genomecurator import schema_check as sc
+    old = {"board": {"local": {"columns": [{"name": "genome_length", "status": "ok", "feeders": []}, {"name": "weird_new_col", "status": "internal"}]}}}
+    cols = sc.upgrade_report(old)["board"]["local"]["columns"]
+    assert cols[0]["group"] == "유전체" and cols[0]["group_order"] == 2
+    assert cols[1]["group"] == "기타" and cols[1]["feeders"] == [] and cols[1]["msg"] == ""
+    assert sc.upgrade_report({"verdict": "ok"}) == {"verdict": "ok"}        # a report without a board is untouched

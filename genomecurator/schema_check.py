@@ -648,6 +648,19 @@ def alert() -> dict | None:
     return rep if rep and rep.get("verdict") in ("update", "review") else None
 
 
+def upgrade_report(rep: dict) -> dict:
+    """Reports are history and must keep rendering after the code grows: fill in what a report written by older code lacks
+    (e.g. the column grouping of the simple view was added after the first boards were saved)."""
+    for c in (rep.get("board") or {}).get("local", {}).get("columns", []):
+        if "group_order" not in c:
+            gi = next((i for i, (_, names) in enumerate(COLUMN_GROUPS) if c["name"] in names), len(COLUMN_GROUPS))
+            c["group_order"] = gi
+            c["group"] = COLUMN_GROUPS[gi][0] if gi < len(COLUMN_GROUPS) else "기타"
+        c.setdefault("feeders", [])
+        c.setdefault("msg", "")
+    return rep
+
+
 def latest() -> dict | None:
     con = connect()
     try:
@@ -655,7 +668,7 @@ def latest() -> dict | None:
             rep = json.loads(rj)
             if rep.get("mode", "full") != "daily":
                 rep.pop("_snapshots", None)
-                return rep
+                return upgrade_report(rep)
         return None
     finally:
         con.close()
