@@ -1,7 +1,7 @@
 # Apache Superset으로 메타데이터 다차원 분석
 
-GenomeCurator DB를 **읽기 전용**으로 연결해 Superset에서 바이러스·숙주·국가·수집 연도·clade 등 여러 축으로 분석한다.
-Superset은 별도 conda 환경(`gc-superset`, Python 3.11)에서 돌고, GenomeCurator 환경과 섞이지 않는다.
+Virus Genome Curator DB를 **읽기 전용**으로 연결해 Superset에서 바이러스·숙주·국가·수집 연도·clade 등 여러 축으로 분석한다.
+Superset은 별도 conda 환경(`gc-superset`, Python 3.11)에서 돌고, `genomecurator` 환경과 섞이지 않는다.
 
 ## 구성
 - `v_genome_analysis` (SQLite 뷰, `db.ANALYSIS_VIEW`): genome + watchlist + FASTA 유무를 한 줄로 평탄화.

@@ -130,8 +130,8 @@ def record_version(con: sqlite3.Connection) -> None:
         con.execute("INSERT OR IGNORE INTO app_meta(key, value) VALUES('first_version', ?)", (prev or __version__,))
         for k, v in (("app_version", __version__), ("db_schema_version", str(DB_SCHEMA_VERSION))):
             con.execute("INSERT INTO app_meta(key, value, updated) VALUES(?,?,CURRENT_TIMESTAMP) ON CONFLICT(key) DO UPDATE SET value=excluded.value, updated=CURRENT_TIMESTAMP", (k, v))
-        audit(con, "version", f"GenomeCurator {__version__} (DB schema {DB_SCHEMA_VERSION})" + (f" - 이전 {prev}" if prev else " - 이 데이터베이스를 처음 열었습니다"))
-        log.get("db").info("database now handled by GenomeCurator %s (was %s)", __version__, prev or "new")
+        audit(con, "version", f"Virus Genome Curator {__version__} (DB schema {DB_SCHEMA_VERSION})" + (f" - 이전 {prev}" if prev else " - 이 데이터베이스를 처음 열었습니다"))
+        log.get("db").info("database now handled by Virus Genome Curator %s (was %s)", __version__, prev or "new")
     _recorded.add(key)
 
 

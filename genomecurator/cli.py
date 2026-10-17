@@ -23,7 +23,7 @@ def _main(argv=None):
     log.setup()
     from . import DB_SCHEMA_VERSION, __version__
     p = argparse.ArgumentParser(prog="genomecurator")
-    p.add_argument("--version", action="version", version=f"genomecurator {__version__} (DB schema {DB_SCHEMA_VERSION})")
+    p.add_argument("--version", action="version", version=f"genomecurator {__version__} (Virus Genome Metadata Curator, DB schema {DB_SCHEMA_VERSION})")
     sub = p.add_subparsers(dest="cmd", required=True)
     a = sub.add_parser("watch-add", help="register a virus (taxon name or id)")
     a.add_argument("name")

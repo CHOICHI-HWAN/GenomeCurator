@@ -210,7 +210,7 @@ def _item_ids(form) -> list[int]:
 
 def create_app(scheduler: bool = True) -> FastAPI:
     log.setup()
-    app = FastAPI(title="GenomeCurator")
+    app = FastAPI(title="Virus Genome Metadata Curator")
 
     def pending_count():
         return pending_total()

@@ -1,6 +1,6 @@
 # 변경 이력 (Changelog)
 
-GenomeCurator의 눈에 띄는 변경은 모두 여기에 기록합니다. 형식은 [Keep a Changelog](https://keepachangelog.com/ko/1.1.0/)를,
+Virus Genome Metadata Curator(패키지 `genomecurator`, 이전 표시 이름 "GenomeCurator")의 눈에 띄는 변경은 모두 여기에 기록합니다. 형식은 [Keep a Changelog](https://keepachangelog.com/ko/1.1.0/)를,
 버전은 [유의적 버전(SemVer)](https://semver.org/lang/ko/)을 따릅니다 (메이저가 0인 동안은 마이너 버전이 올라갈 때 동작이 바뀔 수 있고,
 패치 버전은 버그 수정만 합니다). 릴리스 방법은 [docs/RELEASING.md](docs/RELEASING.md).
 **English:** [CHANGELOG.md](CHANGELOG.md)
@@ -10,6 +10,11 @@ GenomeCurator의 눈에 띄는 변경은 모두 여기에 기록합니다. 형�
 [docs/DEPENDENCIES.md](docs/DEPENDENCIES.md)).
 
 ## [Unreleased]
+
+### 변경
+- **범위와 이름.** 이 도구는 **바이러스 전용**입니다(NCBI Virus, BV-BRC, Pathoplexus). 세균은 어셈블리(contig 여러 개)이고 서열이 수 Mb라서 **별도 프로젝트**로 만듭니다.
+  "genome"이 *사람 유전체*로 읽히지 않도록 화면에 보이는 이름을 **Virus Genome Metadata Curator**(페이지 헤더·제목·안내문은 **Virus Genome Curator**)로 바꿨습니다.
+  저장소, 파이썬 패키지 `genomecurator`, 명령어, 데이터 폴더, 환경변수, 백업 형식 식별자는 **그대로**라서 옮길 것이 없습니다.
 
 ### 추가
 - **스키마** 탭의 **간단히 보기**(기본, 탭으로 아래 자세한 구조도와 전환): 내 `genome` 열을 행, NCBI / BV-BRC / Pathoplexus를 열로 놓은 표 하나에

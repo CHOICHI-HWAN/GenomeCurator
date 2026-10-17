@@ -76,7 +76,7 @@ def setup(console: bool = True) -> None:
         root.addHandler(ch)
     _ready = True
     from . import __version__
-    get("log").info("logging started: GenomeCurator %s (file level %s) -> %s", __version__, os.environ.get("GC_LOG_LEVEL", "INFO").upper(), log_dir())
+    get("log").info("logging started: Virus Genome Curator %s (file level %s) -> %s", __version__, os.environ.get("GC_LOG_LEVEL", "INFO").upper(), log_dir())
 
 
 def tail(n: int = 200, level: str = "") -> list[str]:

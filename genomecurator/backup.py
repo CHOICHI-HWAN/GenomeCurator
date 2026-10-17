@@ -70,12 +70,12 @@ def restore_backup(src: str | Path, force: bool = False) -> dict:
         try:
             manifest = json.loads(z.read("manifest.json").decode("utf-8"))
         except KeyError:
-            raise ValueError("backup manifest.json 이(가) 없습니다. GenomeCurator 백업 파일이 아닌 것 같습니다.") from None
+            raise ValueError("backup manifest.json 이(가) 없습니다. Virus Genome Curator 백업 파일이 아닌 것 같습니다.") from None
         if manifest.get("format") != "genomecurator-backup":
-            raise ValueError("GenomeCurator 백업 파일이 아닙니다.")
+            raise ValueError("Virus Genome Curator 백업 파일이 아닙니다.")
         from . import DB_SCHEMA_VERSION, __version__
         if int(manifest.get("db_schema_version") or 0) > DB_SCHEMA_VERSION:
-            raise ValueError(f"이 백업은 더 새로운 GenomeCurator({manifest.get('app_version')}, DB 스키마 {manifest.get('db_schema_version')})로 만들어졌습니다. "
+            raise ValueError(f"이 백업은 더 새로운 Virus Genome Curator({manifest.get('app_version')}, DB 스키마 {manifest.get('db_schema_version')})로 만들어졌습니다. "
                              f"현재 {__version__}(DB 스키마 {DB_SCHEMA_VERSION})에서는 열 수 없으니 먼저 업데이트하세요.")
         if config.DB_PATH.exists() and not force:
             raise FileExistsError(f"{config.DB_PATH} 이(가) 이미 있습니다. 덮어쓰려면 --force (기존 데이터는 사라집니다).")
@@ -89,7 +89,7 @@ def restore_backup(src: str | Path, force: bool = False) -> dict:
                         if p.exists():
                             p.unlink()
                     except PermissionError:
-                        raise RuntimeError("데이터베이스가 사용 중입니다. 실행 중인 GenomeCurator 앱을 종료한 뒤 다시 시도하세요.") from None
+                        raise RuntimeError("데이터베이스가 사용 중입니다. 실행 중인 Virus Genome Curator 앱을 종료한 뒤 다시 시도하세요.") from None
                 with z.open(name) as fh, open(config.DB_PATH, "wb") as out:
                     out.write(fh.read())
             elif name.startswith("genomes/") and name.endswith(".fna"):

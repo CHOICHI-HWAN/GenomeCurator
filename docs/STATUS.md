@@ -1,4 +1,4 @@
-# GenomeCurator 진행 상황 / 이어서 작업하기
+# Virus Genome Curator 진행 상황 / 이어서 작업하기
 
 임시 환경에서 작업하므로 이 문서와 저장소만 있으면 어디서든 이어갈 수 있습니다.
 
@@ -189,4 +189,9 @@ Windows에서 `git`이 PATH에 없으면 `C:\Program Files\Git\cmd\git.exe`로 �
 - 시연용 가짜 드리프트는 `scripts/demo/demo_server.py`(깃 추적, 실제 앱 영향 없음). `03-schema.gif`를 구조도 중심으로 다시 녹화했다.
 - 아직 릴리스하지 않았다(`CHANGELOG`의 [Unreleased]). 다음 릴리스는 새 기능이므로 0.2.0이 맞다.
 - **간단히 보기**(스키마 탭 기본, 탭으로 구조도와 전환, 선택은 `localStorage gcSchemaView`): 열 × 소스 표(`schema.html`의 `#v-simple`), 확인이 필요한 열을 위에 모으고, 열 묶음은 `schema_check.COLUMN_GROUPS`(화면용 분류일 뿐 연결은 측정값). 구조도는 `#v-board`에 그대로 두었다. `03-schema.gif`는 간단히 → 구조도 → 드리프트 순서로 다시 녹화.
+
+## 범위·이름 결정 (2026-10-17)
+- **바이러스 전용으로 확정.** 세균(어셈블리 단위·contig 여러 개·수 Mb 서열·종당 수십만 건)은 레코드 단위와 정합성 검증 방식이 달라서 이 프로젝트에 넣지 않고 **새 프로젝트**로 만든다. 세균 설계 때 참고: NCBI Datasets 일반 유전체 엔드포인트, BV-BRC(MLST·AMR 강점), 어셈블리 수준·RefSeq 필터, 서열은 요청 시에만 받기.
+- 표시 이름: 정식 `Virus Genome Metadata Curator`, 짧게 `Virus Genome Curator`(헤더·푸터·제목). **코드 이름은 그대로**(패키지 `genomecurator`, 명령어, 저장소 `GenomeCurator`, 데이터 폴더 `GenomeCurator`, `GC_*`, 백업 식별자 `genomecurator-backup`, Superset 대시보드 제목 `GenomeCurator 메타데이터 분석`). 코드까지 바꾸려면 데이터 폴더 이전·옛 명령어 별칭·백업 식별자 호환이 필요해 별도 릴리스로 미룬다(0.2.0 이후 검토).
+- 공개 페이지(`docs/index.html`)의 제목은 다음 "배포하기" 때 새 이름으로 바뀐다.
 

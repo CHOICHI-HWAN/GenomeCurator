@@ -1,6 +1,6 @@
 <!doctype html>
 <html lang="ko"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
-<title>GenomeCurator — Virus Genome Catalog</title>
+<title>Virus Genome Curator — Virus Genome Catalog</title>
 <meta name="description" content="Read-only snapshot of virus genome metadata curated from NCBI Virus, Pathoplexus and BV-BRC.">
 <style>
 :root{--bg:#eef1f5;--fg:#27303a;--mut:#6b7785;--card:#fff;--bd:#d5dbe3;--acc:#2f79b5;--ok:#1a7f37;--bad:#c62828;--warn:#9a6700;--bvg:#76a72b;
@@ -72,7 +72,7 @@ footer{max-width:1500px;margin:6px auto 24px;padding:0 14px;color:var(--mut);fon
 #ppxdrawer .dh a,#ppxdrawer .dh button{color:#fff;background:none;border:1px solid #fff8;border-radius:3px;padding:2px 8px;font-size:12px;text-decoration:none;cursor:pointer}
 #ppxdrawer iframe{flex:1;border:0;width:100%;background:#fff}#ppxdrawer .dn{padding:6px 12px;font-size:12px;color:var(--mut)}
 </style></head><body>
-<header><span class="logo">Genome<i>Curator</i></span>
+<header><span class="logo">Virus Genome <i>Curator</i></span>
  <a data-v="overview">Overview</a><a data-v="genomes">Genomes</a><a data-v="about">About</a>
  <span class="sp"></span><select id="vsel" title="Virus"></select></header>
 <main>
@@ -247,7 +247,7 @@ function genomes(preset){
 }
 
 /* ---------------- About ---------------- */
-function about(){$('#v-about').innerHTML=`<div class="card"><h3>GenomeCurator</h3>
+function about(){$('#v-about').innerHTML=`<div class="card"><h3>Virus Genome Metadata Curator</h3>
  <p>바이러스 유전체 메타데이터를 NCBI Virus, Pathoplexus, BV-BRC에서 모아 BV-BRC 형식으로 정리하고, 변경 사항을 사람이 검토·승인한 뒤에만 반영하는 큐레이션 도구입니다.
  이 페이지는 그 결과를 <b>읽기 전용</b>으로 보여 주는 정적 스냅샷입니다. 수집·검토·반영 기능은 포함되어 있지 않습니다.</p>
  <h3 style="margin-top:16px">데이터 출처와 우선순위</h3>

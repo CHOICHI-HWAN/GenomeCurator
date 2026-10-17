@@ -1,6 +1,6 @@
 # Changelog
 
-All notable changes to GenomeCurator are recorded here. The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
+All notable changes to Virus Genome Metadata Curator (package `genomecurator`, formerly shown as "GenomeCurator") are recorded here. The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and versions follow [Semantic Versioning](https://semver.org/) (while the major version is 0, a minor bump may change behaviour;
 a patch bump only fixes bugs). How a release is made: [docs/RELEASING.md](docs/RELEASING.md).
 **한국어:** [CHANGELOG.ko.md](CHANGELOG.ko.md)
@@ -10,6 +10,12 @@ anything that touches the database, backups or curated data (so you know before 
 re-pinned (the full list with licences is in [docs/DEPENDENCIES.md](docs/DEPENDENCIES.md)).
 
 ## [Unreleased]
+
+### Changed
+- **Scope and name.** The tool is for **viruses only** (NCBI Virus, BV-BRC, Pathoplexus); bacteria will be a separate project because genomes there are
+  assemblies made of many contigs and are megabases long. To stop "genome" from being read as *human genome*, the displayed name is now
+  **Virus Genome Metadata Curator** (**Virus Genome Curator** in the page header, titles and messages). The repository, the Python package `genomecurator`, the
+  command line, the data folder, environment variables and the backup format identifier are **unchanged**, so nothing needs migrating.
 
 ### Added
 - **Simple view** on the **Schema** tab (the default; a tab switches to the detailed board below): one table with the local `genome` columns as rows and
