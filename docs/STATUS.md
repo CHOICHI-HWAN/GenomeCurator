@@ -188,4 +188,5 @@ Windows에서 `git`이 PATH에 없으면 `C:\Program Files\Git\cmd\git.exe`로 �
 - `_compare`/`field_map`은 이번 실행의 읽기 기록 ∪ 지난 기준의 읽기 기록을 쓴다(읽기 기록은 데이터에 따라 달라짐). 채움 비율은 레코드당 한 번만 센다(이전에는 목록 원소마다 세어 500%가 나왔다).
 - 시연용 가짜 드리프트는 `scripts/demo/demo_server.py`(깃 추적, 실제 앱 영향 없음). `03-schema.gif`를 구조도 중심으로 다시 녹화했다.
 - 아직 릴리스하지 않았다(`CHANGELOG`의 [Unreleased]). 다음 릴리스는 새 기능이므로 0.2.0이 맞다.
+- **간단히 보기**(스키마 탭 기본, 탭으로 구조도와 전환, 선택은 `localStorage gcSchemaView`): 열 × 소스 표(`schema.html`의 `#v-simple`), 확인이 필요한 열을 위에 모으고, 열 묶음은 `schema_check.COLUMN_GROUPS`(화면용 분류일 뿐 연결은 측정값). 구조도는 `#v-board`에 그대로 두었다. `03-schema.gif`는 간단히 → 구조도 → 드리프트 순서로 다시 녹화.
 

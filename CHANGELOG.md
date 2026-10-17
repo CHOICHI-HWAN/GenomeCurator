@@ -12,7 +12,10 @@ re-pinned (the full list with licences is in [docs/DEPENDENCIES.md](docs/DEPENDE
 ## [Unreleased]
 
 ### Added
-- **Table structure board** on the **Schema** tab: the fields of NCBI (nested objects kept as groups), BV-BRC and Pathoplexus on the left, the columns of
+- **Simple view** on the **Schema** tab (the default; a tab switches to the detailed board below): one table with the local `genome` columns as rows and
+  NCBI / BV-BRC / Pathoplexus as columns, each cell naming the source field that fills the column, coloured by status. Columns that need attention are
+  listed on top with the source field to look at; columns are grouped (identity, taxonomy, genome, sample, dates, external IDs). The choice of view is remembered.
+- **Table structure board** (the detailed view) on the **Schema** tab: the fields of NCBI (nested objects kept as groups), BV-BRC and Pathoplexus on the left, the columns of
   the local `genome` table on the right, joined by lines that show which source field fills which column. The links are *measured*, not declared:
   the real adapters are run on a row holding one field at a time, and the columns that change are the ones it feeds (so fallbacks such as
   "A, else B" and one field feeding two columns are found too). Vanished fields turn red, the columns they fed turn orange (a warning when

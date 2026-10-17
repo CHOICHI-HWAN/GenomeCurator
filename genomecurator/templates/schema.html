@@ -31,6 +31,18 @@
 details.unused summary{cursor:pointer;color:var(--mut);font-size:12.5px;margin-top:6px}
 .btools{display:flex;gap:16px;flex-wrap:wrap;align-items:center;margin:4px 0 2px;font-size:13px}.btools label{cursor:pointer}
 .bleg span{margin-right:12px;white-space:nowrap}.bleg i{display:inline-block;width:12px;height:12px;border-left:4px solid;margin-right:4px;vertical-align:-2px;background:var(--stripe)}
+
+.vtabs{display:flex;gap:0;margin:6px 0 10px}.vt{border-radius:0;height:32px;padding:0 16px;background:var(--card)}.vt:first-child{border-radius:4px 0 0 4px}.vt:last-child{border-radius:0 4px 4px 0;margin-left:-1px}
+.vt.on{background:var(--acc);color:#fff;border-color:var(--acc)}
+.sm{max-width:880px}.sm th,.sm td{padding:3px 10px}.sm td.src{width:25%}.sm tr.gh td{background:var(--th);font-weight:600;font-size:12px;color:var(--mut);padding:2px 10px}
+.sm tr.st-warn td.nm{border-left:4px solid var(--warn);background:rgba(210,153,34,.14)}.sm tr.st-fail td.nm{border-left:4px solid var(--bad);background:rgba(198,40,40,.14)}.sm tr.st-ok td.nm{border-left:4px solid var(--ok)}
+.sm td.nm{font:12.5px Consolas,Menlo,monospace}.sm .none{color:var(--bd);text-align:center}
+.cl{display:inline-block;font:12px/1.5 Consolas,Menlo,monospace;padding:0 8px;border-radius:9px;border:1px solid var(--bd);white-space:nowrap}
+.cl.st-ok{border-color:var(--ok);color:var(--ok)}.cl.st-warn{border-color:var(--warn);background:rgba(210,153,34,.2);color:var(--fg);animation:none}.cl.st-fail{border-color:var(--bad);background:rgba(198,40,40,.22);color:var(--fg)}
+.cl.st-new{border-color:var(--acc)}.cl.st-unseen{border-style:dashed;color:var(--mut)}
+.sg{display:flex;gap:10px;flex-wrap:wrap;margin:2px 0 10px}.sg .sc{background:var(--card);border:1px solid var(--bd);border-radius:5px;padding:6px 12px;min-width:170px}.sg .sc.st-fail{border-color:var(--bad);box-shadow:0 0 0 1px var(--bad);animation:none;background:var(--card)}.sg .sc.st-warn{border-color:var(--warn);background:var(--card)}
+.sg .sc b{font-size:14px}.sg .sc small{display:block;color:var(--mut);font-size:12px}
+.sp{border-left:5px solid var(--warn);background:var(--card);border-radius:3px;padding:8px 12px;margin:4px 0 12px}.sp.f{border-left-color:var(--bad)}.sp li{margin:2px 0}
 .bdetail{position:sticky;top:6px;z-index:6;background:var(--card);border:1px solid var(--acc);border-radius:4px;padding:8px 12px;min-height:44px;font-size:13px;margin:6px 0;box-shadow:0 4px 14px rgba(0,0,0,.18)}.bdetail code{font-size:12.5px}
 </style>
 <div class="pagehead"><h2>스키마 점검</h2><span class="mut">NCBI·BV-BRC·Pathoplexus와 로컬 DB의 구조가 바뀌지 않았는지 확인합니다 (dry-run)</span></div>
@@ -54,7 +66,28 @@ details.unused summary{cursor:pointer;color:var(--mut);font-size:12.5px;margin-t
  <small>코드가 읽는 필드 {{ i.read }}개 · 샘플 {{ i.sample }}건 ({{ i.sample_of }})</small><small>이전 기준: {{ i.previous or '없음(이번에 저장)' }}</small></div>{% endfor %}</div>
 
 {% if rep.board %}{% set bd = rep.board %}
-<h3>테이블 구조도 <span class="mut" style="font-weight:400;font-size:13px">— 소스의 필드가 내 <code>genome</code> 열로 어떻게 이어지는지, 어디에 이상이 있는지</span></h3>
+<h3>테이블 구조 <span class="mut" style="font-weight:400;font-size:13px">— 소스의 필드가 내 <code>genome</code> 열을 어떻게 채우는지, 어디에 이상이 있는지</span></h3>
+<div class="vtabs"><button type="button" class="vt on" data-v="simple">간단히 보기</button><button type="button" class="vt" data-v="board">자세히 (구조도)</button></div>
+<div id="v-simple">
+ {% set cols = bd.local.columns %}{% set n_fail = cols | selectattr('status','equalto','fail') | list | length %}{% set n_warn = cols | selectattr('status','equalto','warn') | list | length %}
+ {% set n_int = cols | selectattr('status','equalto','internal') | list | length %}{% set n_ok = cols | selectattr('status','equalto','ok') | list | length %}
+ <div class="sg">{% for src, sd in bd.sources.items() %}<div class="sc st-{{ sd.status }}"><b>{{ sd.label }}</b> <span class="sev {{ 'fail' if sd.status == 'fail' else 'warn' if sd.status == 'warn' else 'ok' }}">{{ {'ok': '정상', 'warn': '경고', 'fail': '오류'}[sd.status] }}</span><small>코드가 읽는 필드 {{ sd.n_read }}개 / 응답 {{ sd.n_fields }}개</small></div>{% endfor %}
+  <div class="sc"><b>내 genome 열</b><small><span class="ok">정상 {{ n_ok }}</span> · <span class="{{ 'warn' if n_warn }}">경고 {{ n_warn }}</span> · <span class="{{ 'fail' if n_fail }}">오류 {{ n_fail }}</span> · 앱이 채움 {{ n_int }}</small></div></div>
+ {% set probs = cols | rejectattr('status','in',['ok','internal']) | list %}
+ {% if probs %}<div class="sp {{ 'f' if n_fail }}"><b>확인이 필요한 열 {{ probs|length }}개</b><ul style="margin:4px 0 0;padding-left:18px">
+  {% for c in probs %}<li><code>{{ c.name }}</code> — {{ c.msg }}{% set bad = c.feeders | rejectattr('status','in',['ok','unused','new','unseen']) | list %}{% if bad %}: {% for f in bad %}{{ {'ncbi': 'NCBI', 'bvbrc': 'BV-BRC', 'pathoplexus': 'Pathoplexus'}[f.source] }} <code>{{ f.path }}</code>{{ ', ' if not loop.last }}{% endfor %}{% endif %}</li>{% endfor %}</ul></div>
+ {% else %}<div class="sp" style="border-left-color:var(--ok)"><b>모든 열이 정상입니다.</b> <span class="mut">코드가 읽는 필드는 모두 소스에 있고 값도 채워지고 있습니다.</span></div>{% endif %}
+ <table class="sm"><tr><th>내 genome 열</th><th>NCBI Virus</th><th>BV-BRC</th><th>Pathoplexus</th></tr>
+ {% for go, items in cols | rejectattr('status','equalto','internal') | groupby('group_order') %}<tr class="gh"><td colspan="4">{{ items[0].group }}</td></tr>
+  {% for c in items %}<tr class="st-{{ c.status }}"><td class="nm" title="{{ c.msg }}">{{ c.name }}</td>
+   {% for src in ['ncbi', 'bvbrc', 'pathoplexus'] %}{% set fs = c.feeders | selectattr('source','equalto',src) | list %}
+    {% if fs %}{% set stt = fs | map(attribute='status') | list %}{% set w = 'fail' if 'fail' in stt else 'warn' if 'warn' in stt else 'new' if 'new' in stt else 'unseen' if 'unseen' in stt else 'ok' %}
+    <td class="src"><span class="cl st-{{ w }}" title="{{ fs | map(attribute='path') | join(', ') }}">{{ fs[0].path.split('.')[-1] }}{% if fs|length > 1 %} +{{ fs|length - 1 }}{% endif %}</span></td>
+    {% else %}<td class="src none">·</td>{% endif %}{% endfor %}</tr>{% endfor %}{% endfor %}</table>
+ <p class="mut" style="font-size:12.5px;margin:6px 0 0">색 알약 안의 이름은 그 열을 채우는 <b>소스 필드</b>입니다(마우스를 올리면 전체 경로, <code>+1</code>은 필드가 더 있다는 뜻). <b style="color:var(--ok)">초록</b> 정상 · <b style="color:var(--warn)">주황</b> 경고 · <b style="color:var(--bad)">빨강</b> 오류 · <code>·</code> 이 소스는 그 열을 채우지 않음.
+  소스가 하나뿐인 열은 그 소스가 바뀌면 바로 영향을 받고, 여러 곳이 채우는 열은 한 곳이 아파도 다른 곳이 받쳐 줍니다. {{ n_int }}개 열(내부 id·날짜 등)은 앱이 직접 채워서 표에서 뺐습니다. 필드 단위로 선을 따라가려면 <b>자세히 (구조도)</b>를 누르세요.</p>
+</div>
+<div id="v-board" style="display:none">
 <div class="btools"><span class="bleg"><span><i style="border-color:var(--ok)"></i>정상</span><span><i style="border-color:var(--warn)"></i>경고 / 일부 소스 이상</span><span><i style="border-color:var(--bad)"></i>오류</span><span><i style="border-color:var(--acc)"></i>새 필드</span><span><i style="border-color:var(--mut);border-left-style:dashed"></i>샘플에 값 없음</span><span><i style="border-color:var(--bd)"></i>읽지 않음 / 앱이 채움</span></span>
  <label><input type="checkbox" id="bonly"> 문제 있는 연결만 강조</label><label><input type="checkbox" id="bunused"> 읽지 않는 필드도 펼치기</label></div>
 <p class="mut" style="margin:2px 0 6px;font-size:12.5px">왼쪽은 소스가 주는 필드(NCBI는 중첩 객체 그대로), 오른쪽은 내 DB의 <code>genome</code> 테이블입니다. 선은 <b>코드가 실제로 읽어서 그 열을 채우는 연결</b>이며 어댑터를 실행해 측정한 값입니다.
@@ -107,8 +140,17 @@ details.unused summary{cursor:pointer;color:var(--mut);font-size:12.5px;margin-t
  document.getElementById('bonly').onchange=e=>B.classList.toggle('only',e.target.checked);
  document.getElementById('bunused').onchange=e=>{B.querySelectorAll('details.unused').forEach(x=>x.open=e.target.checked);setTimeout(draw,30)};
  B.querySelectorAll('details.unused').forEach(x=>x.addEventListener('toggle',()=>setTimeout(draw,30)));
- window.addEventListener('resize',draw);requestAnimationFrame(()=>{draw();setTimeout(draw,300)});
+ window.__bdraw=draw;window.addEventListener('resize',draw);requestAnimationFrame(()=>{draw();setTimeout(draw,300)});
 })();
+</script>
+</div>
+<script>
+(function(){const KEY='gcSchemaView';let v='simple';try{v=localStorage.getItem(KEY)||'simple'}catch(e){}
+ if(location.hash==='#board')v='board';
+ function show(x){document.getElementById('v-simple').style.display=x==='simple'?'':'none';document.getElementById('v-board').style.display=x==='board'?'':'none';
+  document.querySelectorAll('.vt').forEach(b=>b.classList.toggle('on',b.dataset.v===x));try{localStorage.setItem(KEY,x)}catch(e){}
+  if(x==='board'&&window.__bdraw){setTimeout(window.__bdraw,30);setTimeout(window.__bdraw,300)}}
+ document.querySelectorAll('.vt').forEach(b=>b.onclick=()=>show(b.dataset.v));show(v)})();
 </script>
 {% else %}{% if rep %}<div class="card mut" style="margin-top:10px">이 점검에는 구조도 정보가 없습니다. <b>스키마 점검 실행</b>을 한 번 더 누르면 구조도가 나타납니다.</div>{% endif %}{% endif %}
 {% set kl = {'removed': '필드가 사라짐', 'type': '값 형태 변경', 'dropped': '채움 비율 감소', 'shape': '응답 구조 변경', 'new': '새 필드', 'unused': '읽지 않는 필드', 'unseen': '샘플에 값 없음', 'unreachable': '접속·응답 실패',

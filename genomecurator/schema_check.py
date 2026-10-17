@@ -275,6 +275,15 @@ def field_map(source: str, read: set[str]) -> dict[str, list[str]]:
 
 
 # ----------------------------------------------------------------------------- the structure board
+# Only for the simple view: how the genome columns are grouped on screen (cosmetic; the links themselves are measured).
+COLUMN_GROUPS = [
+    ("식별 · accession", ["accession", "accession_version", "genbank_accessions", "refseq_accessions", "bvbrc_genome_id", "pathoplexus_accession"]),
+    ("분류", ["taxon_id", "genome_name", "taxon_lineage_ids", "taxon_lineage_names", "subtype", "genotype", "serotype", "clade", "lineage", "outbreak"]),
+    ("유전체", ["genome_status", "genome_length", "segment", "genome_quality", "sequence_hash", "assembly_method", "sequencing_platform"]),
+    ("시료 · 출처", ["strain", "host_name", "isolation_country", "geographic_location", "collection_date", "isolation_source", "submitter", "publication"]),
+    ("날짜", ["release_date", "update_date"]),
+    ("외부 ID", ["sra_accession", "bioproject_accession", "biosample_accession"]),
+]
 RANK = {"ok": 0, "unused": 0, "internal": 0, "new": 1, "unseen": 1, "warn": 2, "fail": 3}
 
 
@@ -353,7 +362,9 @@ def build_board(per: dict, findings: list[dict], local_missing: set[str], local_
                 st, msg = "warn", "이 열을 채우는 소스 필드 중 일부에 문제가 있습니다" + (" (다른 소스가 대신 채울 수 있음)" if good else "")
             else:
                 st, msg = "ok", "정상"
-        cols.append({"name": name, "status": st, "msg": msg, "feeders": fs})
+        gi = next((i for i, (_, names) in enumerate(COLUMN_GROUPS) if name in names), len(COLUMN_GROUPS))
+        cols.append({"name": name, "status": st, "msg": msg, "feeders": fs, "group_order": gi,
+                     "group": COLUMN_GROUPS[gi][0] if gi < len(COLUMN_GROUPS) else "기타"})
     board["local"] = {"table": "genome", "columns": cols}
     return board
 
