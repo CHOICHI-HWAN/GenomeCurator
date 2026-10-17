@@ -12,6 +12,7 @@ re-pinned (the full list with licences is in [docs/DEPENDENCIES.md](docs/DEPENDE
 ## [Unreleased]
 
 ### Added
+- `Dockerfile` (multi-arch: linux/amd64 and linux/arm64, built from `environment.yml`), a `docker` workflow that builds both architectures and publishes to GHCR on version tags, and an ARM job in CI.
 - **Jobs tab**: every long task (adding or looking up a virus, check, apply, FASTA download, sequence verification, schema check, publish, and the scheduler's own runs) is a server job with a durable record: running / done / error / interrupted, progress, a timestamped log, the error with where it happened, and a link to that job's lines in the server log. The tab shows a live count of running jobs or unseen failures, and a toast appears when a job ends while you are on another page.
 - Progress window gets a **Run in background** button.
 - Server-log viewer can be searched (e.g. `job=ab12cd34`).

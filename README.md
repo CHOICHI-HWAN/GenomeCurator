@@ -103,12 +103,24 @@ python -m pytest -q                      # 선택: 전부 초록불이면 정상
 스크립트는 `mamba`/`conda`가 있으면 `genomecurator` 환경을 (없으면 만들어서) 쓰고, 둘 다 없으면 `.venv`로 대신합니다.
 포트를 바꾸려면 `./scripts/start.sh --port 8001`.
 
+### Docker (x86 · ARM 공용 이미지)
+
+```bash
+docker build -t genomecurator .
+docker run -d -p 127.0.0.1:8001:8001 -v genomecurator-data:/data genomecurator    # http://127.0.0.1:8001
+```
+
+이미지는 `environment.yml` 그대로 conda 환경을 만들며 `linux/amd64`, `linux/arm64`에서 돌아갑니다. 데이터는 `/data` 볼륨에 남습니다.
+로그인 기능이 없으므로 위처럼 **127.0.0.1로만** 공개하세요.
+
 ### conda 없이
 
 ```bash
 python -m venv .venv && source .venv/bin/activate     # Windows: .venv\Scripts\activate
 pip install -e ".[dev]"
 ```
+
+ARM(Apple Silicon, Raspberry Pi·Graviton 등)도 conda-forge에 모든 의존성이 있어 같은 방법으로 설치됩니다.
 
 Python 3.10 이상, 인터넷(NCBI·BV-BRC·Pathoplexus 접속)이 필요합니다. "공개 페이지 배포"를 쓰려면 git과 `origin` push 권한도 필요합니다.
 
