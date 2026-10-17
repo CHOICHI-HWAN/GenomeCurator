@@ -1,22 +1,18 @@
 import json
-import threading
 import time
-import traceback
-import uuid
 from pathlib import Path
 
 from fastapi import FastAPI, Form, Request
 from fastapi.responses import HTMLResponse, JSONResponse, RedirectResponse, Response
 from fastapi.templating import Jinja2Templates
 
-from . import __version__, completeness, config, curate, log
+from . import __version__, completeness, config, curate, jobs, log
 from .db import audit_now, connect
 
 _log = log.get("web")
 _alert_cache = {"t": 0.0, "v": None}
 
 T = Jinja2Templates(directory=str(Path(__file__).parent / "templates"))
-JOBS: dict[str, dict] = {}
 
 
 def _rows(sql, *a):
@@ -35,49 +31,9 @@ def _tsv(rows: list[dict], filename: str) -> Response:
                     headers={"Content-Disposition": f"attachment; filename={filename}"})
 
 
-def start_job(fn, label: str = "job") -> JSONResponse:
-    """Run fn(progress) -> redirect_url in a thread; the page polls /api/job/<id> and shows the progress modal.
-    Each job keeps its own timestamped log (shown in the modal, so it survives a page reload); failures keep
-    their traceback in the log file and are recorded in the audit log."""
-    jid = uuid.uuid4().hex[:8]
-    JOBS[jid] = {"pct": 0, "msg": "시작 중…", "done": False, "error": None, "redirect": "/", "label": label, "log": []}
-
-    def addlog(msg: str, level: str = "info"):
-        lg = JOBS[jid]["log"]
-        if len(lg) < 800:
-            lg.append({"t": time.strftime("%H:%M:%S"), "msg": msg, "level": level})
-
-    def prog(pct, msg):
-        j = JOBS[jid]
-        j.update(pct=pct, msg=msg)
-        if msg != j.get("last"):
-            j["last"] = msg
-            addlog(f"{msg}" + (f"  ({round(pct)}%)" if 1 < pct < 100 else ""))
-            _log.info("job %s progress %s%%: %s", label, round(pct), msg)
-
-    def run():
-        log.set_context(job=jid)
-        t0 = time.monotonic()
-        _log.info("job %s started", label)
-        addlog(f"작업 시작: {label}")
-        try:
-            JOBS[jid]["redirect"] = fn(prog)
-            JOBS[jid]["pct"] = 100
-            addlog("완료")
-            _log.info("job %s finished in %.1fs", label, time.monotonic() - t0)
-        except BaseException as e:
-            msg = str(e) or e.__class__.__name__
-            JOBS[jid]["error"] = msg
-            tb = traceback.extract_tb(e.__traceback__)
-            where = f"{Path(tb[-1].filename).name}:{tb[-1].lineno} in {tb[-1].name}" if tb else ""
-            addlog(f"오류: {type(e).__name__}: {msg}" + (f"  [{where}]" if where else ""), "error")
-            addlog("자세한 내용(traceback)은 이력 화면의 서버 로그에 있습니다.", "error")
-            _log.error("job %s failed after %.1fs: %s: %s", label, time.monotonic() - t0, type(e).__name__, msg, exc_info=not isinstance(e, SystemExit) and type(e).__name__ != "SourceUnavailable")
-            audit_now("job_failed", f"{label} ({jid}): {type(e).__name__}: {msg}")
-        JOBS[jid]["done"] = True
-
-    threading.Thread(target=run, daemon=True).start()
-    return JSONResponse({"job": jid})
+def start_job(fn, label: str = "job", kind: str = "job") -> JSONResponse:
+    """Run fn(progress) on the server as a tracked job (jobs.py); the page gets the job id and polls /api/job/<id>."""
+    return JSONResponse({"job": jobs.start(fn, label, kind)})
 
 
 CS_COLS = [("kind", "종류", True, True), ("decision", "결정", True, True), ("integrity", "정합성", True, True), ("seq", "서열 검증", True, True),
@@ -212,6 +168,7 @@ def _item_ids(form) -> list[int]:
 
 def create_app(scheduler: bool = True) -> FastAPI:
     log.setup()
+    jobs.mark_interrupted()      # whatever the table still calls running died with the previous process
     app = FastAPI(title="Virus Genome Metadata Curator")
 
     def pending_count():
@@ -325,6 +282,21 @@ def create_app(scheduler: bool = True) -> FastAPI:
             msg = f"삭제 실패: {e}"
         return RedirectResponse(f"/?msg={msg}", 303)
 
+    @app.post("/api/lookup/start")
+    def api_lookup_start(request: Request, q: str = ""):
+        """The same lookup as a server job, so it is not lost when the person clicks another menu; the result is stored with the job."""
+        if not _same_origin(request):
+            return JSONResponse({"error": "cross-site request refused"}, 403)
+        from .lookup import lookup_virus
+        query = q.strip()
+        if not query:
+            return JSONResponse({"error": "이름을 입력하세요."}, 400)
+
+        def work(p):
+            p(5, "ICTV → NCBI Virus → BV-BRC → Pathoplexus 순서로 확인 중…")
+            return {"redirect": None, "result": lookup_virus(query)}
+        return start_job(work, f"바이러스 조회 · {query}", "lookup")
+
     @app.get("/api/lookup")
     def api_lookup(q: str = ""):
         """Check a typed virus name against ICTV, NCBI Virus, BV-BRC and Pathoplexus (read-only)."""
@@ -335,13 +307,18 @@ def create_app(scheduler: bool = True) -> FastAPI:
             return JSONResponse({"error": str(e)}, 400)
 
     @app.post("/watch")
-    def watch_add(name: str = Form(...), taxon: str = Form("")):
-        try:
-            curate.add_watch(name.strip(), taxon.strip() or None)
-            msg = f"added {name}"
-        except Exception as e:
-            msg = f"error: {e}"
-        return RedirectResponse(f"/?msg={msg}", 303)
+    def watch_add(request: Request, name: str = Form(...), taxon: str = Form("")):
+        """Add a virus as a server job: it keeps going (and its outcome stays on the Jobs tab) when the person leaves the page."""
+        if not _same_origin(request):
+            return JSONResponse({"error": "cross-site request refused"}, 403)
+        nm, tx = name.strip(), taxon.strip() or None
+
+        def work(p):
+            p(10, f"'{nm}'을(를) NCBI에서 바이러스로 확인하는 중…")
+            curate.add_watch(nm, tx)
+            p(95, "워치리스트에 등록했습니다")
+            return f"/?msg=추가했습니다: {nm}"
+        return start_job(work, f"바이러스 추가 · {nm}", "watch_add")
 
     @app.post("/watch/{name}/check")
     def check_now(name: str):
@@ -351,7 +328,7 @@ def create_app(scheduler: bool = True) -> FastAPI:
                 return "/?msg=변경 사항 없음"
             curate.dryrun(cs, progress=p)
             return f"/changeset/{cs}"
-        return start_job(work, f"확인 {name}")
+        return start_job(work, f"확인 · {name}", "check")
 
     @app.get("/api/version")
     def version_api():
@@ -427,7 +404,34 @@ def create_app(scheduler: bool = True) -> FastAPI:
 
     @app.get("/api/job/{jid}")
     def job(jid: str):
-        return JOBS.get(jid) or JSONResponse({"error": "unknown job", "done": True}, 404)
+        return jobs.get(jid) or JSONResponse({"error": "unknown job", "done": True}, 404)
+
+    @app.get("/api/jobs")
+    def api_jobs(limit: int = 100, status: str = "", kind: str = ""):
+        return jobs.list_jobs(max(1, min(limit, 300)), status, kind)
+
+    @app.get("/api/jobs/summary")
+    def api_jobs_summary(since: str = "", fail_since: str = ""):
+        return jobs.summary(since, fail_since)
+
+    def _sched_info(request: Request):
+        """The scheduler's jobs: when each runs next and how the last run ended (None when the scheduler is off)."""
+        s = getattr(request.app.state, "sched", None)
+        if s is None:
+            return None
+        names = {"check": ("자동 확인", f"등록된 모든 바이러스를 {config.CHECK_INTERVAL_HOURS:g}시간마다 확인"),
+                 "schema_daily": ("매일 스키마 점검", f"매일 {config.SCHEMA_CHECK_HOUR:02d}시, 바이러스마다 소스당 {config.SCHEMA_CHECK_SAMPLE}건")}
+        out = []
+        for j in s.get_jobs():
+            title, what = names.get(j.id, (j.id, ""))
+            last = _rows("SELECT status, started, finished, error FROM job WHERE kind='scheduled' AND label LIKE ? ORDER BY started DESC LIMIT 1", title + "%")
+            out.append({"title": title, "what": what, "next": j.next_run_time.strftime("%Y-%m-%d %H:%M:%S") if j.next_run_time else None,
+                        "last": last[0] if last else None})
+        return out
+
+    @app.get("/jobs")
+    def jobs_page(request: Request):
+        return render(request, "jobs.html", nav="job", sched=_sched_info(request), kinds=jobs.KINDS, scheduler_on=getattr(request.app.state, "sched", None) is not None)
 
     @app.get("/api/changeset/{cid}/impact")
     def changeset_impact_api(cid: int):
@@ -503,7 +507,7 @@ def create_app(scheduler: bool = True) -> FastAPI:
                 first = next(iter(res["failed"].items()))
                 msg += f", {len(res['failed'])}건 실패 (예: {first[0]} - {first[1]}). 실패 항목은 승인 상태로 남아 있으니 Apply를 다시 누르면 재시도합니다"
             return f"/history?msg={msg}"
-        return start_job(work)
+        return start_job(work, f"적용 · changeset {cid}", "apply")
 
     @app.post("/changeset/{cid}/approve_apply")
     async def approve_apply(request: Request, cid: int):
@@ -530,7 +534,7 @@ def create_app(scheduler: bool = True) -> FastAPI:
                 first = next(iter(res["failed"].items()))
                 msg += f", {len(res['failed'])}건 실패 (예: {first[0]} - {first[1]})"
             return f"/genomes?watch={watch}&msg={msg}"
-        return start_job(work)
+        return start_job(work, "서열(FASTA) 받기", "fasta")
 
     @app.post("/changeset/{cid}/dryrun")
     def rerun(cid: int):
@@ -592,7 +596,7 @@ def create_app(scheduler: bool = True) -> FastAPI:
         if not _same_origin(request):
             return JSONResponse({"error": "cross-site request refused"}, 403)
         from . import seqcheck
-        return start_job(lambda p: (seqcheck.build_plan(watch, None, progress=p), f"/integrity?watch={watch}#seq")[1], "서열 검증 계획")
+        return start_job(lambda p: (seqcheck.build_plan(watch, None, progress=p), f"/integrity?watch={watch}#seq")[1], "서열 검증 계획", "seqcheck")
 
     @app.post("/integrity/seqcheck")
     def integrity_seqcheck(request: Request, watch: int = Form(0)):
@@ -600,7 +604,7 @@ def create_app(scheduler: bool = True) -> FastAPI:
         if not _same_origin(request):
             return JSONResponse({"error": "cross-site request refused"}, 403)
         from . import seqcheck
-        return start_job(lambda p: (seqcheck.execute(watch, progress=p), f"/integrity?watch={watch}#seq")[1], "서열 검증 실행")
+        return start_job(lambda p: (seqcheck.execute(watch, progress=p), f"/integrity?watch={watch}#seq")[1], "서열 검증 실행", "seqcheck")
 
     @app.post("/changeset/{cid}/seqcheck")
     async def changeset_seqcheck(request: Request, cid: int):
@@ -615,7 +619,7 @@ def create_app(scheduler: bool = True) -> FastAPI:
             return JSONResponse({"error": "선택된 항목이 없습니다."}, 400)
         accs = [r["accession"] for r in _rows("SELECT accession FROM changeset_item WHERE changeset_id=? AND id IN (%s)" % ",".join("?" * len(ids)), cid, *ids)]
         wid = cs[0]["watch_id"]
-        return start_job(lambda p: (seqcheck.build_plan(wid, accs, progress=p), f"/integrity?watch={wid}#seq")[1], "선택 항목 서열 검증 계획")
+        return start_job(lambda p: (seqcheck.build_plan(wid, accs, progress=p), f"/integrity?watch={wid}#seq")[1], "선택 항목 서열 검증 계획", "seqcheck")
 
     @app.get("/schema")
     def schema_page(request: Request, msg: str = ""):
@@ -628,7 +632,7 @@ def create_app(scheduler: bool = True) -> FastAPI:
         if not _same_origin(request):
             return JSONResponse({"error": "cross-site request refused"}, 403)
         from . import schema_check
-        return start_job(lambda p: (schema_check.run(None, progress=p), "/schema")[1], "스키마 점검")
+        return start_job(lambda p: (schema_check.run(None, progress=p), "/schema")[1], "스키마 점검", "schema")
 
     @app.post("/schema/daily")
     def schema_daily(request: Request):
@@ -640,7 +644,7 @@ def create_app(scheduler: bool = True) -> FastAPI:
             r = schema_check.run_light(progress=p)
             _alert_cache["t"] = 0
             return "/schema"
-        return start_job(work, "바이러스별 스키마 점검")
+        return start_job(work, "바이러스별 스키마 점검", "schema")
 
     @app.post("/schema/accept")
     def schema_accept(request: Request):
@@ -714,7 +718,7 @@ def create_app(scheduler: bool = True) -> FastAPI:
 
         def work(p):
             return "/?msg=" + deploy.publish(p)
-        return start_job(work)
+        return start_job(work, "공개 페이지 배포", "deploy")
 
     @app.get("/public")
     def public_view():
@@ -726,10 +730,10 @@ def create_app(scheduler: bool = True) -> FastAPI:
             return HTMLResponse(f"<p>{e}</p>", status_code=404)
 
     @app.get("/history")
-    def history(request: Request, msg: str = "", lvl: str = "", n: int = 200):
+    def history(request: Request, msg: str = "", lvl: str = "", n: int = 200, q: str = ""):
         n = max(20, min(n, 2000))
-        return render(request, "history.html", msg=msg, nav="his", lvl=lvl, n=n, log_dir=str(log.log_dir()),
-                      log=_rows("SELECT * FROM audit_log ORDER BY id DESC LIMIT 200"), srv=log.tail(n, lvl))
+        return render(request, "history.html", msg=msg, nav="his", lvl=lvl, n=n, q=q, log_dir=str(log.log_dir()),
+                      log=_rows("SELECT * FROM audit_log ORDER BY id DESC LIMIT 200"), srv=log.tail(n, lvl, q))
 
     if scheduler:
         from apscheduler.schedulers.background import BackgroundScheduler
@@ -737,29 +741,29 @@ def create_app(scheduler: bool = True) -> FastAPI:
         def sched_job():
             _log.info("scheduled check run (every %s h)", config.CHECK_INTERVAL_HOURS)
             for w in _rows("SELECT name FROM watchlist WHERE enabled=1"):
-                try:
-                    cs = curate.check(w["name"])
+                def work(p, name=w["name"]):
+                    cs = curate.check(name, progress=p)
                     if cs:
-                        curate.dryrun(cs)
-                except BaseException as e:
-                    _log.error("scheduled check failed for %r: %s: %s", w["name"], type(e).__name__, e, exc_info=True)
-                    audit_now("scheduled_check_failed", f"{w['name']}: {type(e).__name__}: {e}")
+                        curate.dryrun(cs, progress=p)
+                    return f"/changeset/{cs}" if cs else "/"
+                jobs.run_sync(f"자동 확인 · {w['name']}", "scheduled", work)     # recorded like any job: status, log, error
 
         def schema_job():
             from . import schema_check
             _log.info("daily schema check start (%d records per source per virus)", config.SCHEMA_CHECK_SAMPLE)
-            try:
-                rep = schema_check.run_light()
+
+            def work(p):
+                rep = schema_check.run_light(progress=p)
                 _alert_cache["t"] = 0   # show a new problem right away
                 _log.info("daily schema check verdict: %s", rep["verdict"])
-            except BaseException as e:
-                _log.error("daily schema check failed: %s: %s", type(e).__name__, e, exc_info=True)
-                audit_now("schema_daily_failed", f"{type(e).__name__}: {e}")
+                return "/schema"
+            jobs.run_sync("매일 스키마 점검", "scheduled", work)
 
         sched = BackgroundScheduler()
         sched.add_job(sched_job, "interval", hours=config.CHECK_INTERVAL_HOURS, id="check")
         sched.add_job(schema_job, "cron", hour=config.SCHEMA_CHECK_HOUR, minute=0, id="schema_daily", misfire_grace_time=3600, coalesce=True)
         sched.start()
+        app.state.sched = sched
         for j in sched.get_jobs():
             _log.info("scheduled job %s: next run %s", j.id, j.next_run_time)
         app.router.on_shutdown.append(lambda: sched.shutdown(wait=False))

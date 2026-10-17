@@ -38,6 +38,9 @@ button.p{background:var(--acc);color:#fff;border-color:var(--acc)}
 #toast.err .jm{border-top-color:var(--bad)}#toast.ok .jm{border-top-color:var(--ok)}
 #toast .jh{display:flex;justify-content:space-between;align-items:center;margin-bottom:10px;font-size:16px}
 #toast .x{cursor:pointer;color:var(--mut);font-size:13px;display:none;padding:2px 8px;border:1px solid var(--bd);border-radius:3px}#toast.err .x{display:inline-block}
+#toast .bgb{cursor:pointer;color:var(--acc);font-size:13px;padding:2px 8px;border:1px solid var(--acc);border-radius:3px;margin-left:8px}#toast.ok .bgb,#toast.err .bgb{display:none}
+#toast .jh>span:last-child{display:flex}
+#jtoasts{position:fixed;right:16px;bottom:16px;display:flex;flex-direction:column;gap:8px;z-index:90}#jtoasts a{display:block;background:var(--card);color:var(--fg);border:1px solid var(--bd);border-left:5px solid var(--ok);border-radius:4px;padding:8px 12px;box-shadow:0 4px 16px rgba(0,0,0,.3);text-decoration:none;max-width:360px;font-size:13px}#jtoasts a.bad{border-left-color:var(--bad)}
 #toast #tmsg{font-size:14px;margin-bottom:10px;min-height:20px;overflow-wrap:anywhere}
 #toast .bar{height:22px;background:var(--th);border-radius:11px;overflow:hidden}
 #toast .bar i{display:block;height:100%;width:0;background:var(--acc);border-radius:11px;transition:width .5s;background-image:linear-gradient(45deg,rgba(255,255,255,.22) 25%,transparent 25%,transparent 50%,rgba(255,255,255,.22) 50%,rgba(255,255,255,.22) 75%,transparent 75%);background-size:28px 28px;animation:jstripe 1s linear infinite}
@@ -51,12 +54,12 @@ button.p{background:var(--acc);color:#fff;border-color:var(--acc)}
 </style></head><body>
 <header><span class="logo">Virus Genome <i>Curator</i></span>
 <a href="/" class="{{ 'on' if nav=='cur' }}">큐레이션{% if badge %}<span class="badge">{{ badge }}</span>{% endif %}</a>
-<a href="/dashboard{{ '?watch=' ~ watch if watch }}" class="{{ 'on' if nav=='dash' }}">대시보드</a><a href="/genomes{{ '?watch=' ~ watch if watch }}" class="{{ 'on' if nav=='gen' }}">유전체</a><a href="/integrity{{ '?watch=' ~ watch if watch }}" class="{{ 'on' if nav=='int' }}">정합성</a><a href="/schema" class="{{ 'on' if nav=='sch' }}">스키마{% if schema_alert %}<span class="badge" style="background:{{ 'var(--bad)' if schema_alert.verdict == 'update' else 'var(--warn)' }}" title="스키마 점검에서 확인이 필요한 항목이 있습니다">!</span>{% endif %}</a><a href="/history" class="{{ 'on' if nav=='his' }}">이력</a><a href="/public" target="_blank" rel="noopener" style="margin-left:auto" title="공개용 읽기 전용 화면">공개 보기 ↗</a><button id="deploybtn" type="button" onclick="deploy()" title="현재 데이터를 공개 사이트(GitHub Pages)에 게시" style="background:#76a72b;border-color:#76a72b;color:#fff;margin-left:6px">배포하기</button></header>
+<a href="/dashboard{{ '?watch=' ~ watch if watch }}" class="{{ 'on' if nav=='dash' }}">대시보드</a><a href="/genomes{{ '?watch=' ~ watch if watch }}" class="{{ 'on' if nav=='gen' }}">유전체</a><a href="/integrity{{ '?watch=' ~ watch if watch }}" class="{{ 'on' if nav=='int' }}">정합성</a><a href="/schema" class="{{ 'on' if nav=='sch' }}">스키마{% if schema_alert %}<span class="badge" style="background:{{ 'var(--bad)' if schema_alert.verdict == 'update' else 'var(--warn)' }}" title="스키마 점검에서 확인이 필요한 항목이 있습니다">!</span>{% endif %}</a><a href="/jobs" class="{{ 'on' if nav=='job' }}">작업<span class="badge" id="jbadge" style="display:none"></span></a><a href="/history" class="{{ 'on' if nav=='his' }}">이력</a><a href="/public" target="_blank" rel="noopener" style="margin-left:auto" title="공개용 읽기 전용 화면">공개 보기 ↗</a><button id="deploybtn" type="button" onclick="deploy()" title="현재 데이터를 공개 사이트(GitHub Pages)에 게시" style="background:#76a72b;border-color:#76a72b;color:#fff;margin-left:6px">배포하기</button></header>
 <main>{% if msg %}<div class="msg">{{ msg }}</div>{% endif %}{% block body %}{% endblock %}</main>
 <footer class="ft">Virus Genome Metadata Curator <b>v{{ app_version }}</b> · <a href="https://github.com/CHOICHI-HWAN/GenomeCurator/blob/main/CHANGELOG.md" target="_blank" rel="noopener">변경 이력</a></footer>
-<div id="toast"><div class="jm"><div class="jh"><b id="jtitle">작업 진행 중…</b><span class="x" onclick="jclose()">닫기 ✕</span></div>
+<div id="toast"><div class="jm"><div class="jh"><b id="jtitle">작업 진행 중…</b><span class="x" onclick="jclose()">닫기 ✕</span><span class="bgb" onclick="jbg()" title="모달을 닫고 서버에서 계속 진행합니다. 진행 상황은 작업 탭에서 봅니다.">백그라운드로 ↘</span></div>
 <div id="tmsg"></div><div class="bar"><i id="tbar"></i></div><div class="pr"><span id="tpct">0%</span><span class="mut" id="tel"></span></div>
-<div class="jl" id="tlog"></div><div class="mut" style="font-size:12px;margin-top:8px">작업이 끝날 때까지 다른 조작은 잠시 막힙니다. 서버에서 계속 진행되므로 페이지를 새로고침해도 이어서 보입니다.</div></div></div>
+<div class="jl" id="tlog"></div><div class="mut" style="font-size:12px;margin-top:8px">작업은 서버에서 진행됩니다. 다른 메뉴로 가거나 새로고침해도 계속되며, <b>백그라운드로</b>를 누르면 이 창을 닫고 <a href="/jobs">작업 탭</a>에서 상태·로그를 볼 수 있습니다.</div></div></div>
 <script>
 const TJ=document.getElementById("toast");
 let _jt0=0,_jlast="",_jtimer=null;
@@ -69,9 +72,10 @@ const jrender=(lg)=>{const l=document.getElementById("tlog"),atEnd=l.scrollHeigh
 const jopen=()=>{TJ.className="";TJ.style.display="flex";document.getElementById("tlog").innerHTML="";_jlast="";_jt0=Date.now();clearInterval(_jtimer);
  _jtimer=setInterval(()=>{const s=Math.round((Date.now()-_jt0)/1000);document.getElementById("tel").textContent="경과 "+Math.floor(s/60)+"분 "+(s%60)+"초"},500)};
 const jclose=()=>{if(TJ.className==="err"){TJ.style.display="none";clearInterval(_jtimer)}};
+let _bg=false;const jbg=()=>{_bg=true;store(null);TJ.style.display="none";clearInterval(_jtimer);jsum()};
 const store=(v)=>{try{v?localStorage.setItem("gcJob",v):localStorage.removeItem("gcJob")}catch(e){}};
-async function pollJob(id){jopen();
- const tick=async()=>{let j;try{const r=await fetch("/api/job/"+id);j=await r.json();if(r.status===404)j={error:"작업 정보를 찾을 수 없습니다. 서버가 재시작되어 작업이 중단되었을 수 있습니다. 다시 시도하세요. (이미 받은 서열은 이어받습니다)",done:true}}
+async function pollJob(id){_bg=false;jopen();
+ const tick=async()=>{if(_bg)return;let j;try{const r=await fetch("/api/job/"+id);j=await r.json();if(r.status===404)j={error:"작업 정보를 찾을 수 없습니다. 서버가 재시작되어 작업이 중단되었을 수 있습니다. 다시 시도하세요. (이미 받은 서열은 이어받습니다)",done:true}}
   catch(e){TJ.className="err";tset(100,"서버에 연결할 수 없습니다. 서버가 꺼졌는지 확인하세요.");store(null);return}
   if(j.log)jrender(j.log);
   if(j.error){TJ.className="err";tui(100,"실패: "+j.error);store(null);return}
@@ -80,6 +84,21 @@ async function runJob(form){jopen();tset(1,"요청 중…");let r;
  try{r=await (await fetch(form.getAttribute("action"),{method:"POST",body:new URLSearchParams(new FormData(form))})).json()}catch(e){TJ.className="err";tset(100,"요청 실패: "+e);return}
  store(r.job);pollJob(r.job)}
 try{const j=localStorage.getItem("gcJob");if(j)pollJob(j)}catch(e){}
+// every page: running count / unseen failures on the 작업 tab, and a toast when a job ends while you are elsewhere
+const lsGet=(k)=>{try{return localStorage.getItem(k)||""}catch(e){return ""}},lsSet=(k,v)=>{try{localStorage.setItem(k,v)}catch(e){}};
+const _seen=new Set(),_onJobs=location.pathname==="/jobs";let _since="";
+async function jsum(){let s;try{s=await (await fetch("/api/jobs/summary?since="+encodeURIComponent(_since)+"&fail_since="+encodeURIComponent(lsGet("gcJobsSeen")))).json()}catch(e){return}
+ const b=document.getElementById("jbadge"),n=s.running.length;
+ if(_onJobs)lsSet("gcJobsSeen",s.now);
+ if(n){b.style.display="";b.textContent=n+" 진행";b.style.background="var(--acc)"}
+ else if(s.failed_unseen&&!_onJobs){b.style.display="";b.textContent="오류 "+s.failed_unseen;b.style.background="var(--bad)"}
+ else b.style.display="none";
+ if(!_since){_since=s.now;return}
+ const box=document.getElementById("jtoasts")||document.body.appendChild(Object.assign(document.createElement("div"),{id:"jtoasts"}));
+ s.finished.forEach(f=>{if(_seen.has(f.id)||TJ.style.display==="flex")return;_seen.add(f.id);
+  const a=document.createElement("a");a.href=f.status==="done"&&f.redirect?f.redirect:"/jobs#"+f.id;a.className=f.status==="done"?"":"bad";
+  a.textContent=(f.status==="done"?"✔ 완료: ":"✖ "+(f.status==="interrupted"?"중단: ":"오류: "))+f.label;box.appendChild(a);setTimeout(()=>a.remove(),9000)})}
+jsum();setInterval(jsum,4000);
 async function deploy(){const b=document.getElementById("deploybtn");b.disabled=true;let p;
  try{p=await (await fetch("/api/deploy/preview")).json()}catch(e){alert("미리보기 실패: "+e);b.disabled=false;return}
  b.disabled=false;if(p.error){alert(p.error);return}

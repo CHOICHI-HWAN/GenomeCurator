@@ -1,0 +1,55 @@
+{% extends "base.html" %}{% block body %}
+<div class="pagehead"><h2>작업</h2><span class="mut">서버에서 도는 모든 작업(바이러스 추가·조회, 확인, 적용, 다운로드, 서열 검증, 스키마 점검, 배포, 자동 실행)의 상태와 로그</span></div>
+<div class="help">작업은 서버에서 진행되므로 다른 메뉴로 가거나 창을 닫아도 계속됩니다. 여기서는 <b>진행 중 / 완료 / 오류 / 중단</b>을 정확히 보고, 줄을 눌러 단계별 로그와 오류 원인을 봅니다.
+서버가 꺼졌다 켜지면 그때 진행 중이던 작업은 <b>중단</b>으로 표시됩니다.</div>
+
+{% if sched is not none %}
+<h3>예약된 자동 작업</h3>
+<table><tr><th>작업</th><th>내용</th><th class="nw">다음 실행</th><th class="nw">마지막 실행</th></tr>
+{% for s in sched %}<tr><td class="nw"><b>{{ s.title }}</b></td><td class="mut">{{ s.what }}</td><td class="nw">{{ s.next or '-' }}</td>
+<td class="nw">{% if s.last %}<span class="pill {{ 'READY' if s.last.status == 'done' else 'BLOCKED' }}">{{ {'done':'완료','error':'오류','interrupted':'중단','running':'진행 중'}[s.last.status] }}</span> <span class="mut">{{ s.last.started }}</span>{% else %}<span class="mut">아직 없음</span>{% endif %}</td></tr>{% endfor %}</table>
+{% elif not scheduler_on %}<div class="mut" style="margin-bottom:10px">자동 실행(스케줄러)이 꺼져 있습니다.</div>{% endif %}
+
+<h3>작업 기록</h3>
+<div style="display:flex;gap:8px;align-items:center;margin-bottom:8px;flex-wrap:wrap">
+ <select id="fs" onchange="load()"><option value="">모든 상태</option><option value="running">진행 중</option><option value="done">완료</option><option value="error">오류</option><option value="interrupted">중단</option></select>
+ <select id="fk" onchange="load()"><option value="">모든 종류</option>{% for k, v in kinds.items() %}<option value="{{ k }}">{{ v }}</option>{% endfor %}</select>
+ <span class="mut" id="fcount"></span></div>
+<table id="jt"><thead><tr><th class="nw">상태</th><th>작업</th><th class="nw">종류</th><th class="nw">시작</th><th class="nw">걸린 시간</th><th style="width:28%">진행 / 메시지</th></tr></thead><tbody id="jb"><tr><td colspan="6" class="mut">불러오는 중…</td></tr></tbody></table>
+
+<style>
+.jst{border-radius:10px;padding:1px 9px;font-size:12px;border:1px solid currentColor;font-weight:600;white-space:nowrap}
+.jst.running{color:var(--acc)}.jst.done{color:var(--ok)}.jst.error,.jst.interrupted{color:var(--bad)}
+.jbar{height:8px;background:var(--th);border-radius:4px;overflow:hidden;margin-top:3px}.jbar i{display:block;height:100%;background:var(--acc)}
+tr.jr{cursor:pointer}tr.jr:hover{background:var(--hover)}
+.jdet{background:var(--stripe);padding:10px 14px}.jdet .jl{max-height:300px;overflow:auto;font:12px/1.55 Consolas,Menlo,monospace;border:1px solid var(--bd);border-radius:4px;padding:6px 10px;background:var(--card)}
+.jdet .jl div{white-space:pre-wrap;overflow-wrap:anywhere}.jdet .t{color:var(--mut);margin-right:8px}.jdet .e{color:var(--bad)}
+.jerr{color:var(--bad);margin-bottom:8px;overflow-wrap:anywhere}
+</style>
+<script>
+const ST={running:"진행 중",done:"완료",error:"오류",interrupted:"중단"};
+const esc=s=>String(s==null?"":s).replace(/[&<>"]/g,c=>({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;"}[c]));
+const open_=new Set();let busy=false;
+const dur=(a,b)=>{if(!a)return"";const s=Math.max(0,Math.round(((b?new Date(b):new Date())-new Date(a))/1000));return s>=3600?Math.floor(s/3600)+"시간 "+Math.floor(s%3600/60)+"분":s>=60?Math.floor(s/60)+"분 "+(s%60)+"초":s+"초"};
+async function detail(id){const j=await (await fetch("/api/job/"+id)).json();
+ const lg=(j.log||[]).map(x=>'<div><span class="t">'+esc(x.t)+'</span><span class="'+(x.level==="error"?"e":"")+'">'+esc(x.msg)+'</span></div>').join("");
+ return (j.error?'<div class="jerr"><b>오류:</b> '+esc(j.error)+'</div>':"")+'<div class="jl">'+(lg||'<span class="mut">로그가 없습니다.</span>')+'</div>'
+  +'<div style="margin-top:8px;font-size:12.5px">작업 ID <code>'+esc(j.id)+'</code> · <a href="/history?q=job%3D'+esc(j.id)+'&lvl=#srv">서버 로그에서 이 작업만 보기</a>'
+  +(j.done&&!j.error&&j.redirect&&j.redirect!=="/"?' · <a href="'+esc(j.redirect)+'">결과 화면으로</a>':"")+'</div>'}
+async function load(){if(busy)return;busy=true;
+ try{const q=new URLSearchParams({limit:150,status:document.getElementById("fs").value,kind:document.getElementById("fk").value});
+  const rows=await (await fetch("/api/jobs?"+q)).json();
+  document.getElementById("fcount").textContent=rows.length+"건";
+  let h="";for(const r of rows){const o=open_.has(r.id);
+   h+='<tr class="jr" data-id="'+r.id+'" id="'+r.id+'"><td><span class="jst '+r.status+'">'+ST[r.status]+'</span></td><td><b>'+esc(r.label)+'</b></td><td class="nw mut">'+esc(r.kind_label)+'</td><td class="nw">'+esc((r.started||"").replace("T"," "))+'</td><td class="nw">'+dur(r.started,r.finished)+'</td><td>'
+    +(r.status==="running"?esc(r.msg)+'<div class="jbar"><i style="width:'+Math.max(3,r.pct)+'%"></i></div>':r.error?'<span style="color:var(--bad)">'+esc(String(r.error).slice(0,140))+'</span>':'<span class="mut">'+esc(r.msg||"")+'</span>')+'</td></tr>';
+   if(o)h+='<tr class="jd" data-for="'+r.id+'"><td colspan="6" class="jdet">…</td></tr>'}
+  document.getElementById("jb").innerHTML=h||'<tr><td colspan="6" class="mut">작업 기록이 없습니다.</td></tr>';
+  for(const id of open_){const c=document.querySelector('tr.jd[data-for="'+id+'"] td');if(c)c.innerHTML=await detail(id)}
+  const hid=location.hash.slice(1);if(hid&&!open_.has(hid)&&document.getElementById(hid)){open_.add(hid);busy=false;history.replaceState(null,"",location.pathname);return load()}
+  document.querySelectorAll("tr.jr").forEach(tr=>tr.onclick=()=>{const id=tr.dataset.id;open_.has(id)?open_.delete(id):open_.add(id);load()});
+  window._anyRunning=rows.some(r=>r.status==="running")
+ }finally{busy=false}}
+load();setInterval(()=>{if(window._anyRunning)load()},2000);setInterval(load,15000);
+</script>
+{% endblock %}

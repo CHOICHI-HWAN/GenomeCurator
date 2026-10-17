@@ -51,12 +51,9 @@ async function delWatch(id){const w=WATCHES.find(x=>x.id===id);if(!w)return;let 
 <script>
 const E=s=>String(s??'').replace(/[&<>"]/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c]));
 const ICON={ok:'✔ 확인됨',warn:'⚠ 주의',none:'✖ 없음',error:'✖ 오류'};
-function addAs(name,taxon){document.getElementById('addname').value=name;document.getElementById('addtaxon').value=taxon;document.getElementById('addf').submit()}
-async function lookup(){const q=document.getElementById('lkq').value.trim();if(!q)return;const box=document.getElementById('lkres'),b=document.getElementById('lkb');
- b.disabled=true;box.innerHTML='<span class="spin"></span> <span class="mut">ICTV → NCBI Virus → BV-BRC → Pathoplexus 순서로 확인 중… (요청 간 300ms 간격이라 10~20초 걸릴 수 있습니다)</span>';
- let r;try{const resp=await fetch('/api/lookup?q='+encodeURIComponent(q));r=await resp.json();if(!resp.ok){box.innerHTML='<span class="mut">'+E(r.error||'오류')+'</span>';b.disabled=false;return}}
- catch(e){box.innerHTML='<span style="color:var(--bad)">조회 실패: '+E(e)+'</span>';b.disabled=false;return}
- b.disabled=false;
+function addAs(name,taxon){document.getElementById('addname').value=name;document.getElementById('addtaxon').value=taxon;runJob(document.getElementById('addf'))}
+const lkStore=(v)=>{try{v?localStorage.setItem('gcLookup',JSON.stringify(v)):localStorage.removeItem('gcLookup')}catch(e){}};
+function lkRender(r,q){const box=document.getElementById('lkres');
  const order=['ictv','ncbi','bvbrc','pathoplexus'],names={ictv:'ICTV',ncbi:'NCBI Virus',bvbrc:'BV-BRC',pathoplexus:'Pathoplexus'};
  let h='<table class="lk">'+order.map(k=>{const s=r.sources[k];if(!s)return '';return `<tr><td>${names[k]}<br><span class="${s.status}" style="font-weight:400;font-size:12px">${ICON[s.status]||''}</span></td><td><ul>${s.lines.map(l=>'<li>'+E(l)+'</li>').join('')}</ul></td></tr>`}).join('')+'</table>';
  if(r.note)h+=`<div class="msg" style="margin-top:10px">${E(r.note)}</div>`;
@@ -66,6 +63,18 @@ async function lookup(){const q=document.getElementById('lkq').value.trim();if(!
   h+=`<div class="mut" style="font-size:12px;margin-top:6px">수집 기준 분류군: ${E(r.add.taxon)} (NCBI taxon ${E(r.add.taxon_id)}). 이름은 화면에 표시되는 라벨이며 수집 범위는 이 분류군이 결정합니다.</div>`}
  else h+='<div class="msg" style="margin-top:10px;border-left-color:var(--bad)">NCBI Virus에서 바이러스 분류군을 찾지 못해 추가할 수 없습니다. 철자나 학명(예: Orthohantavirus andesense)으로 다시 입력해 보세요.</div>';
  box.innerHTML=h}
+async function lkPoll(id,q){const box=document.getElementById('lkres'),b=document.getElementById('lkb');b.disabled=true;
+ const tick=async()=>{let j;try{const resp=await fetch('/api/job/'+id);j=await resp.json();if(resp.status===404)j={error:'조회 작업을 찾을 수 없습니다(서버가 재시작되었을 수 있습니다). 다시 조회하세요.',done:true}}
+  catch(e){box.innerHTML='<span style="color:var(--bad)">서버에 연결할 수 없습니다: '+E(e)+'</span>';b.disabled=false;return}
+  if(j.error){box.innerHTML='<span style="color:var(--bad)">조회 실패: '+E(j.error)+' <a href="/jobs">작업 탭에서 로그 보기</a></span>';lkStore(null);b.disabled=false;return}
+  if(!j.done){box.innerHTML='<span class="spin"></span> <span class="mut">'+E(j.msg||'확인 중…')+' (서버에서 진행 중 — 다른 메뉴로 가도 이어집니다)</span>';setTimeout(tick,800);return}
+  lkStore(null);b.disabled=false;lkRender(j.result,q)};tick()}
+async function lookup(){const q=document.getElementById('lkq').value.trim();if(!q)return;const box=document.getElementById('lkres'),b=document.getElementById('lkb');
+ b.disabled=true;box.innerHTML='<span class="spin"></span> <span class="mut">조회 작업을 시작하는 중…</span>';
+ let r;try{const resp=await fetch('/api/lookup/start?q='+encodeURIComponent(q),{method:'POST'});r=await resp.json();if(!resp.ok){box.innerHTML='<span class="mut">'+E(r.error||'오류')+'</span>';b.disabled=false;return}}
+ catch(e){box.innerHTML='<span style="color:var(--bad)">조회 실패: '+E(e)+'</span>';b.disabled=false;return}
+ lkStore({id:r.job,q});lkPoll(r.job,q)}
+try{const x=JSON.parse(localStorage.getItem('gcLookup')||'null');if(x){document.getElementById('lkq').value=x.q;lkPoll(x.id,x.q)}}catch(e){}
 </script>
 <style>
 .cs{background:var(--card);border:1px solid var(--bd);border-left:4px solid var(--warn);border-radius:4px;padding:12px 16px;margin-bottom:12px}

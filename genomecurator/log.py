@@ -9,6 +9,7 @@ import contextvars
 import logging
 import logging.handlers
 import os
+import re
 import sys
 from contextlib import contextmanager
 
@@ -79,12 +80,20 @@ def setup(console: bool = True) -> None:
     get("log").info("logging started: Virus Genome Curator %s (file level %s) -> %s", __version__, os.environ.get("GC_LOG_LEVEL", "INFO").upper(), log_dir())
 
 
-def tail(n: int = 200, level: str = "") -> list[str]:
+def tail(n: int = 200, level: str = "", contains: str = "") -> list[str]:
     """Last n lines of the current log file (optionally only WARNING/ERROR), for the web log viewer."""
     try:
         lines = (log_dir() / "genomecurator.log").read_text(encoding="utf-8", errors="replace").splitlines()
     except OSError:
         return []
+    if contains:      # e.g. "job=ab12cd34": every line of one job, plus the traceback lines that follow a matching line
+        out, keep = [], False
+        for ln in lines:
+            starts = bool(re.match(r"\d{4}-\d{2}-\d{2} ", ln))
+            keep = (contains in ln) if starts else keep
+            if keep:
+                out.append(ln)
+        lines = out
     if level:
         keep = {"WARNING": ("WARNING", "ERROR", "CRITICAL"), "ERROR": ("ERROR", "CRITICAL")}.get(level.upper())
         if keep:

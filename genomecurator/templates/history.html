@@ -9,7 +9,7 @@
 <form method="get" style="display:flex;gap:8px;align-items:center;margin-bottom:8px">
  <select name="lvl" onchange="this.form.submit()"><option value="" {{ 'selected' if not lvl }}>전체</option><option value="WARNING" {{ 'selected' if lvl == 'WARNING' }}>경고 이상</option><option value="ERROR" {{ 'selected' if lvl == 'ERROR' }}>오류만</option></select>
  <select name="n" onchange="this.form.submit()">{% for k in (100, 200, 500, 1000) %}<option value="{{ k }}" {{ 'selected' if n == k }}>최근 {{ k }}줄</option>{% endfor %}</select>
- <span class="mut" style="font-size:12.5px">줄 형식: 시각 레벨 모듈 [job=작업 watch=바이러스 changeset=번호] 내용</span></form>
+ <input name="q" value="{{ q }}" placeholder="검색 (예: job=ab12cd34)" style="width:200px"><button>검색</button><span class="mut" style="font-size:12.5px">줄 형식: 시각 레벨 모듈 [job=작업 watch=바이러스 changeset=번호] 내용</span></form>
 <pre id="srvlog" style="background:var(--stripe);border:1px solid var(--bd);border-radius:4px;padding:8px 10px;font:12px/1.5 Consolas,Menlo,monospace;max-height:520px;overflow:auto;white-space:pre-wrap;overflow-wrap:anywhere;margin:0">{% for ln in srv %}<span style="{{ 'color:var(--bad)' if ' ERROR ' in ln[:40] else ('color:var(--warn)' if ' WARNING ' in ln[:40] else '') }}">{{ ln }}</span>
 {% else %}<span class="mut">아직 로그가 없습니다.</span>{% endfor %}</pre>
 <script>var e=document.getElementById('srvlog');e.scrollTop=e.scrollHeight</script>

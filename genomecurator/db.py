@@ -57,6 +57,11 @@ CREATE TABLE IF NOT EXISTS sequence_check(
   length INTEGER, sha256 TEXT, ref_length INTEGER, prefix_same INTEGER, suffix_same INTEGER, detail TEXT, checked_at TEXT,
   PRIMARY KEY(watch_id, accession, source));
 CREATE TABLE IF NOT EXISTS sequence_plan(watch_id INTEGER PRIMARY KEY, created TEXT, plan_json TEXT);  -- dry-run of seqcheck
+-- every background job (jobs.py): status, progress, log, error, result - survives page reloads and server restarts
+CREATE TABLE IF NOT EXISTS job(
+  id TEXT PRIMARY KEY, kind TEXT, label TEXT, status TEXT,  -- running|done|error|interrupted
+  pct REAL DEFAULT 0, msg TEXT, started TEXT, finished TEXT, error TEXT, redirect TEXT, log_json TEXT, result_json TEXT);
+CREATE INDEX IF NOT EXISTS ix_job_started ON job(started);
 -- a person's choice between the sources' values (resolve.py); honoured by every later check
 CREATE TABLE IF NOT EXISTS field_choice(
   watch_id INTEGER, accession TEXT, field TEXT, source TEXT,  -- ncbi|bvbrc|pathoplexus|custom
@@ -119,8 +124,19 @@ def migrate(con: sqlite3.Connection) -> None:
     wcols = {r[1] for r in con.execute("PRAGMA table_info(watchlist)")}
     if "pathoplexus_organism" not in wcols:
         con.execute("ALTER TABLE watchlist ADD COLUMN pathoplexus_organism TEXT")
-    con.execute("DROP VIEW IF EXISTS v_genome_analysis")   # flat view for BI tools (Superset); rebuilt on every start
-    con.execute(ANALYSIS_VIEW)
+    # flat view for BI tools (Superset); rebuilt only when its definition changed. Several threads connect at once (background jobs,
+    # pollers), so the drop+create is one transaction and a lost race is harmless.
+    cur = con.execute("SELECT sql FROM sqlite_master WHERE type='view' AND name='v_genome_analysis'").fetchone()
+    if cur is None or (cur[0] or "").strip() != ANALYSIS_VIEW.strip():
+        try:
+            con.execute("BEGIN IMMEDIATE")
+            con.execute("DROP VIEW IF EXISTS v_genome_analysis")
+            con.execute(ANALYSIS_VIEW)
+            con.commit()
+        except sqlite3.OperationalError:
+            con.rollback()
+            if con.execute("SELECT 1 FROM sqlite_master WHERE name='v_genome_analysis'").fetchone() is None:
+                raise
 
 
 _recorded: set[str] = set()

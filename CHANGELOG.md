@@ -11,6 +11,21 @@ re-pinned (the full list with licences is in [docs/DEPENDENCIES.md](docs/DEPENDE
 
 ## [Unreleased]
 
+### Added
+- **Jobs tab**: every long task (adding or looking up a virus, check, apply, FASTA download, sequence verification, schema check, publish, and the scheduler's own runs) is a server job with a durable record: running / done / error / interrupted, progress, a timestamped log, the error with where it happened, and a link to that job's lines in the server log. The tab shows a live count of running jobs or unseen failures, and a toast appears when a job ends while you are on another page.
+- Progress window gets a **Run in background** button.
+- Server-log viewer can be searched (e.g. `job=ab12cd34`).
+
+### Changed
+- Adding a virus and the virus lookup now run as server jobs, so clicking another menu no longer loses them (the lookup resumes where you left it).
+- Scheduled checks and the daily schema check are recorded as jobs instead of only appearing in the log.
+
+### Fixed
+- Concurrent database connections could fail with `view v_genome_analysis already exists`; the analysis view is now rebuilt only when its definition changed, in one transaction.
+
+### Data & compatibility
+- New operational table `job` (created automatically; not included in backups). Schema version stays 1.
+
 ## [0.2.0] - 2026-10-17
 
 Makes the quality of a genome and the disagreement between sources something you can *act on*: a Near complete class, a way to choose between the

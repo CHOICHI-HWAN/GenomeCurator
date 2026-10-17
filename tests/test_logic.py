@@ -691,3 +691,92 @@ def test_resolve_auto_pick_applies_medium_and_leaves_low(tmp_path, monkeypatch):
     assert all(r[0] == 1 for r in con.execute("SELECT auto FROM field_choice"))             # marked as automatic
     assert R.preview_auto(con, 1, "medium")["fields"] == 0                                    # nothing left to pick automatically
     assert "field_choice" in __import__("genomecurator.backup", fromlist=["x"]).KEEP_TABLES   # decisions are part of backups
+
+
+def _jobs_env(tmp_path, monkeypatch):
+    from genomecurator import config, db, jobs
+    monkeypatch.setattr(config, "DATA_DIR", tmp_path)
+    monkeypatch.setattr(config, "DB_PATH", tmp_path / "g.db")
+    db.connect().close()
+    jobs.live.clear()
+    return jobs
+
+
+def test_job_lifecycle_is_recorded_with_log_error_and_result(tmp_path, monkeypatch):
+    jobs = _jobs_env(tmp_path, monkeypatch)
+
+    def ok(p):
+        p(40, "halfway")
+        return {"redirect": "/x", "result": {"found": 3}}
+
+    def boom(p):
+        p(10, "starting")
+        raise RuntimeError("source down")
+    a = jobs.run("aaaa0001", "good job", "check", ok)
+    b = jobs.run("bbbb0002", "bad job", "apply", boom)
+    assert a["status"] == "done" and a["pct"] == 100 and a["redirect"] == "/x" and a["result"] == {"found": 3}
+    assert b["status"] == "error" and "source down" in b["error"] and any(x["level"] == "error" for x in b["log"])
+    jobs.live.clear()                                        # as after the live entry expired (or a reload): the table is the record
+    assert jobs.get("aaaa0001")["result"] == {"found": 3} and any("halfway" in x["msg"] for x in jobs.get("aaaa0001")["log"])
+    assert [r["id"] for r in jobs.list_jobs(status="error")] == ["bbbb0002"]
+    assert jobs.get("nope") is None
+
+
+def test_running_job_is_interrupted_by_a_restart_and_summary_counts(tmp_path, monkeypatch):
+    jobs = _jobs_env(tmp_path, monkeypatch)
+    import threading, time
+    gate, started = threading.Event(), threading.Event()
+
+    def slow(p):
+        p(20, "working")
+        started.set()
+        gate.wait(5)
+    jid = jobs.start(slow, "slow one", "fasta")
+    assert started.wait(5)
+    s = jobs.summary()
+    assert [r["id"] for r in s["running"]] == [jid]
+    gate.set()
+    for _ in range(100):
+        if jobs.live[jid]["status"] != "running":
+            break
+        time.sleep(0.02)
+    # a row the previous process left as running
+    from genomecurator.db import connect
+    con = connect()
+    con.execute("INSERT INTO job(id,kind,label,status,pct,msg,started) VALUES('dead0001','check','died','running',30,'x','2026-01-01T00:00:00')")
+    con.commit()
+    con.close()
+    assert jobs.mark_interrupted() == 1
+    d = jobs.get("dead0001")
+    assert d["status"] == "interrupted" and "다시 시작" in d["error"]
+    assert jobs.summary()["failed"] >= 1
+
+
+def test_jobs_api_and_server_side_add_and_lookup(tmp_path, monkeypatch):
+    jobs = _jobs_env(tmp_path, monkeypatch)
+    import time
+    from fastapi.testclient import TestClient
+    from genomecurator import curate, lookup, web
+    calls = []
+    monkeypatch.setattr(curate, "add_watch", lambda name, taxon=None, filters=None: calls.append((name, taxon)) or 1)
+    monkeypatch.setattr(lookup, "lookup_virus", lambda q: {"sources": {}, "add": {"taxon": "T", "taxon_id": 1}, "suggestions": [], "note": q})
+    c = TestClient(web.create_app(scheduler=False))
+
+    def wait(jid):
+        for _ in range(100):
+            j = c.get(f"/api/job/{jid}").json()
+            if j["done"]:
+                return j
+            time.sleep(0.05)
+        raise AssertionError("job did not finish")
+    j = wait(c.post("/watch", data={"name": "Mpox", "taxon": "Monkeypox virus"}).json()["job"])
+    assert j["status"] == "done" and calls == [("Mpox", "Monkeypox virus")] and j["redirect"].startswith("/?msg=")
+    j = wait(c.post("/api/lookup/start?q=nipah").json()["job"])
+    assert j["result"]["note"] == "nipah" and j["kind"] == "lookup"
+    assert c.post("/api/lookup/start?q=").status_code == 400
+    monkeypatch.setattr(curate, "add_watch", lambda *a, **k: (_ for _ in ()).throw(ValueError("no such taxon")))
+    j = wait(c.post("/watch", data={"name": "zzz"}).json()["job"])
+    assert j["status"] == "error" and "no such taxon" in j["error"]       # the failure is visible, not swallowed
+    assert {r["kind"] for r in c.get("/api/jobs").json()} == {"watch_add", "lookup"}
+    assert c.get("/api/jobs/summary").json()["failed"] >= 1
+    assert c.get("/jobs").status_code == 200 and c.get("/history?q=job%3D" + j["id"]).status_code == 200
