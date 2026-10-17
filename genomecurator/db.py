@@ -89,9 +89,18 @@ SELECT g.genome_id, g.accession, w.name AS virus, g.genome_name, g.strain, g.gen
   CASE WHEN g.pathoplexus_accession IS NOT NULL AND g.pathoplexus_accession != '' THEN 'Yes' ELSE 'No' END AS in_pathoplexus,
   CASE WHEN s.file_path IS NOT NULL THEN 'Yes' ELSE 'No' END AS has_fasta,
   g.bioproject_accession, g.biosample_accession,
+  r.ref_length,
+  CASE WHEN r.ref_length IS NOT NULL AND g.genome_length > 0 THEN ROUND(g.genome_length * 100.0 / r.ref_length, 1) END AS ref_coverage_pct,
+  CASE WHEN g.genome_status = 'Removed' THEN 'Removed' WHEN g.genome_status = 'Complete' THEN 'Complete'
+       WHEN r.ref_length IS NOT NULL AND g.genome_length > 0 AND g.genome_length * 100.0 / r.ref_length
+            >= COALESCE((SELECT CAST(value AS REAL) FROM app_meta WHERE key = 'near_complete_pct'), 90) THEN 'Near complete'
+       ELSE 'Partial' END AS completeness,
   1 AS n
 FROM genome g
 LEFT JOIN watchlist w ON w.id = g.watch_id
+LEFT JOIN (SELECT watch_id, MAX(genome_length) AS ref_length FROM genome
+           WHERE refseq_accessions IS NOT NULL AND refseq_accessions != '' AND genome_length > 0 AND IFNULL(genome_status,'') != 'Removed'
+           GROUP BY watch_id) r ON r.watch_id = g.watch_id
 LEFT JOIN genome_sequence s ON s.genome_id = g.genome_id
 """
 
@@ -132,6 +141,9 @@ def record_version(con: sqlite3.Connection) -> None:
             con.execute("INSERT INTO app_meta(key, value, updated) VALUES(?,?,CURRENT_TIMESTAMP) ON CONFLICT(key) DO UPDATE SET value=excluded.value, updated=CURRENT_TIMESTAMP", (k, v))
         audit(con, "version", f"Virus Genome Curator {__version__} (DB schema {DB_SCHEMA_VERSION})" + (f" - 이전 {prev}" if prev else " - 이 데이터베이스를 처음 열었습니다"))
         log.get("db").info("database now handled by Virus Genome Curator %s (was %s)", __version__, prev or "new")
+    pct = str(config.NEAR_COMPLETE_PCT)      # the analysis view reads the threshold from here (same rule as completeness.classify)
+    con.execute("INSERT INTO app_meta(key, value, updated) VALUES('near_complete_pct', ?, CURRENT_TIMESTAMP) "
+                "ON CONFLICT(key) DO UPDATE SET value=excluded.value, updated=CURRENT_TIMESTAMP WHERE value != excluded.value", (pct,))
     _recorded.add(key)
 
 

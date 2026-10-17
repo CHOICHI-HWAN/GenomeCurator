@@ -44,7 +44,7 @@ a{color:var(--acc)}.mut{color:var(--mut)}.view{display:none}.view.on{display:blo
 .gt th{position:sticky;top:0;background:var(--th);cursor:pointer;user-select:none;border-bottom:2px solid var(--bd);border-right:1px solid var(--bd);padding:5px 8px;font-size:12px;text-align:left;z-index:1}
 .gt th.s::after{content:" ▲";font-size:9px}.gt th.s.d::after{content:" ▼";font-size:9px}
 .gt td{padding:3px 8px;border-bottom:1px solid var(--bd);max-width:260px;overflow:hidden;text-overflow:ellipsis}
-.gt tbody tr{cursor:pointer}.gt tbody tr:hover{background:var(--hover)}.gt tr.cur{background:var(--chip)}.gt td.nm{color:var(--acc);font-weight:500}.Complete{color:var(--ok)}
+.gt tbody tr{cursor:pointer}.gt tbody tr:hover{background:var(--hover)}.gt tr.cur{background:var(--chip)}.gt td.nm{color:var(--acc);font-weight:500}.Near{color:var(--warn)}.Complete{color:var(--ok)}
 #rp{width:300px;flex:none;border-left:1px solid var(--bd);background:var(--stripe);font-size:12.5px;max-height:72vh;overflow:auto}
 #rp h5{margin:0;padding:8px 12px;font-size:13px;background:var(--bvg);color:#fff}
 #rp .hint{margin:12px;padding:10px;background:var(--card);border:1px solid var(--bd);border-radius:3px;color:var(--mut)}
@@ -89,12 +89,12 @@ const DATA=JSON.parse(document.getElementById('data').textContent);
 const $=(s,r=document)=>r.querySelector(s);
 const esc=s=>String(s??'').replace(/[&<>"]/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c]));
 const fmt=n=>Number(n).toLocaleString();
-const COLS=[["genome_name","Genome Name",1],["strain","Strain",1],["genbank","GenBank Accessions",1],["genome_length","Size",1],["genome_status","Genome Status",1],
+const COLS=[["genome_name","Genome Name",1],["strain","Strain",1],["genbank","GenBank Accessions",1],["genome_length","Size",1],["completeness","Completeness",1],["genome_status","NCBI Status",0],
  ["collection_date","Collection Date",1],["isolation_country","Isolation Country",1],["host_name","Host Name",1],["sra_accession","SRA Accession",1],
  ["bioproject_accession","BioProject",0],["biosample_accession","BioSample",0],["sequencing_platform","Sequencing Platform",0],["assembly_method","Assembly Method",0],
  ["clade","Clade",-1],["lineage","Lineage",-1],["serotype","Serotype",-1],["genotype","Genotype",-1],["subtype","Subtype",-1],["outbreak","Outbreak",-1],["geographic_location","Geographic Location",0],["isolation_source","Isolation Source",0],["genome_quality","Genome Quality",0],["has_sra","SRA Available",0],
  ["genome_id","Genome ID",0],["bvbrc_genome_id","BV-BRC ID",0],["gc_content","GC %",0],["release_date","Release Date",0]].map(([k,label,on])=>({k,label,on:on===1,opt:on===-1}));
-const FACETS=[["genome_status","Genome Status"],["host_name","Host"],["isolation_country","Country"],["collection_year","Collection Year"],["has_sra","SRA"],["genome_quality","Quality"]].map(([k,label])=>({k,label}));
+const FACETS=[["completeness","Completeness"],["genome_status","NCBI Status"],["host_name","Host"],["isolation_country","Country"],["collection_year","Collection Year"],["has_sra","SRA"],["genome_quality","Quality"]].map(([k,label])=>({k,label}));
 const LINKS={genbank:a=>'https://www.ncbi.nlm.nih.gov/nuccore/'+a,sra_accession:a=>'https://www.ncbi.nlm.nih.gov/sra/'+a,
  bioproject_accession:a=>'https://www.ncbi.nlm.nih.gov/bioproject/?term='+a,biosample_accession:a=>'https://www.ncbi.nlm.nih.gov/biosample/'+a};
 const cell=(k,r)=>{const v=r[k];if(!LINKS[k]||!v)return esc(v);

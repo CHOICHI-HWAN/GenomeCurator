@@ -195,3 +195,9 @@ Windows에서 `git`이 PATH에 없으면 `C:\Program Files\Git\cmd\git.exe`로 �
 - 표시 이름: 정식 `Virus Genome Metadata Curator`, 짧게 `Virus Genome Curator`(헤더·푸터·제목). **코드 이름은 그대로**(패키지 `genomecurator`, 명령어, 저장소 `GenomeCurator`, 데이터 폴더 `GenomeCurator`, `GC_*`, 백업 식별자 `genomecurator-backup`, Superset 대시보드 제목 `GenomeCurator 메타데이터 분석`). 코드까지 바꾸려면 데이터 폴더 이전·옛 명령어 별칭·백업 식별자 호환이 필요해 별도 릴리스로 미룬다(0.2.0 이후 검토).
 - 공개 페이지(`docs/index.html`)의 제목은 다음 "배포하기" 때 새 이름으로 바뀐다.
 
+## Near complete (준완전) 완성도 (2026-10-17, Unreleased)
+- `completeness.py`: Complete(NCBI가 Complete — 신뢰) / Near complete(Complete 아님 + 길이 ≥ 기준 게놈의 `GC_NEAR_COMPLETE_PCT`% , 기본 90) / Partial. 기준 게놈 = 그 바이러스의 수집된 RefSeq 중 가장 긴 것(없으면 Near complete는 판정 안 함). 같은 규칙을 분석 뷰 SQL(`completeness`, `ref_coverage_pct`, `ref_length`)에도 썼고 임계값은 `app_meta.near_complete_pct`에서 읽는다. 파이썬과 SQL이 13,462건 전부 일치하는지, 임계값 변경 시에도 일치하는지 테스트한다.
+- 90%의 근거: 실데이터 분포에 골짜기가 있다(mpox 50~90% 구간 33건/13,462, nipah 2건/442). CheckV high-quality(≥90%)와 같다. 더 엄격히(95%) 하려면 환경변수.
+- 한계: ① 길이 비율일 뿐 정렬 기반 커버리지·N 비율은 아니다(FASTA가 로컬에 있을 때 N ≤ 5%를 추가할 수 있음). ② 기준이 하나라 계통별로 길이가 다른 종에서는 Complete가 아닌 짧은 계통이 Partial로 보일 수 있다(mpox clade I은 기준 대비 약 95~97%, 그래도 90% 이상이라 Near complete). ③ 사용자가 기준 길이를 직접 지정하는 화면은 아직 없다.
+- 실측: mpox에서 NCBI Partial 8,223건 중 7,583건이 Near complete, 640건만 Partial.
+

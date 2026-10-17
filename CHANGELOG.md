@@ -18,6 +18,12 @@ re-pinned (the full list with licences is in [docs/DEPENDENCIES.md](docs/DEPENDE
   command line, the data folder, environment variables and the backup format identifier are **unchanged**, so nothing needs migrating.
 
 ### Added
+- **Near complete** genomes. NCBI only distinguishes Complete from Partial, but most of the "Partial" genomes are missing just a few hundred bases at the ends. A new
+  *Completeness* class sits between them: **Complete** (NCBI says Complete; trusted, so a lineage that is legitimately shorter than the reference is not demoted),
+  **Near complete** (not Complete, length at least **90%** of the reference genome) and **Partial** (below that, or no reference). The reference of a virus is its longest
+  RefSeq genome among the collected records. The threshold is `GC_NEAR_COMPLETE_PCT` (default 90, the CheckV high-quality cut-off; on real data it sits in the valley of the length
+  distribution: for mpox only 33 of 13,462 genomes lie between 50% and 90%). Shown as a column, a filter and dashboard KPIs, on the public page, and in the analysis view
+  (`completeness`, `ref_coverage_pct`, `ref_length`), which applies the same rule in SQL. On the mpox data 7,583 of the 8,223 NCBI-Partial genomes are Near complete.
 - **Simple view** on the **Schema** tab (the default; a tab switches to the detailed board below): one table with the local `genome` columns as rows and
   NCBI / BV-BRC / Pathoplexus as columns, each cell naming the source field that fills the column, coloured by status. Columns that need attention are
   listed on top with the source field to look at; columns are grouped (identity, taxonomy, genome, sample, dates, external IDs). The choice of view is remembered.

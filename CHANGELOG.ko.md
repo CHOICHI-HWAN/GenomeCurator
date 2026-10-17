@@ -17,6 +17,11 @@ Virus Genome Metadata Curator(패키지 `genomecurator`, 이전 표시 이름 "G
   저장소, 파이썬 패키지 `genomecurator`, 명령어, 데이터 폴더, 환경변수, 백업 형식 식별자는 **그대로**라서 옮길 것이 없습니다.
 
 ### 추가
+- **Near complete(준완전)** 유전체. NCBI는 Complete와 Partial만 구분하는데, "Partial" 대부분은 양 끝 몇백 염기만 모자란 것입니다. 그 사이에 *완성도* 등급을 새로 두었습니다:
+  **Complete**(NCBI가 Complete로 표시한 것. 신뢰하므로 기준 게놈보다 원래 짧은 계통이 강등되지 않음), **Near complete**(Complete가 아니면서 길이가 기준 게놈의 **90% 이상**),
+  **Partial**(그 미만이거나 기준 없음). 바이러스의 기준 게놈은 수집된 RefSeq 게놈 중 가장 긴 것입니다. 기준 비율은 `GC_NEAR_COMPLETE_PCT`(기본 90, CheckV high-quality 기준과 같고
+  실제 데이터에서도 길이 분포의 골짜기에 해당: mpox 13,462건 중 50~90% 구간은 33건뿐)로 바꿀 수 있습니다. 열·필터·대시보드 KPI·공개 페이지·분석용 뷰(`completeness`, `ref_coverage_pct`, `ref_length`,
+  SQL에도 같은 규칙)에 나타납니다. mpox에서 NCBI가 Partial로 표시한 8,223건 중 7,583건이 Near complete입니다.
 - **스키마** 탭의 **간단히 보기**(기본, 탭으로 아래 자세한 구조도와 전환): 내 `genome` 열을 행, NCBI / BV-BRC / Pathoplexus를 열로 놓은 표 하나에
   그 열을 채우는 소스 필드 이름을 상태 색과 함께 보여 줍니다. 확인이 필요한 열은 위에 모아 어느 소스 필드를 봐야 하는지 알려 주고, 열은 묶음(식별, 분류, 유전체, 시료, 날짜,
   외부 ID)으로 나뉩니다. 고른 보기는 기억합니다.

@@ -241,6 +241,7 @@ python -m genomecurator --help        # 정확한 옵션은 여기서
 | `NCBI_API_KEY` | (없음) | 있으면 NCBI 요청 한도가 늘어납니다 |
 | `GC_CHECK_INTERVAL_HOURS` | `24` | 자동 확인 주기 |
 | `GC_REQUEST_DELAY_MS` | `300` | 모든 외부 요청 사이 최소 간격 (예의 바른 손님) |
+| `GC_NEAR_COMPLETE_PCT` | `90` | Near complete 기준: NCBI가 Complete가 아니라고 한 유전체 중 길이가 기준 게놈의 이 % 이상이면 "준완전" |
 | `GC_DRYRUN_SAMPLE` | `3` | 적용 전 점검에서 샘플로 받아 볼 서열 수 |
 | `GC_SCHEMA_CHECK_HOUR` | `3` | 매일 스키마 점검 시각(시) |
 | `GC_SCHEMA_CHECK_SAMPLE` | `3` | 매일 점검에서 바이러스·소스당 읽을 레코드 수 |

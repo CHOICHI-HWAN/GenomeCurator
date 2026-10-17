@@ -6,6 +6,7 @@
 <div class="bvh"><div class="ico">T</div><div><small>Taxon View</small>
  <div class="crumb">{% for l in data.lineage[:-1] %}{{ l }} › {% endfor %}<b>{{ data.watch }}</b> <em>( {{ data.rows|length }} Genomes )</em></div></div>
  <select style="margin-left:auto" onchange="location.href='/genomes?watch='+this.value">{% for w in watches %}<option value="{{ w.id }}" {{ 'selected' if w.id==watch }}>{{ w.name }} ({{ w.n }})</option>{% endfor %}</select></div>
+<div class="mut" style="font-size:12px;margin:2px 0 4px" title="GC_NEAR_COMPLETE_PCT로 기준 비율을 바꿀 수 있습니다">ⓘ {{ data.ref_note }}</div>
 <div class="tabs"><a href="/dashboard?watch={{ watch }}">Overview</a><a class="on">Genomes</a><a href="/">Changes</a><a href="/history">History</a></div>
 <form id="sqf" method="post" action="/genomes/sequences" style="display:none"><input name="ids" id="sqids"><input name="watch" value="{{ watch }}"></form>
 {% set toolbar_extra %}

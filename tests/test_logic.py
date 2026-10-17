@@ -530,3 +530,33 @@ def test_old_schema_reports_still_render_after_the_code_grows():
     assert cols[0]["group"] == "유전체" and cols[0]["group_order"] == 2
     assert cols[1]["group"] == "기타" and cols[1]["feeders"] == [] and cols[1]["msg"] == ""
     assert sc.upgrade_report({"verdict": "ok"}) == {"verdict": "ok"}        # a report without a board is untouched
+
+
+def test_completeness_classes_and_sql_view_agree(tmp_path, monkeypatch):
+    from genomecurator import completeness as C, config, db
+    from genomecurator.db import connect
+    monkeypatch.setattr(config, "DATA_DIR", tmp_path)
+    monkeypatch.setattr(config, "DB_PATH", tmp_path / "g.db")
+    db._recorded.discard(str(config.DB_PATH))
+    con = connect()
+    con.execute("INSERT INTO watchlist(id,name,taxon,taxon_id) VALUES(1,'V','V',9),(2,'NoRef','N',8)")
+    rows = [("REF", 1000, "Complete", "NC_000001"), ("c-short", 500, "Complete", None),          # NCBI's Complete is trusted even when short
+            ("edge90", 900, "Partial", None), ("below", 899, "Partial", None), ("long", 1000, "Partial", None),
+            ("nostatus", 950, None, None), ("gone", 950, "Removed", None)]
+    for i, (acc, ln, st, rs) in enumerate(rows):
+        con.execute("INSERT INTO genome(genome_id,watch_id,accession,genome_length,genome_status,refseq_accessions) VALUES(?,?,?,?,?,?)", (str(i), 1, acc, ln, st, rs))
+    con.execute("INSERT INTO genome(genome_id,watch_id,accession,genome_length,genome_status) VALUES('x',2,'noref',5000,'Partial')")   # no RefSeq: cannot be Near complete
+    con.commit()
+    ref = C.reference_map(con)
+    assert ref == {1: ("REF", 1000)}
+    for pct in (90.0, 95.0):                       # the view reads the threshold stored in app_meta, so both paths must follow the setting
+        monkeypatch.setattr(config, "NEAR_COMPLETE_PCT", pct)
+        db._recorded.discard(str(config.DB_PATH))
+        con = connect()
+        sql = {r[0]: r[1] for r in con.execute("SELECT accession, completeness FROM v_genome_analysis")}
+        for acc, ln, st, wid in con.execute("SELECT accession, genome_length, genome_status, watch_id FROM genome"):
+            assert sql[acc] == C.classify(st, ln, ref.get(wid, (None, None))[1], pct)[0], (acc, pct)
+        con.close()
+    assert sql["edge90"] == "Partial" and C.classify("Partial", 900, 1000, 90)[0] == "Near complete"   # 95% setting is stricter than 90%
+    assert sql["c-short"] == "Complete" and sql["noref"] == "Partial" and sql["gone"] == "Removed"
+    assert "판정하지 않습니다" in C.describe(None) and "NC_000001" in C.describe(("NC_000001", 1000)) and "90%" in C.describe(("NC_000001", 1000), 90)

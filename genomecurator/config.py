@@ -64,6 +64,9 @@ CHECK_INTERVAL_HOURS = float(os.environ.get("GC_CHECK_INTERVAL_HOURS", "24"))
 # Daily schema check: every watched virus is sampled with this many records per source, at this local hour.
 SCHEMA_CHECK_HOUR = int(os.environ.get("GC_SCHEMA_CHECK_HOUR", "3"))
 SCHEMA_CHECK_SAMPLE = int(os.environ.get("GC_SCHEMA_CHECK_SAMPLE", "3"))
+# "Near complete": a genome NCBI does not call Complete but whose length is at least this % of the reference genome (see completeness.py).
+# 90 follows the CheckV high-quality cut-off and sits in the valley of the real length distribution (hardly any genomes lie between 50% and 90%).
+NEAR_COMPLETE_PCT = float(os.environ.get("GC_NEAR_COMPLETE_PCT", "90"))
 DRYRUN_SAMPLE_SIZE = int(os.environ.get("GC_DRYRUN_SAMPLE", "3"))
 MIN_FREE_BYTES = int(os.environ.get("GC_MIN_FREE_BYTES", str(500 * 1024 * 1024)))
 

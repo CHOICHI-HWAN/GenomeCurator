@@ -28,7 +28,7 @@ const pal=['#2f79b5','#e08a1e','#3a9d6e','#c4524f','#8a6bbd','#4aa3b8','#b5a02f'
 const fmt=n=>Number(n).toLocaleString();
 const provTot=Object.values(D.prov).reduce((a,b)=>a+b,0)||1;
 const prov=Object.entries(D.prov).map(([k,v])=>k+' '+Math.round(100*v/provTot)+'%').join(' · ')||'-';
-document.getElementById('kpis').innerHTML=[[fmt(D.total),'전체 유전체'],[D.complete_pct+'%','완전 유전체 비율'],[fmt(D.avg_len)+' bp','평균 길이'],
+document.getElementById('kpis').innerHTML=[[fmt(D.total),'전체 유전체'],[D.complete_pct+'%','완전(Complete)'],[D.near_pct+'%','준완전(Near complete)'],[fmt(D.avg_len)+' bp','평균 길이'],
  [D.pending,'승인 대기 changeset'],[(D.last_checked||'-').replace('T',' '),'마지막 확인']].map(([a,b])=>`<div class="kpi"><b>${a}</b><span>${b}</span></div>`).join('')
  +`<div class="kpi" style="grid-column:span 2"><b style="font-size:15px;padding:6px 0">${prov}</b><span>필드 값 출처 비중</span></div>`;
 if(typeof Chart==='undefined'){document.querySelector('.charts').innerHTML='<div class="card mut">Chart.js를 불러오지 못했습니다. 인터넷 연결을 확인하세요.</div>'}else{

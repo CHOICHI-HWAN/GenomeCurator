@@ -7,6 +7,7 @@ import json
 from datetime import date
 from pathlib import Path
 
+from . import completeness
 from .db import connect
 
 TEMPLATE = Path(__file__).parent / "templates" / "static_template.html"
@@ -23,6 +24,7 @@ def snapshot(repo: str = "") -> dict:
     con = connect()
     try:
         viruses = []
+        refs = completeness.reference_map(con)
         for w in con.execute("SELECT * FROM watchlist ORDER BY id").fetchall():
             rows = con.execute(
                 "SELECT g.*, s.gc_content FROM genome g LEFT JOIN genome_sequence s ON s.accession=g.accession "
@@ -37,6 +39,9 @@ def snapshot(repo: str = "") -> dict:
             for r in rows:
                 d = {k: r[k] for k in FIELDS if r[k] not in (None, "")}
                 d["genbank"] = f"{r['accession']}.{r['accession_version']}" if r["accession_version"] else r["accession"]
+                d["completeness"], cov = completeness.classify(r["genome_status"], r["genome_length"], refs.get(w["id"], (None, None))[1])
+                if cov is not None:
+                    d["ref_coverage"] = cov
                 if r["gc_content"] is not None:
                     d["gc_content"] = r["gc_content"]
                 if r["genome_id"] in prov:

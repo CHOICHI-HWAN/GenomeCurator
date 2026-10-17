@@ -9,7 +9,7 @@ from fastapi import FastAPI, Form, Request
 from fastapi.responses import HTMLResponse, JSONResponse, RedirectResponse, Response
 from fastapi.templating import Jinja2Templates
 
-from . import __version__, config, curate, log
+from . import __version__, completeness, config, curate, log
 from .db import audit_now, connect
 
 _log = log.get("web")
@@ -83,7 +83,7 @@ def start_job(fn, label: str = "job") -> JSONResponse:
 CS_COLS = [("kind", "종류", True, True), ("decision", "결정", True, True), ("integrity", "정합성", True, True), ("seq", "서열 검증", True, True),
            ("conflict_fields", "불일치 필드", True, False), ("accession", "Accession", True, False),
            ("accession_version", "Ver", True, False), ("genome_name", "Genome Name", True, False),
-           ("genome_status", "Status", True, False), ("genome_length", "Length", True, False),
+           ("completeness", "Completeness", True, True), ("genome_status", "NCBI Status", False, True), ("genome_length", "Length", True, False),
            ("strain", "Strain", True, False), ("host_name", "Host", True, False),
            ("clade", "Clade", None, False), ("lineage", "Lineage", None, False), ("serotype", "Serotype", None, False),
            ("genotype", "Genotype", None, False), ("subtype", "Subtype", None, False), ("outbreak", "Outbreak", None, False),
@@ -94,10 +94,11 @@ CS_COLS = [("kind", "종류", True, True), ("decision", "결정", True, True), (
            ("assembly_method", "Assembly Method", False, False), ("has_sra", "SRA", False, False),
            ("submitter", "Submitter", False, False), ("bvbrc_genome_id", "BV-BRC ID", False, False),
            ("release_date", "Release Date", False, False)]
-CS_FACETS = [("kind", "종류"), ("decision", "결정"), ("integrity", "정합성(소스 간 일치)"), ("seq", "서열 검증"), ("genome_status", "Genome Status"), ("host_name", "Host"),
+CS_FACETS = [("kind", "종류"), ("decision", "결정"), ("integrity", "정합성(소스 간 일치)"), ("seq", "서열 검증"), ("completeness", "Completeness"), ("host_name", "Host"),
              ("isolation_country", "Country"), ("collection_year", "Collection Year"), ("has_sra", "SRA")]
 GN_COLS = [("genome_name", "Genome Name", True), ("strain", "Strain", True), ("genbank", "GenBank Accessions", True),
-           ("genome_length", "Size", True), ("genome_status", "Genome Status", True), ("collection_date", "Collection Date", True),
+           ("genome_length", "Size", True), ("completeness", "Completeness", True, True), ("ref_coverage", "Ref Coverage %", False),
+           ("genome_status", "NCBI Status", False, True), ("collection_date", "Collection Date", True),
            ("isolation_country", "Isolation Country", True), ("host_name", "Host Name", True),
            ("clade", "Clade", None), ("lineage", "Lineage", None), ("serotype", "Serotype", None),
            ("genotype", "Genotype", None), ("subtype", "Subtype", None), ("outbreak", "Outbreak", None),
@@ -108,7 +109,7 @@ GN_COLS = [("genome_name", "Genome Name", True), ("strain", "Strain", True), ("g
            ("genome_quality", "Genome Quality", False), ("genome_id", "Genome ID", False), ("bvbrc_genome_id", "BV-BRC ID", False),
            ("gc_content", "GC %", False), ("release_date", "Release Date", False), ("date_modified", "Modified", False)]
 TAX_FACETS = [("clade", "Clade"), ("lineage", "Lineage"), ("serotype", "Serotype"), ("genotype", "Genotype"), ("subtype", "Subtype")]
-GN_FACETS = [("genome_status", "Genome Status"), ("host_name", "Host"), ("isolation_country", "Country"),
+GN_FACETS = [("completeness", "Completeness"), ("genome_status", "NCBI Status"), ("host_name", "Host"), ("isolation_country", "Country"),
              ("collection_year", "Collection Year"), ("has_sra", "SRA"), ("has_fasta", "FASTA"), ("genome_quality", "Quality")]
 
 
@@ -166,13 +167,14 @@ def dashboard_data(g: list[dict], prov: list[dict], last_checked) -> dict:
     n = len(g) or 1
     fill = sorted(({"f": f, "pct": round(100 * sum(1 for r in g if r.get(f)) / n, 1)} for f in fields),
                   key=lambda x: x["pct"])
-    status = Counter(r.get("genome_status") for r in g)
+    status = Counter(r.get("completeness") or r.get("genome_status") for r in g)
     return {
         "total": len(g), "complete_pct": round(100 * status.get("Complete", 0) / n, 1),
+        "near_pct": round(100 * status.get("Near complete", 0) / n, 1),
         "avg_len": round(sum(lens) / len(lens)) if lens else 0, "last_checked": last_checked,
         "pending": pending_total(), "prov": {p["source"]: p["n"] for p in prov},
         "monthly": by_prefix("release_date", 7), "year": by_prefix("collection_date", 4),
-        "country": top("isolation_country"), "host": top("host_name", 8), "status": top("genome_status", 6),
+        "country": top("isolation_country"), "host": top("host_name", 8), "status": top("completeness", 6),
         "clade": top("clade", 10) if any(r.get("clade") for r in g) else None,
         "lineage": top("lineage", 15) if any(r.get("lineage") for r in g) else None,
         "serotype": top("serotype", 10) if any(r.get("serotype") for r in g) else None,
@@ -382,6 +384,11 @@ def create_app(scheduler: bool = True) -> FastAPI:
     def changeset(request: Request, cid: int):
         cs = _rows("SELECT c.*, w.name wname FROM changeset c JOIN watchlist w ON w.id=c.watch_id WHERE c.id=?", cid)[0]
         rows = []
+        _c = connect()
+        try:
+            _ref = completeness.reference_map(_c).get(cs["watch_id"])
+        finally:
+            _c.close()
         agree = curate.source_agreement(cs["watch_id"])
         for i in _rows("SELECT * FROM changeset_item WHERE changeset_id=? ORDER BY kind, accession", cid):
             r = {k: v for k, v in json.loads(i["new_record_json"] or "{}").items()
@@ -389,6 +396,7 @@ def create_app(scheduler: bool = True) -> FastAPI:
             if isinstance(r.get("submitter"), str):
                 r["submitter"] = r["submitter"][:120]
             ag = agree.get(i["accession"], {})
+            r["completeness"], r["ref_coverage"] = completeness.classify(r.get("genome_status"), r.get("genome_length"), _ref and _ref[1])
             r.update(id=i["id"], kind=i["kind"], decision=i["decision"], accession=i["accession"],
                      has_sra="Yes" if r.get("sra_accession") else "No",
                      integrity="불일치" if ag.get("conflict") else ("표기차이" if ag.get("cosmetic") else "일치"),
@@ -473,6 +481,11 @@ def create_app(scheduler: bool = True) -> FastAPI:
                        "WHERE g.watch_id=?", watch):
             prov.setdefault(p["genome_id"], {})[p["field"]] = p["source"]
         lineage = (rows[0].get("taxon_lineage_names") or "").split(",") if rows else []
+        _c = connect()
+        try:
+            ref = completeness.reference_map(_c).get(watch)
+        finally:
+            _c.close()
         for n, r in enumerate(rows):
             r.pop("taxon_lineage_ids", None)
             r.pop("taxon_lineage_names", None)
@@ -481,8 +494,10 @@ def create_app(scheduler: bool = True) -> FastAPI:
             r["_prov"] = prov.get(r["genome_id"], {})
             r["has_sra"] = "Yes" if r.get("sra_accession") else "No"
             r["has_fasta"] = "Yes" if r.get("md5") else "No"
+            r["completeness"], r["ref_coverage"] = completeness.classify(r.get("genome_status"), r.get("genome_length"), ref and ref[1])
         ppx = _ppx_slug(watch, rows)
         data = {"rows": rows, "name": "genomes", "watch": cur and cur["name"], "lineage": lineage, "ppx": ppx,
+                "ref_note": completeness.describe(ref),
                 "cols": _cols(GN_COLS, rows), "facets": _facets(GN_FACETS, rows)}
         return render(request, "genomes.html", data=data, nav="gen", watches=watches, watch=watch, msg=msg)
 
@@ -598,6 +613,13 @@ def create_app(scheduler: bool = True) -> FastAPI:
         watches = _rows("SELECT w.id, w.name, (SELECT COUNT(*) FROM genome g WHERE g.watch_id=w.id) n FROM watchlist w")
         watch = current_watch(request, watch, watches)
         g = _rows("SELECT * FROM genome WHERE watch_id=?", watch)
+        _c = connect()
+        try:
+            _ref = completeness.reference_map(_c).get(watch)
+        finally:
+            _c.close()
+        for r in g:
+            r["completeness"], _ = completeness.classify(r.get("genome_status"), r.get("genome_length"), _ref and _ref[1])
         prov = _rows("SELECT p.source, COUNT(*) n FROM field_provenance p JOIN genome g ON g.genome_id=p.genome_id "
                      "WHERE g.watch_id=? GROUP BY p.source", watch)
         last = _rows("SELECT last_checked FROM watchlist WHERE id=?", watch)
