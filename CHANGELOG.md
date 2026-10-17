@@ -19,6 +19,7 @@ re-pinned (the full list with licences is in [docs/DEPENDENCIES.md](docs/DEPENDE
 - Server-log viewer can be searched (e.g. `job=ab12cd34`).
 
 ### Changed
+- README rewritten to be short and practical (features, screenshots, installation, running, output), in English with a Korean twin `README.ko.md`; the long explanations moved to `docs/GUIDE.ko.md`.
 - Adding a virus and the virus lookup now run as server jobs, so clicking another menu no longer loses them (the lookup resumes where you left it).
 - Scheduled checks and the daily schema check are recorded as jobs instead of only appearing in the log.
 
