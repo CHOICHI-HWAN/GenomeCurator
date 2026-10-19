@@ -29,8 +29,10 @@ Reviewed 2026-10-19 from the installed packages, the projects' LICENSE files and
 | nextstrain/mpox 워크플로 | MIT | `git clone`으로 `data/nextstrain/mpox`에 받습니다(저장소에는 없음). 분석마다 커밋 해시를 기록합니다. |
 | nextstrain-cli, snakemake, TreeTime, Nextclade, Node.js | MIT | 별도 conda 환경 `gc-nextstrain` |
 | MAFFT | BSD | 〃 |
-| **augur, auspice** | **AGPL-3.0** | 〃. 수정하지 않고 **별도 프로그램으로 실행**만 하며 이 저장소·Docker 이미지에는 들어가지 않습니다. Auspice 보기 서버는 `127.0.0.1`에만 열립니다. **다른 사람이 쓰도록 네트워크에 공개**하면 AGPL의 소스 제공 의무(수정하지 않았다면 업스트림 소스 링크)가 그 운영자에게 생기니, 공개하려면 따로 검토하세요. |
+| **augur, auspice** | **AGPL-3.0** | 〃. 수정하지 않고 **별도 프로그램으로 실행**만 하며 이 저장소·Docker 이미지에는 들어가지 않습니다. Auspice 보기 서버는 `127.0.0.1`에만 열립니다. 다른 사람이 쓰도록 네트워크에 공개할 때는 AGPL에 따라 소스(수정하지 않았다면 업스트림 소스 링크)를 안내하면 됩니다. 소스가 공개되어 있어 문제될 것은 없습니다. |
 | **IQ-TREE** | **GPL-2.0+** | 〃 (별도 프로그램으로 실행) |
+| **Squirrel, mutation_profile, gofasta** | GPL-3.0 | 별도 conda 환경 `gc-squirrel`. 별도 프로그램으로 실행하므로 이 프로젝트의 MIT 코드에는 영향이 없습니다. 소스가 모두 공개되어 있어, 나중에 이 도구들을 함께 배포하더라도 각 도구의 조건(라이선스 고지·소스 제공)을 맞추면 되고 어렵지 않습니다. |
+| minimap2 | MIT | 〃 |
 분석 결과(트리 JSON)와 입력 표에는 공개 데이터의 출처 조건과 *비공개* 데이터의 공유 제한이 그대로 따라갑니다: 비공개 포함 분석 결과(`data/nextstrain/auspice/`, `runs/`)는 공유하지 마세요.
 
 ### 선택 (개발·시연·분석)

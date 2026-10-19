@@ -1885,3 +1885,248 @@ def test_nextstrain_api(tmp_path, monkeypatch):
     assert c.get("/api/analyses/999").status_code == 404 and c.post("/api/datasets/999/analyze").status_code == 404
     assert c.delete(f"/api/analyses/{runs[0]['id']}").json() == {"deleted": True} and c.get(f"/api/analyses?dataset={ds['id']}").json() == []
     assert c.post("/api/nextstrain/viewer/restart").status_code == 400 and c.post("/api/nextstrain/viewer/stop").json() == {"stopped": False}
+
+
+def _sq_env(tmp_path, monkeypatch):
+    """_ns_env plus a fake Squirrel environment: `squirrel <fasta> --outdir D ...` writes the files the real one writes and prints snakemake-style progress."""
+    import stat
+    from genomecurator import squirrel
+    ns = _ns_env(tmp_path, monkeypatch)
+    env = tmp_path / "envs" / "gc-squirrel"
+    (env / "bin").mkdir(parents=True)
+    fake = env / "bin" / "squirrel"
+    fake.write_text("""#!/usr/bin/env python3
+import os, sys
+a = sys.argv[1:]
+if a[0] in ("-v", "--version"):
+    print("squirrel 9.9.9"); sys.exit(0)
+fasta, outdir = a[0], a[a.index("--outdir") + 1]
+with open(os.path.join(os.path.dirname(os.path.abspath(outdir)), "args.txt"), "a") as f:
+    f.write(" ".join(a) + "\\n")
+if os.environ.get("FAKE_SQ_FAIL"):
+    print("\\x1b[31mnothing aligned\\x1b[0m"); sys.exit(2)
+if "-p" in a or "--run-phylo" in a or "--run-apobec3-phylo" in a:
+    import subprocess
+    subprocess.run(["iqtree3", "-s", "x.fasta"], cwd=os.path.dirname(os.path.abspath(outdir)))     # as Squirrel's own workflow does
+names = [l[1:].strip() for l in open(fasta) if l.startswith(">")]
+skip = set(l.split(",")[0] for l in open(a[a.index("--exclude") + 1]).read().splitlines()[1:]) if "--exclude" in a else set()
+names = [n for n in names if n not in skip]
+os.makedirs(outdir, exist_ok=True)
+print("rule align:"); print("1 of 3 steps (33%) done"); print("rule tree:"); print("3 of 3 steps (100%) done"); print("Phylogenetics complete.")
+open(os.path.join(outdir, "alignment.aln.fasta"), "w").write("".join(f">{n}\\nACGT\\n" for n in names))
+open(os.path.join(outdir, "alignment.report.html"), "w").write("<html>report " + ",".join(names) + "</html>")
+if ("-p" in a or "--run-phylo" in a or "--run-apobec3-phylo" in a) and not os.environ.get("FAKE_SQ_NOTREE"):
+    open(os.path.join(outdir, "alignment.tree"), "w").write("#NEXUS\\n")
+open(os.path.join(outdir, "alignment.suggested_mask.csv"), "w").write("Name,Minimum\\n")
+ex = os.environ.get("FAKE_SQ_EXCLUDE")
+open(os.path.join(outdir, "suggested_to_exclude.csv"), "w").write("name,note\\n" + (f"{ex},N content is 0.3\\n" if ex else ""))
+""")
+    fake.chmod(fake.stat().st_mode | stat.S_IEXEC)
+    it = env / "bin" / "iqtree"
+    it.write_text("#!/bin/sh\necho 'IQ-TREE version 9.9 built today'\n")
+    it.chmod(it.stat().st_mode | stat.S_IEXEC)
+    it3 = env / "bin" / "iqtree3"
+    it3.write_text("#!/bin/sh\necho \"$@\" >> iq_args.txt\n")
+    it3.chmod(it3.stat().st_mode | stat.S_IEXEC)
+    monkeypatch.setattr(squirrel, "env_prefix", lambda: env)
+    return squirrel
+
+
+def test_squirrel_settings_and_command(tmp_path, monkeypatch):
+    import pytest
+    from genomecurator import datasets
+    sq = _sq_env(tmp_path, monkeypatch)
+    ds = datasets.get(datasets.save(1, "Ib", {"clade": ["Ib"]}, build="clade-i")["id"])
+    assert sq.defaults_for(ds)["clade"] == "cladei" and sq.defaults_for({"build": "hmpxv1"})["clade"] == "cladeiib" and sq.defaults_for({})["clade"] == "split"
+    assert sq.parse_settings("") == {} and sq.parse_settings({"clade": "cladeib", "seq_qc": 0, "threads": "8", "extra_args": "--no-mask --outgroups KJ642615"})["threads"] == 8
+    for bad, why in (({"clade": "cladeX"}, "clade"), ({"bogus": 1}, "알 수 없는"), ({"threads": "0"}, "threads"), ({"extra_args": "--outdir /etc"}, "허용되지"),
+                     ({"extra_args": "--tempdir x"}, "허용되지"), ({"extra_args": "--outgroups ../x"}, "허용되지"), ({"extra_args": "--no-mask; rm -rf /"}, "허용되지")):
+        with pytest.raises(ValueError, match=why):
+            sq.parse_settings(bad)
+    with pytest.raises(ValueError, match="JSON"):
+        sq.parse_settings("{not json")
+    cmd = sq.command(ds, "in.fa", "out", "tmp", 4)
+    assert cmd[:2] == ["squirrel", "in.fa"] and cmd[cmd.index("--clade") + 1] == "cladei" and "--seq-qc" in cmd and "--run-phylo" in cmd and "--include-background" not in cmd and cmd[cmd.index("-t") + 1] == "4"
+    ds2 = {**ds, "squirrel_json": '{"apobec3": true, "include_background": true, "seq_qc": false, "extra_args": "--no-mask"}'}
+    c2 = sq.command(ds2, "in.fa", "out", "tmp", 2)
+    assert "--run-apobec3-phylo" in c2 and "--run-phylo" not in c2 and "--include-background" in c2 and "--seq-qc" not in c2 and c2[-1] == "--no-mask"
+    assert sq.settings_sha(ds) == sq.settings_sha({**ds, "squirrel_json": '{"clade": "cladei"}'}) != sq.settings_sha(ds2)       # the effective settings, not how they were written
+
+
+@_unix_only
+def test_squirrel_run_keeps_runs_beside_nextstrain_ones(tmp_path, monkeypatch):
+    import json
+    import pytest
+    from pathlib import Path
+    from genomecurator import datasets, private
+    sq = _sq_env(tmp_path, monkeypatch)
+    ns = __import__("genomecurator.nextstrain", fromlist=["x"])
+    private.import_texts(1, *_priv_files([{"PPX_accession": "LAB_S1", "strain": "a", "date": "2025", "country": "Uganda", "clade": "Ib"}], {"LAB_S1": "ACGT" * 40}))
+    ds = datasets.get(datasets.save(1, "Ib set", {"clade": ["Ib"]}, include_private=True, build="clade-i")["id"])
+    seen = []
+    r1 = sq.run(ds, note="first", progress=lambda pct, m: seen.append((round(pct), m)))
+    assert r1["status"] == "done" and r1["tool"] == "squirrel" and r1["n_public"] == 1 and r1["n_private"] == 1 and "-squirrel-" in r1["name"] and r1["workflow_commit"] == "squirrel 9.9.9"
+    assert any("align" in m for _, m in seen) and seen[-1] == (100, "분석 완료")
+    rd = Path(r1["run_dir"])
+    args = (rd / "args.txt").read_text(encoding="utf-8")
+    passes = args.strip().splitlines()
+    assert len(passes) == 2 and "--run-phylo" not in passes[0] and "--seq-qc" in passes[0] and "--run-phylo" in passes[1] and "--clade cladei" in passes[1]     # QC first, then the tree
+    assert "--exclude" not in passes[1]                                                      # nothing was flagged: nothing to leave out
+    assert (rd / "iq_args.txt").read_text().strip() == "-st DNA -s x.fasta"                  # IQ-TREE was told the data type (and only in the tree pass)
+    assert not (rd / "shim").exists() and "-st DNA" in (rd / "run.log").read_text(encoding="utf-8")
+    assert r1["auspice_file"] == "squirrel/alignment.report.html"
+    rep = (rd / "squirrel" / "alignment.report.html").read_text(encoding="utf-8")
+    assert "PP_A1" in rep and "LAB_S1" in rep                                               # the dataset's public AND private members went in
+    assert (rd / "squirrel" / "alignment.aln.fasta.gz").exists() and not (rd / "squirrel" / "alignment.aln.fasta").exists() and not (rd / "input.fasta").exists() and not (rd / "tmp").exists()
+    assert ns.run_members(r1) == ["PP_A1", "private:LAB_S1"] and "steps (100%)" in (rd / "run.log").read_text(encoding="utf-8")
+    assert {f["name"] for f in sq.result_files(r1)} >= {"alignment.report.html", "alignment.tree", "alignment.suggested_mask.csv", "alignment.aln.fasta.gz"}
+    again = sq.run(ds)
+    assert again["id"] == r1["id"] and again["reused"]
+    # a Nextstrain run of the same dataset is a different thing: it neither blocks nor is blocked
+    n1 = ns.run(ds)
+    assert n1["tool"] == "nextstrain" and not n1.get("reused") and ns.run(ds)["reused"] and sq.run(ds)["reused"]
+    assert [r["tool"] for r in ns.list_runs(ds["id"])] == ["nextstrain", "squirrel"]
+    # settings changed -> a new analysis; forced -> too
+    datasets.set_squirrel(ds["id"], '{"apobec3": true}')
+    ds2 = datasets.get(ds["id"])
+    r2 = sq.run(ds2)
+    assert not r2.get("reused") and r2["id"] != r1["id"] and "--run-apobec3-phylo" in (Path(r2["run_dir"]) / "args.txt").read_text()
+    # what Squirrel's own QC flags (N content ...) is left out of the tree and reported
+    monkeypatch.setenv("FAKE_SQ_EXCLUDE", "PP_A1")
+    r5 = sq.run(ds2, force=True)
+    p5 = (Path(r5["run_dir"]) / "args.txt").read_text().strip().splitlines()
+    assert "--exclude" in p5[1] and "PP_A1" not in (Path(r5["run_dir"]) / "squirrel" / "alignment.report.html").read_text()
+    assert (Path(r5["run_dir"]) / "squirrel" / "qc_suggested_to_exclude.csv").exists() and json.loads((Path(r5["run_dir"]) / "versions.json").read_text())["excluded_by_qc"] == ["PP_A1"]
+    assert "제외 1건" in (Path(r5["run_dir"]) / "run.log").read_text() and not (Path(r5["run_dir"]) / "squirrel_qc").exists()
+    datasets.set_squirrel(ds["id"], '{"apobec3": true, "exclude_flagged": false}')
+    r6 = sq.run(datasets.get(ds["id"]))
+    assert "--exclude" not in (Path(r6["run_dir"]) / "args.txt").read_text().strip().splitlines()[1]                       # the person can keep everything
+    monkeypatch.delenv("FAKE_SQ_EXCLUDE")
+    # without a phylogeny it is a single call
+    datasets.set_squirrel(ds["id"], '{"run_phylo": false, "apobec3": false}')
+    r7 = sq.run(datasets.get(ds["id"]))
+    assert len((Path(r7["run_dir"]) / "args.txt").read_text().strip().splitlines()) == 1 and not list((Path(r7["run_dir"]) / "squirrel").glob("*.tree"))
+    # asked for a tree but Squirrel exited 0 without one (what IQ-TREE did on the real data): an error, not a "done"
+    datasets.set_squirrel(ds["id"], '{"apobec3": true}')
+    monkeypatch.setenv("FAKE_SQ_NOTREE", "1")
+    with pytest.raises(RuntimeError, match="계통수를 만들지 못했습니다"):
+        sq.run(datasets.get(ds["id"]), force=True)
+    assert ns.list_runs(ds["id"])[0]["status"] == "error"
+    monkeypatch.delenv("FAKE_SQ_NOTREE")
+    datasets.set_squirrel(ds["id"], '{"apobec3": true}')
+    ds2 = datasets.get(ds["id"])
+    assert sq.run(ds2, force=True)["id"] != r2["id"]
+    # failure: recorded with the (colour-stripped) log tail
+    monkeypatch.setenv("FAKE_SQ_FAIL", "1")
+    with pytest.raises(RuntimeError, match="nothing aligned"):
+        sq.run(ds2, force=True)
+    bad = ns.list_runs(ds["id"])[0]
+    assert bad["tool"] == "squirrel" and bad["status"] == "error" and "\x1b" not in bad["error"]
+
+
+def test_squirrel_refuses_what_is_missing(tmp_path, monkeypatch):
+    import pytest
+    from genomecurator import datasets
+    sq = _sq_env(tmp_path, monkeypatch)
+    ds = datasets.get(datasets.save(1, "Ib", {"clade": ["Ib"]}, build="clade-i")["id"])
+    monkeypatch.setattr(sq, "env_prefix", lambda: None)
+    with pytest.raises(RuntimeError, match="환경"):
+        sq.run(ds)
+    monkeypatch.setattr(sq, "env_prefix", lambda: tmp_path / "envs" / "gc-squirrel")
+    with pytest.raises(ValueError, match="멤버가 없습니다"):
+        sq.run({**ds, "rules": datasets.normalize({"clade": ["IX"]})})
+
+
+@_unix_only
+def test_squirrel_api_and_files(tmp_path, monkeypatch):
+    import time
+    from fastapi.testclient import TestClient
+    from genomecurator import datasets, web
+    sq = _sq_env(tmp_path, monkeypatch)
+    ds = datasets.save(1, "Ib set", {"clade": ["Ib"]}, build="clade-i")
+    c = TestClient(web.create_app(scheduler=False))
+    st = c.get("/api/nextstrain/status").json()
+    assert st["squirrel"]["ok"] and st["squirrel"]["version"] == "squirrel 9.9.9"
+    info = c.get(f"/api/datasets/{ds['id']}/nextstrain").json()
+    assert info["squirrel"]["settings"]["clade"] == "cladei" and "split" in info["squirrel"]["clades"]
+    bad = c.post(f"/api/datasets/{ds['id']}/squirrel/settings", json={"settings": {"extra_args": "--outdir /x"}})
+    assert bad.status_code == 400 and c.post("/api/datasets/999/squirrel/settings", json={"settings": {}}).status_code == 404
+    assert c.post(f"/api/datasets/{ds['id']}/squirrel/settings", json={"settings": {"clade": "cladeib", "apobec3": True}}).json()["settings"] == {"clade": "cladeib", "apobec3": True}
+    assert c.get(f"/api/datasets/{ds['id']}/nextstrain").json()["squirrel"]["settings"]["clade"] == "cladeib"
+
+    def wait(jid):
+        for _ in range(300):
+            j = c.get(f"/api/job/{jid}").json()
+            if j["done"]:
+                return j
+            time.sleep(0.05)
+        raise AssertionError("job did not finish")
+    j = wait(c.post(f"/api/datasets/{ds['id']}/squirrel?note=api").json()["job"])
+    assert j["status"] == "done" and j["kind"] == "squirrel" and not j["result"]["reused"]
+    assert wait(c.post(f"/api/datasets/{ds['id']}/squirrel").json()["job"])["result"]["reused"] is True
+    runs = c.get(f"/api/datasets/{ds['id']}/nextstrain").json()["runs"]
+    r = runs[0]
+    assert r["tool"] == "squirrel" and r["note"] == "api" and r["cmp"]["current"] is True and r["url"].endswith("alignment.report.html") and {f["name"] for f in r["files"]} >= {"alignment.tree"}
+    rep = c.get(r["url"])
+    assert rep.status_code == 200 and "report PP_A1" in rep.text
+    assert c.get(f"/api/analyses/{r['id']}/files/squirrel/alignment.tree").status_code == 200
+    assert c.get(f"/api/analyses/{r['id']}/files/..%2F..%2Fgenomecurator.db").status_code == 404 and c.get(f"/api/analyses/{r['id']}/files/squirrel/nope.txt").status_code == 404
+    assert c.get(f"/api/analyses/{r['id']}/files/../../g.db").status_code in (404, 400, 422) and c.get("/api/analyses/999/files/x").status_code == 404
+    assert c.post("/api/datasets/999/squirrel").status_code == 404
+
+
+def test_mutprofile_annotation_and_paf():
+    from genomecurator import mutprofile as mp
+    # a plus-strand gene 4..12 (ATG AAA TGA) and a minus-strand gene 20..28 whose coding sequence is ATG GGG TAA
+    ref = "CCCATGAAATGACCCCCCCCCCATGGGGTAACC".replace("CCCCCCCCCC", "CCCCCCC")
+    ref = ref[:3] + "ATGAAATGA" + "C" * 7 + mp_rev("ATGGGGTAA") + "CC"
+    cds = [{"gene": "G1", "product": "p1", "strand": "+", "exons": [(4, 12)]}, {"gene": "G2", "product": "p2", "strand": "-", "exons": [(20, 28)]}]
+    a = mp.annotate(8, "A", "G", cds, ref)                         # AAA -> AGA: K2R, nonsynonymous
+    assert (a["gene"], a["aa_change"], a["effect"], a["codon_base"]) == ("G1", "K2R", "nonsynonymous", 2)
+    assert mp.annotate(9, "A", "G", cds, ref)["effect"] == "synonymous"   # AAA -> AAG: K -> K
+    assert mp.annotate(1, "C", "T", cds, ref)["effect"] == "intergenic"
+    b = mp.annotate(27, ref[26], "T", cds, ref)                    # minus strand: plus base A (coding T of ATG) -> T (coding A): ATG -> AAG
+    assert (b["gene"], b["strand"], b["aa_change"], b["codon_base"]) == ("G2", "-", "M1K", 2)
+    paf = ["q1\t100\t0\t100\t+\tref\t1000\t10\t110\t97\t100\t60\ttp:A:P\tcs:Z::5*ag:3*nt:2+ac:4-gg:10*ct:20"]
+    assert list(mp.snvs_from_paf(paf)) == [("q1", 16, "A", "G"), ("q1", 39, "C", "T")]      # the N substitution (*nt) is never reported; insertions/deletions move only the right coordinate
+
+
+def mp_rev(s):
+    return s.translate(str.maketrans("ACGT", "TGCA"))[::-1]
+
+
+def test_pathoplexus_prepare_package_never_uploads(tmp_path, monkeypatch):
+    import json, zipfile, io
+    from pathlib import Path
+    from genomecurator import pathoplexus, private
+    _qc_env(tmp_path, monkeypatch)
+    monkeypatch.setattr(pathoplexus, "template", lambda org, refresh=False: list(pathoplexus.FALLBACK_TEMPLATE))
+    import urllib.request
+    monkeypatch.setattr(urllib.request, "urlopen", lambda *a, **k: (_ for _ in ()).throw(AssertionError("the app must not touch the network here")))
+    cols = ["PPX_accession", "strain", "date", "country", "division", "host", "institution", "authors"]
+    rws = [["LAB_001", "s1", "2024-03-05", "Uganda", "Kampala", "Homo sapiens", "Makerere University", "Kim, Min; Lee, Jo"], ["LAB_002", "s2", "2024", "Uganda", "", "Homo sapiens", "Makerere University", "no comma here"]]
+    files = ("\t".join(cols) + "\n" + "".join("\t".join(r) + "\n" for r in rws), ">LAB_001\n" + "ACGT" * 50 + "\n>LAB_002\n" + "ACGT" * 40 + "\n")
+    private.import_texts(1, *files, source_name="b.tsv")
+    c = pathoplexus.candidates(1)
+    rows = {r["id"]: r for r in c["rows"]}
+    assert rows["LAB_001"]["status"] in ("ok", "warn") and not rows["LAB_001"]["errors"]
+    assert any('authors' in m for m in rows["LAB_002"]["errors"])           # authors must be 'Last, First; ...'
+    with __import__("pytest").raises(ValueError):
+        pathoplexus.build_package(1, ["LAB_001"], "RESTRICTED", "")  # a restricted package needs an end date
+    p = pathoplexus.build_package(1, ["LAB_001"], "OPEN", "", "42", "test")
+    d = Path(p["dir"])
+    assert {f.name for f in d.iterdir()} >= {"metadata.tsv", "sequences.fasta", "submission.json", "submit.sh", "README.txt"}
+    meta = (d / "metadata.tsv").read_text(encoding="utf-8").splitlines()
+    assert meta[0].split("\t")[0] == "id" and meta[1].split("\t")[0] == "LAB_001" and len(meta) == 2
+    assert (d / "sequences.fasta").read_text(encoding="utf-8").startswith(">LAB_001")
+    sh = (d / "submit.sh").read_text(encoding="utf-8")
+    assert "PATHOPLEXUS_TOKEN" in sh and "eyJ" not in sh                # the token is read from the environment, never stored
+    assert pathoplexus.mark(p["id"], "submitted")["status"] == "submitted"
+    assert zipfile.ZipFile(io.BytesIO(pathoplexus.zip_package(p["id"]))).namelist()
+    assert {r["id"]: r for r in pathoplexus.candidates(1)["rows"]}["LAB_001"]["submitted"]["status"] == "submitted"
+    # the page and API
+    from fastapi.testclient import TestClient
+    from genomecurator import web
+    cl = TestClient(web.create_app(scheduler=False))
+    assert cl.get("/pathoplexus").status_code == 200 and cl.get("/api/pathoplexus/1/candidates").json()["rows"]
+    assert cl.get("/api/pathoplexus/packages").json()[0]["id"] == p["id"]

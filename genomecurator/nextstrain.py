@@ -63,28 +63,32 @@ def runs_dir() -> Path:
     return config.DATA_DIR / "nextstrain" / "runs"
 
 
-def env_prefix() -> Path | None:
-    """The conda environment that holds the workflow's tools (found next to the app's own environment, else through conda)."""
-    name = env_name()
+def find_env(name: str, binary: str) -> Path | None:
+    """A conda environment by name that has `binary` (found next to the app's own environment, else through conda)."""
     import sys
     cands = [Path(sys.prefix).parent / name, Path(sys.prefix).parent.parent / "envs" / name, Path(os.environ.get("CONDA_PREFIX", "/nonexistent")).parent / name]
     for c in cands:
-        if (c / "bin" / "nextstrain").exists():
+        if (c / "bin" / binary).exists():
             return c
     for exe in ("mamba", "conda"):
         if shutil.which(exe):
             try:
                 out = subprocess.run([exe, "env", "list", "--json"], capture_output=True, text=True, timeout=30).stdout
                 for pth in json.loads(out).get("envs", []):
-                    if Path(pth).name == name and (Path(pth) / "bin" / "nextstrain").exists():
+                    if Path(pth).name == name and (Path(pth) / "bin" / binary).exists():
                         return Path(pth)
             except Exception:
                 pass
     return None
 
 
-def tool_env() -> dict:
-    pre = env_prefix()
+def env_prefix() -> Path | None:
+    """The conda environment that holds the Nextstrain workflow's tools."""
+    return find_env(env_name(), "nextstrain")
+
+
+def tool_env(pre: Path | None = None) -> dict:
+    pre = pre or env_prefix()
     env = dict(os.environ)
     if pre:
         env["PATH"] = f"{pre / 'bin'}{os.pathsep}{env.get('PATH', '')}"
@@ -236,6 +240,7 @@ def slug_name(virus: str, dataset: str, stamp: str) -> str:
 
 def _row(r) -> dict:
     d = dict(r)
+    d["tool"] = d.get("tool") or "nextstrain"
     d["versions"] = json.loads(d.pop("versions_json") or "{}")
     d["rules"] = json.loads(d.pop("rules_json") or "{}")
     return d
@@ -345,7 +350,7 @@ def run(ds: dict, runtime: str = "ambient", cores: int | None = None, force: boo
     msha = datasets.members_hash(members)
     if not force:
         for r in list_runs(ds["id"]):
-            if r["status"] == "done" and r["members_sha"] == msha and r["params_sha"] == psha and r["workflow_commit"] == commit and r["build"] == build:
+            if r["tool"] == "nextstrain" and r["status"] == "done" and r["members_sha"] == msha and r["params_sha"] == psha and r["workflow_commit"] == commit and r["build"] == build:
                 p(100, f"같은 데이터·설정·워크플로로 이미 분석했습니다 ({r['name']})")
                 return {**r, "reused": True}
     now = datetime.now()

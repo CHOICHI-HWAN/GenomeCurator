@@ -322,6 +322,21 @@ FASTA 실제 길이·md5가 기록과 맞는지, 날짜가 미래가 아닌지, 
 * 라이선스 참고: augur·auspice는 AGPL-3.0, IQ-TREE는 GPL-2.0+라 **별도 환경의 별도 프로그램**으로만 실행하고 저장소·Docker 이미지에 넣지 않습니다. Auspice 서버를 네트워크에 공개하면 AGPL 의무가 생길 수 있으니 `docs/LICENSES.md`를 보세요.
 * 한계: 아직 실행 중인 분석을 중간에 취소하는 버튼은 없습니다(서버를 끄면 *중단*으로 기록됨). 큰 데이터셋의 트리 구축은 서열 수에 따라 오래 걸릴 수 있습니다(예: Ib 213건 + 비공개 3건 → 약 1분).
 
+### 12. Squirrel · 변이 프로파일 (같은 데이터셋, 다른 분석)
+
+**Nextstrain 탭**에서 데이터셋을 고르면 Nextstrain 아래에 두 패널이 더 있습니다(공개+비공개 멤버가 함께 들어갑니다). 도구는 별도 conda 환경 `gc-squirrel`에 있습니다: `mamba env create -f squirrel/environment.yml`.
+
+- **Squirrel**: MPXV 정렬·서열 QC·IQ-TREE 계통수·HTML 보고서. clade와 옵션은 데이터셋마다 저장됩니다. 계통수를 만들기 전에 QC만 먼저 돌려 Squirrel이 제안한 서열(N 비율 20% 초과 등)을 빼고(끌 수 있음), IQ-TREE에는 `-st DNA`를 알려 줍니다. 보고서는 *보고서 열기*로 보며 브라우저가 표·스타일 라이브러리를 CDN에서 불러옵니다(데이터는 어디로도 나가지 않음).
+- **변이 프로파일**([mutation_profile](https://github.com/insapathogenomics/mutation_profile)): 각 유전체를 빌드의 참조 서열(Nextstrain 워크플로의 `reference.fasta`)에 minimap2로 정렬해 SNP를 읽고, 앞뒤 염기 맥락과 APOBEC3형(GA>AA, TC>TT) 프로파일을 붙입니다. **각 변이가 어느 유전자에 있는지**는 같은 빌드의 유전자 주석(`genome_annotation.gff3`)으로 찾아 유전자·산물·코돈 위치·아미노산 변화·동의/비동의/종결/유전자 사이를 함께 기록합니다. 결과: `mutations.tsv`(변이 한 줄씩), `gene_summary.tsv`(유전자별 요약), `summary.json`, 원본 입력 `snps.tsv`. 이웃 서열이 N이거나 삽입·결손인 곳은 SNP로 세지 않습니다.
+- 두 분석도 분석 이력에 **보관**되고(멤버 해시·설정·도구 버전·메모·로그), 같은 조건이면 다시 돌리지 않으며(*다시 분석*으로 강제), 오늘의 데이터셋과 비교됩니다. CLI는 없고 화면/API(`POST /api/datasets/{id}/squirrel`, `/mutprofile`)로 실행합니다.
+
+### 13. Pathoplexus 제출 준비 (앱은 업로드하지 않음)
+
+**Pathoplexus 탭**(또는 `python -m genomecurator pathoplexus <바이러스> [--check]`)은 비공개 유전체를 해당 생물의 제출 템플릿과 대조해 줄마다 *통과 / 경고 / 오류*를 보여 줍니다(필수 열, 날짜 형식, 저자 `성, 이름; 성, 이름`, 숙주, 공개 서열과 같은 서열인지, QC). 오류가 없는 행을 골라 **이용 조건**(OPEN 또는 RESTRICTED+만료일)과 그룹 ID를 정하고 *제출 파일 만들기*를 누르면 `data/pathoplexus/<바이러스>/<시각>/`에 `metadata.tsv`, `sequences.fasta`, `submission.json`, `submit.sh`, `README.txt`가 생기고 *zip 받기*로 내려받을 수 있습니다.
+- **앱은 올리지 않고 인증 정보를 받지 않습니다.** Pathoplexus 사이트의 *Submit* 화면에서 두 파일을 올려 검토·승인하거나, 본인 터미널에서 `PATHOPLEXUS_TOKEN`을 설정하고 `submit.sh`를 실행하세요.
+- **OPEN은 되돌릴 수 없습니다**(승인 즉시 공개, INSDC로 전달). RESTRICTED는 최대 1년이며 기간은 줄이기만 할 수 있습니다.
+- 올린 뒤에는 패키지 상태를 *제출함 → 공개됨*으로 직접 바꿔 기록해 두면 비공개 탭에 상태가 표시되고 같은 유전체를 다시 고르지 않게 안내합니다.
+
 ## 명령어 모음 (Cheat sheet)
 
 | 명령 | 설명 |

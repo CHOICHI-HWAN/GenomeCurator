@@ -3,10 +3,10 @@ import time
 from pathlib import Path
 
 from fastapi import FastAPI, Form, Request
-from fastapi.responses import HTMLResponse, JSONResponse, RedirectResponse, Response, StreamingResponse
+from fastapi.responses import FileResponse, HTMLResponse, JSONResponse, RedirectResponse, Response, StreamingResponse
 from fastapi.templating import Jinja2Templates
 
-from . import __version__, analysis, completeness, datasets, exclusions, export, nextstrain, private, qc, config, curate, jobs, log
+from . import __version__, analysis, completeness, datasets, exclusions, export, mutprofile, nextstrain, pathoplexus, private, qc, squirrel, config, curate, jobs, log
 from .db import audit_now, connect
 
 _log = log.get("web")
@@ -579,6 +579,58 @@ def create_app(scheduler: bool = True) -> FastAPI:
             return JSONResponse({"error": "unknown dataset"}, 404)
         return start_job(lambda p: {"redirect": f"/dataset/{dsid}", "result": datasets.run_qc(ds, p, bool(force))}, f"데이터셋 QC · {ds['name']}", "dsqc")
 
+    # ------------------------------------------------------------------------------------------------ preparing private genomes for Pathoplexus (the app never uploads)
+    @app.get("/pathoplexus")
+    def pathoplexus_page(request: Request, watch: int = 0):
+        watches = _rows("SELECT id, name FROM watchlist ORDER BY name")
+        wid = watch or next((w["id"] for w in watches if "monkeypox" in w["name"].lower()), watches[0]["id"] if watches else 0)
+        return render(request, "pathoplexus.html", nav="pp", watches=watches, wid=wid)
+
+    @app.get("/api/pathoplexus/{watch}/candidates")
+    def api_pp_candidates(watch: int, refresh: int = 0):
+        if not _rows("SELECT 1 FROM watchlist WHERE id=?", watch):
+            return JSONResponse({"error": "unknown virus"}, 404)
+        if refresh and pathoplexus.organism_for(watch):
+            pathoplexus.template(pathoplexus.organism_for(watch), refresh=True)
+        c = pathoplexus.candidates(watch)
+        for r in c["rows"]:
+            r.pop("file_path", None)
+        return c
+
+    @app.post("/api/pathoplexus/{watch}/package")
+    async def api_pp_package(request: Request, watch: int):
+        """Write the submission files for the chosen private genomes (nothing is uploaded). Body: ids, terms (OPEN|RESTRICTED), restricted_until, group_id, note."""
+        if not _same_origin(request):
+            return JSONResponse({"error": "cross-site request refused"}, 403)
+        body = await request.json()
+        try:
+            return pathoplexus.build_package(watch, [str(i) for i in body.get("ids", [])], body.get("terms", "OPEN"), body.get("restricted_until", ""), str(body.get("group_id") or "").strip(),
+                                             str(body.get("note") or ""), bool(body.get("allow_warnings", True)))
+        except ValueError as e:
+            return JSONResponse({"error": str(e)}, 400)
+
+    @app.get("/api/pathoplexus/packages")
+    def api_pp_packages(watch: int = 0):
+        return pathoplexus.list_packages(watch or None)
+
+    @app.get("/api/pathoplexus/packages/{pid}.zip")
+    def api_pp_zip(pid: int):
+        try:
+            data = pathoplexus.zip_package(pid)
+        except ValueError as e:
+            return JSONResponse({"error": str(e)}, 404)
+        return Response(data, media_type="application/zip", headers={"Content-Disposition": f'attachment; filename="pathoplexus_package_{pid}.zip"'})
+
+    @app.post("/api/pathoplexus/packages/{pid}/mark")
+    async def api_pp_mark(request: Request, pid: int):
+        if not _same_origin(request):
+            return JSONResponse({"error": "cross-site request refused"}, 403)
+        body = await request.json()
+        try:
+            return pathoplexus.mark(pid, body.get("status", ""), body.get("accessions"), body.get("note"))
+        except ValueError as e:
+            return JSONResponse({"error": str(e)}, 400)
+
     # ------------------------------------------------------------------------------------------------ Nextstrain analysis of a dataset
     @app.get("/nextstrain")
     def nextstrain_page(request: Request, dataset: int = 0, watch: int = 0):
@@ -589,7 +641,7 @@ def create_app(scheduler: bool = True) -> FastAPI:
 
     @app.get("/api/nextstrain/status")
     def api_ns_status():
-        return nextstrain.status()
+        return {**nextstrain.status(), "squirrel": squirrel.status(), "mutprofile": mutprofile.status()}
 
     @app.post("/api/nextstrain/clone")
     def api_ns_clone(request: Request):
@@ -626,11 +678,31 @@ def create_app(scheduler: bool = True) -> FastAPI:
         now_ids = nextstrain.current_members(ds)
         commit = nextstrain.workflow_commit()
         runs = []
+        try:
+            ssha, sver = squirrel.settings_sha(ds), squirrel.version() if squirrel.env_prefix() else ""
+        except ValueError:
+            ssha, sver = "", ""
+        try:
+            msha_, mver = mutprofile.settings_sha(ds), mutprofile.status()["version"]
+        except ValueError:
+            msha_, mver = "", ""
         for r in nextstrain.list_runs(dsid):
-            r["cmp"] = nextstrain.compare(r, now_ids, psha, commit) if psha else None
-            r["url"] = nextstrain.viewer_url(r["name"]) if r["status"] == "done" else ""
+            if r["tool"] == "mutprofile":
+                r["cmp"] = nextstrain.compare(r, now_ids, msha_, mver) if msha_ else None
+                r["files"] = mutprofile.result_files(r) if r["status"] == "done" else []
+                r["summary"] = mutprofile.summary(r) if r["status"] == "done" else {}
+                r["url"] = ""
+            elif r["tool"] == "squirrel":
+                r["cmp"] = nextstrain.compare(r, now_ids, ssha, sver) if ssha else None
+                r["url"] = f"/api/analyses/{r['id']}/files/{r['auspice_file']}" if r["status"] == "done" and r["auspice_file"] else ""
+                r["files"] = squirrel.result_files(r) if r["status"] == "done" else []
+            else:
+                r["cmp"] = nextstrain.compare(r, now_ids, psha, commit) if psha else None
+                r["url"] = nextstrain.viewer_url(r["name"]) if r["status"] == "done" else ""
             runs.append(r)
         return {"dataset": {"id": ds["id"], "name": ds["name"], "build": ds["build"] or "mpxv", "include_private": ds["include_private"], "params_yaml": ds["params_yaml"], "summary": datasets.describe(ds["rules"])},
+                "squirrel": {"settings": squirrel.effective(ds) if ssha else {}, "defaults": squirrel.defaults_for(ds), "saved": ds.get("squirrel_json") or "", "clades": list(squirrel.CLADES)},
+                "mutprofile": {"settings": mutprofile.effective(ds) if msha_ else {}, "defaults": mutprofile.defaults_for(ds)},
                 "members": len(now_ids), "qc_missing": nextstrain.qc_missing(ds), "members_sha": datasets.members_hash(now_ids), "workflow_commit": commit, "defaults": defaults_text, "merged": merged_text, "error": err, "runs": runs}
 
     @app.post("/api/datasets/{dsid}/nextstrain/params")
@@ -647,6 +719,74 @@ def create_app(scheduler: bool = True) -> FastAPI:
             return JSONResponse({"error": str(e)}, 400)
         datasets.set_params(dsid, text)
         return {"saved": True}
+
+    @app.post("/api/datasets/{dsid}/squirrel/settings")
+    async def api_ds_squirrel_settings(request: Request, dsid: int):
+        if not _same_origin(request):
+            return JSONResponse({"error": "cross-site request refused"}, 403)
+        if not datasets.get(dsid):
+            return JSONResponse({"error": "unknown dataset"}, 404)
+        body = await request.json()
+        try:
+            clean = squirrel.parse_settings(body.get("settings") or {})
+        except ValueError as e:
+            return JSONResponse({"error": str(e)}, 400)
+        datasets.set_squirrel(dsid, json.dumps(clean, ensure_ascii=False))
+        return {"saved": True, "settings": clean}
+
+    @app.post("/api/datasets/{dsid}/squirrel")
+    def api_ds_squirrel_run(request: Request, dsid: int, force: int = 0, cores: int = 0, note: str = ""):
+        """Run Squirrel on this dataset (public + private members; a server job; every run is kept)."""
+        if not _same_origin(request):
+            return JSONResponse({"error": "cross-site request refused"}, 403)
+        ds = datasets.get(dsid)
+        if not ds:
+            return JSONResponse({"error": "unknown dataset"}, 404)
+
+        def work(p):
+            r = squirrel.run(ds, cores or None, bool(force), note, p)
+            return {"redirect": f"/nextstrain?dataset={dsid}", "result": {"run": r["id"], "name": r["name"], "reused": bool(r.get("reused"))}}
+        return start_job(work, f"Squirrel 분석 · {ds['name']}", "squirrel")
+
+    @app.post("/api/datasets/{dsid}/mutprofile/settings")
+    async def api_ds_mutprofile_settings(request: Request, dsid: int):
+        if not _same_origin(request):
+            return JSONResponse({"error": "cross-site request refused"}, 403)
+        if not datasets.get(dsid):
+            return JSONResponse({"error": "unknown dataset"}, 404)
+        body = await request.json()
+        try:
+            clean = mutprofile.parse_settings(body.get("settings") or {})
+        except ValueError as e:
+            return JSONResponse({"error": str(e)}, 400)
+        datasets.set_mutprofile(dsid, json.dumps(clean, ensure_ascii=False))
+        return {"saved": True, "settings": clean}
+
+    @app.post("/api/datasets/{dsid}/mutprofile")
+    def api_ds_mutprofile_run(request: Request, dsid: int, force: int = 0, cores: int = 0, note: str = ""):
+        """Mutation profile (mutation_profile) with gene / codon annotation for this dataset (public + private; a server job; every run is kept)."""
+        if not _same_origin(request):
+            return JSONResponse({"error": "cross-site request refused"}, 403)
+        ds = datasets.get(dsid)
+        if not ds:
+            return JSONResponse({"error": "unknown dataset"}, 404)
+
+        def work(p):
+            r = mutprofile.run(ds, cores or None, bool(force), note, p)
+            return {"redirect": f"/nextstrain?dataset={dsid}", "result": {"run": r["id"], "name": r["name"], "reused": bool(r.get("reused"))}}
+        return start_job(work, f"변이 프로파일 · {ds['name']}", "mutprofile")
+
+    @app.get("/api/analyses/{rid}/files/{path:path}")
+    def api_analysis_file(rid: int, path: str):
+        """A file a run left (e.g. Squirrel's HTML report, tree, alignment), only from inside that run's folder."""
+        r = nextstrain.get_run(rid)
+        if not r or not r["run_dir"]:
+            return JSONResponse({"error": "unknown run"}, 404)
+        base = Path(r["run_dir"]).resolve()
+        f = (base / path).resolve()
+        if base not in f.parents or not f.is_file():
+            return JSONResponse({"error": "no such file"}, 404)
+        return FileResponse(f, filename=None if f.suffix in (".html", ".csv", ".tsv", ".txt", ".json") else f.name)
 
     @app.post("/api/datasets/{dsid}/analyze")
     def api_ds_analyze(request: Request, dsid: int, force: int = 0, runtime: str = "ambient", cores: int = 0, note: str = ""):

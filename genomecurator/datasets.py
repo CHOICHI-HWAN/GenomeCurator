@@ -95,7 +95,7 @@ def _row(r) -> dict:
     return {"id": r["id"], "watch_id": r["watch_id"], "name": r["name"], "description": r["description"] or "", "rules": normalize(json.loads(r["rules_json"] or "{}")),
             "include_private": bool(r["include_private"]), "manual_include": json.loads(r["manual_include_json"] or "[]"),
             "manual_exclude": json.loads(r["manual_exclude_json"] or "[]"), "build": r["build"] or "", "created": r["created"], "updated": r["updated"],
-            "params_yaml": r["params_yaml"] or ""}
+            "params_yaml": r["params_yaml"] or "", "squirrel_json": r["squirrel_json"] or "", "mutprofile_json": r["mutprofile_json"] or ""}
 
 
 def save(watch_id: int, name: str, rules: dict | None = None, description: str = "", include_private: bool = False, manual_include: list | None = None,
@@ -138,6 +138,26 @@ def set_params(dataset_id: int, text: str) -> None:
     con = connect()
     try:
         con.execute("UPDATE dataset SET params_yaml=?, updated=? WHERE id=?", (text, datetime.now().isoformat(timespec="seconds"), dataset_id))
+        con.commit()
+    finally:
+        con.close()
+
+
+def set_mutprofile(dataset_id: int, text: str) -> None:
+    """Store the dataset's mutation-profile settings (JSON; validated by mutprofile.parse_settings)."""
+    con = connect()
+    try:
+        con.execute("UPDATE dataset SET mutprofile_json=?, updated=? WHERE id=?", (text, datetime.now().isoformat(timespec="seconds"), dataset_id))
+        con.commit()
+    finally:
+        con.close()
+
+
+def set_squirrel(dataset_id: int, text: str) -> None:
+    """Store the dataset's Squirrel settings (JSON; validated by squirrel.parse_settings)."""
+    con = connect()
+    try:
+        con.execute("UPDATE dataset SET squirrel_json=?, updated=? WHERE id=?", (text, datetime.now().isoformat(timespec="seconds"), dataset_id))
         con.commit()
     finally:
         con.close()

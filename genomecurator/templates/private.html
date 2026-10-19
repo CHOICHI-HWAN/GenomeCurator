@@ -61,15 +61,16 @@
  <button type="button" onclick="pqc(1)" {% if not rows %}disabled{% endif %} title="이미 한 것도 다시 계산">QC 다시 계산</button>
  <a href="/export"><button type="button">내보내기로 →</button></a></div>
 <form id="pf" method="post" style="display:none"></form>
-<table><tr><th>id</th><th>버전</th><th>strain</th><th>날짜</th><th>국가</th><th>clade</th><th>길이</th><th>서열 통계</th><th>Nextclade</th><th>최근 업로드</th><th>데이터셋</th><th></th></tr>
+<table><tr><th>id</th><th>버전</th><th>strain</th><th>날짜</th><th>국가</th><th>clade</th><th>길이</th><th>서열 통계</th><th>Nextclade</th><th>최근 업로드</th><th>데이터셋</th><th>Pathoplexus</th><th></th></tr>
 {% for r in rows %}<tr><td>{{ r.id }}</td><td><a href="#h-{{ r.id }}" title="이력 보기">v{{ r.version }}</a></td><td>{{ r.strain }}</td><td>{{ r.date }}</td><td>{{ r.country }}</td>
 <td>{{ r.clade or '-' }}{% if r.clade_differs %} <span style="color:var(--warn)" title="입력한 clade와 Nextclade 판정이 다릅니다: {{ r.nextclade_clade }}">⚠ {{ r.nextclade_clade }}</span>{% endif %}</td>
 <td>{{ '{:,}'.format(r.length or 0) }}</td><td>{% if r.qc_stats %}<span class="qs {{ r.qc_stats }}">{{ {'good': '양호', 'mediocre': '주의', 'bad': '불량', 'error': '오류'}[r.qc_stats] }}</span>{% else %}<span class="mut">-</span>{% endif %}</td>
 <td>{% if r.qc_nextclade %}<span class="qs {{ r.qc_nextclade }}">{{ {'good': '양호', 'mediocre': '주의', 'bad': '불량', 'error': '오류'}[r.qc_nextclade] }}</span>{% else %}<span class="mut">-</span>{% endif %}</td>
 <td class="nw mut">{{ r.updated }}</td>
 <td class="nw">{% if r.excluded %}<span style="color:var(--warn)" title="{{ r.excl_reason }}">제외됨</span> <button type="button" onclick="excl_('{{ r.id }}',false)">풀기</button>{% else %}<button type="button" onclick="excl_('{{ r.id }}',true)" title="최종 분석 데이터셋에서 빼고 보관합니다">제외</button>{% endif %}</td>
+<td class="nw">{% if r.pp %}<a href="/pathoplexus?watch={{ wid }}" title="패키지 {{ r.pp.package }}">{{ {'prepared': '제출 파일 준비됨', 'submitted': '제출함', 'published': '공개됨'}[r.pp.status] }}</a>{% else %}<span class="mut">-</span>{% endif %}</td>
 <td><button type="button" onclick="del_('{{ r.id }}')">삭제</button></td></tr>
-{% else %}<tr><td colspan="12" class="mut">아직 없습니다. 위에서 올려 보세요.</td></tr>{% endfor %}</table>
+{% else %}<tr><td colspan="13" class="mut">아직 없습니다. 위에서 올려 보세요.</td></tr>{% endfor %}</table>
 
 <h3>버전 이력 ({{ hist|length }}건)</h3>
 <table><tr><th>id</th><th>버전</th><th>시각</th><th>내용</th><th>파일 / 메모</th><th></th></tr>

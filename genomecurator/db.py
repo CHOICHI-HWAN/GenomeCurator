@@ -77,14 +77,19 @@ CREATE TABLE IF NOT EXISTS dataset_exclusion(
 -- named, saved datasets for analysis (datasets.py): rules over the curated (and optionally private) genomes plus manual adds / removals
 CREATE TABLE IF NOT EXISTS dataset(
   id INTEGER PRIMARY KEY, watch_id INTEGER, name TEXT, description TEXT, rules_json TEXT, include_private INTEGER DEFAULT 0,
-  manual_include_json TEXT, manual_exclude_json TEXT, build TEXT, created TEXT, updated TEXT, params_yaml TEXT, UNIQUE(watch_id, name));
+  manual_include_json TEXT, manual_exclude_json TEXT, build TEXT, created TEXT, updated TEXT, params_yaml TEXT, squirrel_json TEXT, mutprofile_json TEXT, UNIQUE(watch_id, name));
 CREATE TABLE IF NOT EXISTS dataset_export(
   id INTEGER PRIMARY KEY, dataset_id INTEGER, exported TEXT, dir TEXT, rows INTEGER, private_rows INTEGER, members_sha256 TEXT, rules_json TEXT);
 -- every Nextstrain analysis of a dataset (nextstrain.py): what went in (members hash, rules, settings, workflow commit), what came out, kept per run
 CREATE TABLE IF NOT EXISTS analysis_run(
   id INTEGER PRIMARY KEY, dataset_id INTEGER, watch_id INTEGER, name TEXT UNIQUE, status TEXT,  -- running|done|error|interrupted
   started TEXT, finished TEXT, runtime TEXT, build TEXT, rules_json TEXT, params_yaml TEXT, params_sha TEXT, members_sha TEXT, n_public INTEGER, n_private INTEGER,
-  workflow_commit TEXT, run_dir TEXT, auspice_file TEXT, log_path TEXT, error TEXT, note TEXT, versions_json TEXT, dataset_name TEXT);
+  workflow_commit TEXT, run_dir TEXT, auspice_file TEXT, log_path TEXT, error TEXT, note TEXT, versions_json TEXT, dataset_name TEXT, tool TEXT DEFAULT 'nextstrain');
+-- files prepared for submitting private genomes to Pathoplexus (pathoplexus.py); the app never uploads, the person does
+CREATE TABLE IF NOT EXISTS submission_package(
+  id INTEGER PRIMARY KEY, watch_id INTEGER, organism TEXT, created TEXT, dir TEXT, terms TEXT, restricted_until TEXT, group_id TEXT, n INTEGER,
+  ids_json TEXT, status TEXT,  -- prepared | submitted | published (the last two are marked by the person)
+  note TEXT, submitted_at TEXT, accessions_json TEXT, sha_json TEXT);
 -- sequence QC (qc.py): one row per accession and tool (seqstats, nextclade); derived data, safe to delete and recompute
 CREATE TABLE IF NOT EXISTS qc_result(
   accession TEXT, tool TEXT, watch_id INTEGER, status TEXT,  -- good|mediocre|bad|error
@@ -150,9 +155,16 @@ def migrate(con: sqlite3.Connection) -> None:
                 "clade", "lineage", "serotype", "outbreak"):
         if col not in have:
             con.execute(f"ALTER TABLE genome ADD COLUMN {col} TEXT")
+    acols = {r[1] for r in con.execute("PRAGMA table_info(analysis_run)")}
+    if acols and "tool" not in acols:
+        con.execute("ALTER TABLE analysis_run ADD COLUMN tool TEXT DEFAULT 'nextstrain'")
     dcols = {r[1] for r in con.execute("PRAGMA table_info(dataset)")}
     if dcols and "params_yaml" not in dcols:
         con.execute("ALTER TABLE dataset ADD COLUMN params_yaml TEXT")
+    if dcols and "mutprofile_json" not in dcols:
+        con.execute("ALTER TABLE dataset ADD COLUMN mutprofile_json TEXT")
+    if dcols and "squirrel_json" not in dcols:
+        con.execute("ALTER TABLE dataset ADD COLUMN squirrel_json TEXT")
     pcols = {r[1] for r in con.execute("PRAGMA table_info(private_genome)")}
     if pcols and "version" not in pcols:
         con.execute("ALTER TABLE private_genome ADD COLUMN version INTEGER DEFAULT 1")

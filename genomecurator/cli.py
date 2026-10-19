@@ -101,6 +101,14 @@ def _main(argv=None):
     na.add_argument("--cores", type=int)
     na.add_argument("--force", action="store_true", help="run again even when members, settings and workflow are the same as a finished run")
     na.add_argument("--note", default="")
+    pp = sub.add_parser("pathoplexus", help="prepare private genomes for submission to Pathoplexus (checks + files; nothing is uploaded)")
+    pp.add_argument("name", help="the registered virus")
+    pp.add_argument("--check", action="store_true", help="show what is wrong with each private genome and stop")
+    pp.add_argument("--ids", help="comma list of private ids (default: all that have no errors)")
+    pp.add_argument("--terms", default="OPEN", choices=("OPEN", "RESTRICTED"))
+    pp.add_argument("--until", default="", help="YYYY-MM-DD, for RESTRICTED (at most one year from today)")
+    pp.add_argument("--group-id", default="", help="your Pathoplexus group id (written into submit.sh)")
+    pp.add_argument("--list", action="store_true", help="the packages prepared so far")
     xc = sub.add_parser("exclude", help="leave genomes out of the final analysis dataset (nothing is deleted); --undo puts them back")
     xc.add_argument("name", help="the registered virus")
     xc.add_argument("ids", nargs="*", help="accessions (or private ids with --private)")
@@ -227,6 +235,32 @@ def _main(argv=None):
                     r = nextstrain.run(d, args.runtime, args.cores, args.force, args.note, pr)
                     print(json.dumps({k: r[k] for k in ("id", "name", "status", "auspice_file", "run_dir") if k in r} | ({"reused": True} if r.get("reused") else {}), ensure_ascii=False, indent=2))
         except (ValueError, RuntimeError) as e:
+            raise SystemExit(str(e))
+    elif args.cmd == "pathoplexus":
+        from . import pathoplexus
+        con = connect()
+        try:
+            w = con.execute("SELECT id FROM watchlist WHERE name=?", (args.name,)).fetchone()
+        finally:
+            con.close()
+        if not w:
+            raise SystemExit(f"unknown watch: {args.name}")
+        try:
+            if args.list:
+                for p in pathoplexus.list_packages(w["id"]):
+                    print("\t".join(str(p[k] or "") for k in ("id", "status", "created", "n", "terms", "dir")))
+            else:
+                cand = pathoplexus.candidates(w["id"])
+                if args.check or not cand["rows"]:
+                    print(f"organism: {cand['organism'] or '(unknown)'}  required: {', '.join(cand['required'])}")
+                    for r in cand["rows"]:
+                        print(f"{r['status'].upper():5} {r['id']}" + "".join(f"\n        ! {m}" for m in r["errors"]) + "".join(f"\n        ~ {m}" for m in r["warnings"]))
+                    if not cand["rows"]:
+                        print("비공개 저장소가 비어 있습니다.")
+                else:
+                    ids = [i for i in (args.ids or "").split(",") if i] or [r["id"] for r in cand["rows"] if not r["errors"]]
+                    print(json.dumps(pathoplexus.build_package(w["id"], ids, args.terms, args.until, args.group_id), ensure_ascii=False, indent=2))
+        except ValueError as e:
             raise SystemExit(str(e))
     elif args.cmd == "exclude":
         from . import exclusions

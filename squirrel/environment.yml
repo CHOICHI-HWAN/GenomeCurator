@@ -1,0 +1,12 @@
+# Environment for Squirrel (github.com/aineniamh/squirrel): MPXV alignment, QC and phylogenetics - separate from the app's environment, like Nextstrain and Superset.
+#   mamba env create -f squirrel/environment.yml        (the app finds it by name: GC_SQUIRREL_ENV, default gc-squirrel; it also holds mutation-profile for the mutation-profile analysis)
+name: gc-squirrel
+channels:
+  - bioconda
+  - conda-forge
+dependencies:
+  - squirrel
+  - minimap2
+  - pip
+  - pip:
+      - mutation-profile   # github.com/insapathogenomics/mutation_profile (GPL-3.0); its dependencies (pandas, biopython) come from this environment

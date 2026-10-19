@@ -27,6 +27,7 @@ It is for viruses only. Bacteria differ in record structure (multi-contig assemb
 12. **Leave genomes out, don't delete them.** Mark genomes as excluded from the final dataset (with a reason, reversible); exports skip them and record them in `excluded.tsv`.
 13. **Datasets.** Save named, ad hoc selections (e.g. only clade Ib) with live preview and traceable exports (rules + member hash in the manifest).
     Each dataset can be browsed like the genome table and viewed on the dashboard.
+15. **Squirrel, mutation profile (with the gene of each mutation) and Pathoplexus submission preparation** on a dataset, public and private genomes together.
 14. **Nextstrain analysis.** Run the Nextstrain mpox workflow on a dataset (config overlay and the dataset's own YAML settings handled for you), keep every run with what went into it, see how each relates to the dataset today and open any of them in a local Auspice.
 15. **Analysis with Apache Superset** (optional, read-only view of your data) and a **read-only static page** for GitHub Pages.
 

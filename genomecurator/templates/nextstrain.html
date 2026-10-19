@@ -1,5 +1,5 @@
 {% extends "base.html" %}{% block body %}
-<div class="pagehead"><h2>Nextstrain 분석</h2><span class="mut">데이터셋으로 nextstrain/mpox 워크플로를 돌리고, 분석할 때마다 결과를 보관해 골라 봅니다</span></div>
+<div class="pagehead"><h2>Nextstrain · Squirrel 분석</h2><span class="mut">데이터셋(비공개 포함)으로 nextstrain/mpox 워크플로나 Squirrel을 돌리고, 분석할 때마다 결과를 보관해 골라 봅니다</span></div>
 <div class="help">데이터셋을 <b>내보내 → 워크플로 설정(config)을 만들어 → 실행</b>하는 것까지 이 화면에서 합니다. 분석마다 <b>그때의 데이터셋 멤버(해시)·규칙·설정·워크플로 버전</b>이 기록되고 결과(Auspice 파일)는 계속 보관되므로,
 데이터가 바뀐 뒤에 다시 분석해도 이전 결과가 사라지지 않고 아래 표에서 골라 볼 수 있습니다. 같은 멤버·설정·워크플로면 다시 돌리지 않습니다(강제로 돌릴 수는 있음). 모든 것이 이 컴퓨터 안에서만 돌고, 비공개 유전체가 포함된 결과도 밖으로 나가지 않습니다.</div>
 
@@ -28,6 +28,8 @@ async function setup(){const s=await (await fetch('/api/nextstrain/status')).jso
  document.getElementById('setup').innerHTML=
   row(s.env.ok,'Nextstrain 환경',s.env.ok?'<span class="mut">'+esc(s.env.name)+' · <code>'+esc(s.env.prefix)+'</code></span>':'<span>없음 — 터미널에서 <code>'+esc(s.env.how)+'</code> (nextstrain-cli, augur, snakemake, nextclade, iqtree, mafft, auspice가 들어 있습니다)</span>')
  +row(s.workflow.ok,'워크플로 저장소',s.workflow.ok?'<span class="mut"><code>'+esc(s.workflow.dir)+'</code> · 버전 <code>'+esc(s.workflow.commit)+'</code> · 빌드 '+esc(s.workflow.builds.join(', '))+'</span> <button type="button" onclick="job(\'/api/nextstrain/clone\')" title="git pull로 최신으로 맞춥니다 (분석 결과에는 어떤 버전으로 돌렸는지 기록됩니다)">업데이트</button>':'<span>없음</span> <button type="button" class="p" onclick="job(\'/api/nextstrain/clone\')">워크플로 받기 (git clone '+esc(s.workflow.repo)+')</button>')
+ +row(s.mutprofile.ok,'변이 프로파일 도구',s.mutprofile.ok?'<span class="mut">mutation-profile '+esc(s.mutprofile.version)+' + minimap2 (Squirrel 환경 안)</span>':'<span>없음 — <code>'+esc(s.mutprofile.how)+'</code></span>')
+ +row(s.squirrel.ok,'Squirrel 환경',s.squirrel.ok?'<span class="mut">'+esc(s.squirrel.name)+' · '+esc(s.squirrel.version)+' · <code>'+esc(s.squirrel.prefix)+'</code></span>':'<span>없음 — 터미널에서 <code>'+esc(s.squirrel.how)+'</code></span>')
  +row(s.viewer.running,'Auspice 보기 서버',s.viewer.running?'<span class="mut">켜져 있음 · '+esc(s.viewer.url)+(s.viewer.started_by_app?'':' (직접 켠 것)')+'</span>'+(s.viewer.started_by_app?' <button type="button" onclick="stopViewer()">끄기</button>':''):'<span class="mut">꺼져 있음 — 결과를 볼 때 켭니다</span> <button type="button" onclick="startViewer()">켜기</button>')}
 async function startViewer(){job('/api/nextstrain/viewer/start')}
 async function stopViewer(){await post('/api/nextstrain/viewer/stop');setup()}
@@ -57,8 +59,31 @@ function render(){const d=INFO.dataset,runs=INFO.runs,last=runs.find(r=>r.status
   +'<div style="display:flex;gap:10px;flex-wrap:wrap;align-items:end;margin-top:12px"><label>실행 방식<br><select id="rt"><option value="ambient">ambient (Nextstrain 환경의 도구)</option><option value="docker">docker (nextstrain 이미지)</option></select></label>'
   +'<label>코어<br><input id="co" type="number" min="1" style="width:70px" placeholder="전체"></label><label>메모(이 분석에 남김)<br><input id="nt" style="width:260px" placeholder="예: 비공개 3건 추가 후"></label>'
   +'<label title="멤버·설정·워크플로가 같아도 다시 돌립니다"><input type="checkbox" id="fo"> 같은 입력이어도 다시 분석</label>'
-  +'<button type="button" class="p" onclick="analyze()">분석 실행</button></div>';
+  +'<button type="button" class="p" onclick="analyze()">Nextstrain 분석 실행</button></div>'
+  +'<h3 style="margin:18px 0 6px">Squirrel <span class="mut" style="font-size:12.5px;font-weight:400">(MPXV 정렬 · 서열 QC · 계통수 — 같은 데이터셋, 공개+비공개 함께)</span></h3>'+squirrelPanel()
+  +'<h3 style="margin:18px 0 6px">변이 프로파일 <span class="mut" style="font-size:12.5px;font-weight:400">(mutation_profile · SNP마다 유전자·코돈·아미노산 변화, APOBEC3형 GA&gt;AA/TC&gt;TT — 공개+비공개 함께)</span></h3>'+mpPanel();
  renderRuns()}
+function mpPanel(){const M=INFO.mutprofile,s=M.settings;
+ return '<div style="display:flex;gap:14px;flex-wrap:wrap;align-items:end;font-size:13px"><label title="변이 앞쪽 염기 수">앞 염기<br><input id="mp_b" type="number" min="0" max="50" style="width:60px" value="'+s.before+'"></label><label title="변이 뒤쪽 염기 수">뒤 염기<br><input id="mp_a" type="number" min="0" max="50" style="width:60px" value="'+s.after+'"></label>'
+  +'<label title="관심 프로파일(쉼표). 기본은 APOBEC3형 GA>AA, TC>TT">프로파일<br><input id="mp_p" style="width:150px" value="'+esc(s.profiles)+'"></label><label>메모<br><input id="mp_nt" style="width:200px"></label><label><input type="checkbox" id="mp_fo"> 다시 분석</label>'
+  +'<button type="button" class="p" onclick="mpRun()">변이 프로파일 실행</button></div>'}
+async function mpRun(){const r=await post('/api/datasets/'+CUR.id+'/mutprofile/settings',{settings:{before:document.getElementById('mp_b').value,after:document.getElementById('mp_a').value,profiles:document.getElementById('mp_p').value}});if(r.error){alert(r.error);return}
+ const q=new URLSearchParams({force:document.getElementById('mp_fo').checked?1:0,note:document.getElementById('mp_nt').value});
+ if(!confirm('"'+CUR.name+'" 데이터셋('+INFO.members.toLocaleString()+'건)의 SNP를 참조 서열 기준으로 구하고 유전자별로 정리합니다. 서버에서 진행됩니다.'))return;job('/api/datasets/'+CUR.id+'/mutprofile?'+q)}
+function squirrelPanel(){const S=INFO.squirrel,s=S.settings;const ck=(id,l,v,t)=>'<label title="'+t+'"><input type="checkbox" id="'+id+'" '+(v?'checked':'')+'> '+l+'</label>';
+ return '<div style="display:flex;gap:14px;flex-wrap:wrap;align-items:end;font-size:13px"><label>clade<br><select id="sq_clade">'+S.clades.map(c=>'<option '+(c===s.clade?'selected':'')+'>'+c+'</option>').join('')+'</select></label>'
+  +ck('sq_qc','서열 QC (-qc)',s.seq_qc,'의심스러운 SNP·서열(N 인접, 군집 SNP, 높은 N 비율)을 표시')+ck('sq_phylo','계통수 (--run-phylo)',s.run_phylo,'IQ-TREE로 최대우도 계통수')+ck('sq_apo','APOBEC3 재구성 (-a)',s.apobec3,'조상 상태 재구성과 APOBEC3형 변이 표시 (--run-phylo를 대신함)')
+  +ck('sq_bg','배경 서열 포함 (-bg)',s.include_background,'clade에 맞는 기본 배경 서열을 계통수에 더함')+ck('sq_ex','QC가 제안한 서열은 계통수에서 제외',s.exclude_flagged!==false,'계통수를 만들기 전에 QC만 먼저 돌려, N 비율이 20%를 넘는 등 Squirrel이 제안한 서열을 뺍니다 (IQ-TREE가 N이 많은 정렬에서 서열 종류를 못 알아보고 실패하는 것을 막습니다). 끄면 모두 넣습니다')
+  +'<label>추가 옵션<br><input id="sq_extra" style="width:210px" value="'+esc(s.extra_args||'')+'" placeholder="예: --no-mask --outgroups KJ642615"></label>'
+  +'<label>코어<br><input id="sq_co" type="number" min="1" style="width:64px" value="'+(s.threads||'')+'" placeholder="전체"></label>'
+  +'<label>메모<br><input id="sq_nt" style="width:200px" placeholder="이 분석에 남길 메모"></label><label title="멤버·설정·버전이 같아도 다시 돌립니다"><input type="checkbox" id="sq_fo"> 다시 분석</label>'
+  +'<button type="button" onclick="sqSave()">설정 저장</button><button type="button" class="p" onclick="sqRun()">Squirrel 실행</button></div>'
+  +'<div class="mut" style="font-size:12px;margin-top:4px">빌드가 <b>'+esc(INFO.dataset.build)+'</b>이면 clade 기본값은 <b>'+esc(S.defaults.clade)+'</b>입니다. 입력·출력 위치는 도구가 관리합니다. 결과: 정렬(gz), 보고서(HTML), 제안된 마스크·제외 목록(CSV), 계통수. 보고서는 표·스타일 라이브러리를 CDN에서 불러옵니다(데이터는 밖으로 나가지 않습니다).</div>'}
+function sqSettings(){return {clade:document.getElementById('sq_clade').value,seq_qc:document.getElementById('sq_qc').checked,run_phylo:document.getElementById('sq_phylo').checked,apobec3:document.getElementById('sq_apo').checked,include_background:document.getElementById('sq_bg').checked,exclude_flagged:document.getElementById('sq_ex').checked,extra_args:document.getElementById('sq_extra').value.trim(),threads:document.getElementById('sq_co').value||''}}
+async function sqSave(){const r=await post('/api/datasets/'+CUR.id+'/squirrel/settings',{settings:sqSettings()});if(r.error){alert(r.error);return false}pick(CUR.id);return true}
+async function sqRun(){if(!(await sqSave()))return;const q=new URLSearchParams({force:document.getElementById('sq_fo')?.checked?1:0,note:document.getElementById('sq_nt')?.value||''});
+ if(INFO.qc_missing&&!confirm('Squirrel은 QC 상태와 무관하지만, 데이터셋 멤버 중 Nextclade QC가 없는 '+INFO.qc_missing+'건이 있습니다. 계속할까요?'))return;
+ if(!confirm('"'+CUR.name+'" 데이터셋('+INFO.members.toLocaleString()+'건)으로 Squirrel을 실행합니다. 서버에서 진행되며 다른 메뉴로 가도 됩니다.'))return;job('/api/datasets/'+CUR.id+'/squirrel?'+q)}
 async function saveParams(){const t=document.getElementById('py').value;const r=await post('/api/datasets/'+CUR.id+'/nextstrain/params',{params_yaml:t});
  document.getElementById('pmsg').innerHTML=r.error?'<span style="color:var(--bad)">'+esc(r.error)+'</span>':'<span style="color:var(--ok)">저장했습니다</span>';if(!r.error)pick(CUR.id)}
 async function analyze(){const t=document.getElementById('py').value;if(t!==(CUR.params_yaml||'')){const r=await post('/api/datasets/'+CUR.id+'/nextstrain/params',{params_yaml:t});if(r.error){alert(r.error);return}}
@@ -66,14 +91,15 @@ async function analyze(){const t=document.getElementById('py').value;if(t!==(CUR
  if(INFO.qc_missing&&!confirm('QC가 없는 '+INFO.qc_missing.toLocaleString()+'건은 분석에서 빠집니다. 그래도 진행할까요? (먼저 데이터셋 QC를 하는 것을 권합니다)'))return;
  if(!confirm('"'+CUR.name+'" 데이터셋('+INFO.members.toLocaleString()+'건)으로 Nextstrain 분석을 시작합니다. 몇 분~몇 시간 걸릴 수 있고(서열 수에 따라), 서버에서 진행되므로 다른 메뉴로 가도 됩니다.'))return;job('/api/datasets/'+CUR.id+'/analyze?'+q)}
 function renderRuns(){const runs=INFO.runs;document.getElementById('rcount').textContent='('+runs.length+'건, 새 분석은 이전 결과를 지우지 않습니다)';
- document.getElementById('runs').innerHTML=runs.length?'<table><tr><th>시각</th><th>이름</th><th>상태</th><th>그때의 멤버</th><th>현재 데이터셋과 비교</th><th>메모</th><th>워크플로 · 도구</th><th></th></tr>'+runs.map(r=>{
+ document.getElementById('runs').innerHTML=runs.length?'<table><tr><th>시각</th><th>도구</th><th>이름</th><th>상태</th><th>그때의 멤버</th><th>현재 데이터셋과 비교</th><th>메모</th><th>워크플로 · 도구</th><th></th></tr>'+runs.map(r=>{
   const st={done:['완료','var(--ok)'],error:['오류','var(--bad)'],running:['진행 중','var(--acc)'],interrupted:['중단','var(--bad)']}[r.status]||[r.status,''];
   const v=r.versions||{},tools=v.tools?Object.entries(v.tools).map(([k,x])=>k+' '+String(x).replace(/^\S+ /,'')).join(' · '):'';
-  return '<tr><td class="nw">'+esc(r.started.replace('T',' '))+(r.finished?'<div class="mut" style="font-size:11.5px">~ '+esc(r.finished.slice(11))+'</div>':'')+'</td><td><code>'+esc(r.name)+'</code></td>'
+  return '<tr><td class="nw">'+esc(r.started.replace('T',' '))+(r.finished?'<div class="mut" style="font-size:11.5px">~ '+esc(r.finished.slice(11))+'</div>':'')+'</td><td><b>'+(r.tool==='squirrel'?'Squirrel':r.tool==='mutprofile'?'변이 프로파일':'Nextstrain')+'</b></td><td><code>'+esc(r.name)+'</code></td>'
    +'<td><span style="color:'+st[1]+';font-weight:600">'+st[0]+'</span></td><td class="nw">공개 '+(r.n_public||0).toLocaleString()+(r.n_private?' · 🔒 '+r.n_private:'')+'</td><td style="font-size:12.5px">'+(cmpBadge(r.cmp,r)||'<span class="mut">-</span>')+'</td>'
    +'<td><input value="'+esc(r.note||'')+'" style="width:140px;height:24px" onchange="note('+r.id+',this.value)"></td><td class="mut" style="font-size:11.5px"><code>'+esc(r.workflow_commit||'')+'</code> '+esc(r.build)+'<br>'+esc(tools)+'</td>'
-   +'<td class="nw">'+(r.status==='done'?'<button type="button" class="p" onclick="openRun(\''+esc(r.name)+'\')">Auspice로 보기</button> ':'')+'<button type="button" onclick="showLog('+r.id+')">로그</button> <button type="button" onclick="del('+r.id+')" title="결과와 기록을 지웁니다">삭제</button></td></tr>'
-   +(r.error?'<tr><td></td><td colspan="7" style="color:var(--bad);font-size:12px;white-space:pre-wrap">'+esc(String(r.error).slice(0,500))+'</td></tr>':'')}).join('')+'</table>':'<div class="mut">아직 분석 결과가 없습니다. 위에서 <b>분석 실행</b>을 누르세요.</div>'}
+   +'<td class="nw">'+(r.status==='done'?(r.tool==='mutprofile'?'':r.tool==='squirrel'?'<a href="'+esc(r.url)+'" target="_blank" rel="noopener"><button type="button" class="p">보고서 열기</button></a> ':'<button type="button" class="p" onclick="openRun(\''+esc(r.name)+'\')">Auspice로 보기</button> '):'')+'<button type="button" onclick="showLog('+r.id+')">로그</button> <button type="button" onclick="del('+r.id+')" title="결과와 기록을 지웁니다">삭제</button></td></tr>'
+   +(r.tool==='mutprofile'&&r.summary&&r.summary.snps?'<tr><td></td><td colspan="8" class="mut" style="font-size:12.5px">SNP '+r.summary.snps.toLocaleString()+'건 · 서로 다른 위치 '+r.summary.distinct_sites.toLocaleString()+'곳 · 변이가 있는 유전자 '+r.summary.genes_hit+'개 · APOBEC3형 '+r.summary.profile_of_interest.toLocaleString()+'건 (참조 '+esc(r.summary.reference)+')</td></tr>':'')+((r.tool==='squirrel'||r.tool==='mutprofile')&&r.files&&r.files.length?'<tr><td></td><td colspan="8" class="mut" style="font-size:12px">파일: '+r.files.map(f=>'<a href="/api/analyses/'+r.id+'/files/'+esc(f.path)+'" target="_blank">'+esc(f.name)+'</a> ('+(f.size/1024).toFixed(0)+' KB)').join(' · ')+'</td></tr>':'')
+   +(r.error?'<tr><td></td><td colspan="8" style="color:var(--bad);font-size:12px;white-space:pre-wrap">'+esc(String(r.error).slice(0,500))+'</td></tr>':'')}).join('')+'</table>':'<div class="mut">아직 분석 결과가 없습니다. 위에서 <b>분석 실행</b>을 누르세요.</div>'}
 async function note(id,t){await post('/api/analyses/'+id+'/note',{note:t})}
 async function showLog(id){const r=await (await fetch('/api/analyses/'+id+'?tail=120')).json();const b=document.getElementById('logbox');b.style.display='';b.textContent=r.name+'\n'+'─'.repeat(40)+'\n'+(r.log_tail||'(로그 없음)');b.scrollTop=b.scrollHeight;b.scrollIntoView({behavior:'smooth'})}
 async function del(id){if(!confirm('이 분석의 결과 파일과 기록을 삭제할까요? (되돌릴 수 없습니다. 데이터셋과 유전체는 그대로입니다)'))return;await fetch('/api/analyses/'+id,{method:'DELETE'});pick(CUR.id)}

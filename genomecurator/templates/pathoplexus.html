@@ -1,0 +1,56 @@
+{% extends "base.html" %}{% block body %}
+<div class="pagehead"><h2>Pathoplexus 제출 준비</h2><span class="mut">비공개 유전체를 점검하고, 직접 올릴 파일 묶음을 만듭니다</span></div>
+<div class="help"><b>이 화면은 아무것도 업로드하지 않습니다.</b> 인증 정보(로그인·토큰)도 다루지 않습니다. 비공개 유전체가 Pathoplexus 제출 템플릿에 맞는지 점검하고,
+<code>metadata.tsv</code> · <code>sequences.fasta</code> · <code>submit.sh</code> · <code>README.txt</code> 묶음을 <code>data/pathoplexus/</code>에 만들어 줍니다. 올리는 일은 직접 합니다:
+Pathoplexus 사이트의 <i>Submit</i> 화면에서 두 파일을 올리고 <b>검토·승인</b>하거나, 본인의 <code>PATHOPLEXUS_TOKEN</code>으로 <code>submit.sh</code>를 실행합니다.
+<br><b>이용 조건(Data use terms)</b>: <b>OPEN</b>은 즉시 공개되고 INSDC(GenBank 등)로 전달되며 <u>되돌릴 수 없습니다</u>. <b>RESTRICTED</b>는 최대 1년까지 제한하며 기간은 줄이기만 할 수 있습니다.</div>
+
+<div class="card">
+ <div style="display:flex;gap:14px;flex-wrap:wrap;align-items:end">
+  <label>바이러스<br><select onchange="location.href='/pathoplexus?watch='+this.value">{% for w in watches %}<option value="{{ w.id }}" {{ 'selected' if w.id == wid }}>{{ w.name }}</option>{% endfor %}</select></label>
+  <button type="button" onclick="load(1)" title="Pathoplexus에서 최신 제출 템플릿을 다시 받아옵니다">템플릿 새로고침</button>
+  <span class="mut" id="org"></span>
+ </div>
+</div>
+<div id="cand" style="margin-top:12px"><span class="mut">불러오는 중…</span></div>
+<div class="card" id="mk" style="display:none">
+ <h3 style="margin-top:0">패키지 만들기</h3>
+ <div style="display:flex;gap:14px;flex-wrap:wrap;align-items:end;font-size:13px">
+  <label>이용 조건<br><select id="terms" onchange="termsUi()"><option value="OPEN">OPEN (공개·되돌릴 수 없음)</option><option value="RESTRICTED">RESTRICTED (기간 제한)</option></select></label>
+  <label id="untilw" style="display:none">제한 만료일<br><input id="until" type="date"></label>
+  <label title="Pathoplexus 그룹 번호(submit.sh에 기록)">그룹 ID<br><input id="grp" style="width:90px"></label>
+  <label>메모<br><input id="note" style="width:220px"></label>
+  <label title="경고(중복·QC 등)가 있는 행도 포함합니다. 오류가 있는 행은 항상 제외됩니다"><input type="checkbox" id="allow" checked> 경고 있는 행 포함</label>
+  <button type="button" class="p" onclick="make()">제출 파일 만들기 (<span id="nsel">0</span>건)</button>
+ </div>
+</div>
+<h3>만든 패키지</h3>
+<div id="pk"><span class="mut">-</span></div>
+<script>
+const WID={{ wid }};
+const esc=s=>String(s??'').replace(/[&<>"]/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c]));
+const post=(u,b)=>fetch(u,{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(b||{})}).then(r=>r.json());
+let C=null;
+function termsUi(){document.getElementById('untilw').style.display=document.getElementById('terms').value==='RESTRICTED'?'':'none'}
+function sel(){return [...document.querySelectorAll('.pick:checked')].map(x=>x.value)}
+function upd(){document.getElementById('nsel').textContent=sel().length}
+async function load(refresh){const r=await fetch('/api/pathoplexus/'+WID+'/candidates'+(refresh?'?refresh=1':''));C=await r.json();
+ document.getElementById('org').textContent=C.organism?('생물: '+C.organism+' · 필수 열: '+C.required.join(', ')):'이 바이러스의 Pathoplexus 생물을 알 수 없습니다 (템플릿 없이 점검)';
+ const st={ok:['통과','var(--ok)'],warn:['경고','var(--acc)'],error:['오류','var(--bad)']};
+ document.getElementById('cand').innerHTML=C.rows.length?'<table><tr><th></th><th>id</th><th>상태</th><th>내용</th><th>제출 이력</th></tr>'+C.rows.map(x=>{const s=st[x.status];
+  return '<tr><td><input type="checkbox" class="pick" value="'+esc(x.id)+'" '+(x.errors.length||x.submitted?'disabled':(x.warnings.length?'':'checked'))+' onchange="upd()"></td><td><code>'+esc(x.id)+'</code></td><td style="color:'+s[1]+';font-weight:600">'+s[0]+'</td>'
+   +'<td style="font-size:12.5px">'+x.errors.map(m=>'<div style="color:var(--bad)">✖ '+esc(m)+'</div>').join('')+x.warnings.map(m=>'<div>△ '+esc(m)+'</div>').join('')+(x.errors.length||x.warnings.length?'':'<span class="mut">문제 없음</span>')+'</td>'
+   +'<td class="mut">'+(x.submitted?('패키지 '+x.submitted.package+' · '+esc(x.submitted.status)):'-')+'</td></tr>'}).join('')+'</table>':'<div class="card mut">비공개 저장소가 비어 있습니다. 비공개 탭에서 먼저 올려 주세요.</div>';
+ document.getElementById('mk').style.display=C.rows.length?'':'none';upd();pkgs()}
+async function make(){const ids=sel();if(!ids.length){alert('제출할 유전체를 고르세요.');return}
+ const t=document.getElementById('terms').value;if(t==='OPEN'&&!confirm('OPEN: 제출·승인되면 바로 공개되고 INSDC로 전달되며 되돌릴 수 없습니다. 파일만 만들고 이 앱은 업로드하지 않습니다. 계속할까요?'))return;
+ const r=await post('/api/pathoplexus/'+WID+'/package',{ids,terms:t,restricted_until:document.getElementById('until').value,group_id:document.getElementById('grp').value,note:document.getElementById('note').value,allow_warnings:document.getElementById('allow').checked});
+ if(r.error){alert(r.error);return}alert('패키지 '+r.id+'를 만들었습니다: '+r.dir);load(0)}
+async function pkgs(){const l=await (await fetch('/api/pathoplexus/packages?watch='+WID)).json();
+ document.getElementById('pk').innerHTML=l.length?'<table><tr><th>#</th><th>만든 시각</th><th>건수</th><th>조건</th><th>상태</th><th>폴더</th><th></th></tr>'+l.map(p=>'<tr><td>'+p.id+'</td><td class="nw">'+esc(String(p.created||'').replace('T',' '))+'</td><td>'+p.ids.length+'</td><td>'+esc(p.terms)+(p.restricted_until?' ~ '+esc(p.restricted_until):'')+'</td>'
+  +'<td><select onchange="mark('+p.id+',this.value)">'+['prepared','submitted','published'].map(s=>'<option value="'+s+'" '+(s===p.status?'selected':'')+'>'+({prepared:'파일 준비됨',submitted:'제출함(승인 대기/완료)',published:'공개됨'})[s]+'</option>').join('')+'</select></td>'
+  +'<td class="mut" style="font-size:12px"><code>'+esc(p.dir)+'</code></td><td class="nw"><a href="/api/pathoplexus/packages/'+p.id+'.zip"><button type="button">zip 받기</button></a></td></tr>').join('')+'</table>':'<span class="mut">아직 만든 패키지가 없습니다.</span>'}
+async function mark(id,s){const r=await post('/api/pathoplexus/packages/'+id+'/mark',{status:s});if(r.error)alert(r.error);load(0)}
+load(0);
+</script>
+{% endblock %}
