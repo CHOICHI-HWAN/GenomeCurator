@@ -1484,3 +1484,123 @@ def test_exclusion_api_and_pages(tmp_path, monkeypatch):
     assert c.post("/api/exclusions/1", json={"ids": ["A1"], "scope": "public", "action": "include"}).json() == {"included": 1}
     assert c.post("/api/exclusions/99", json={"ids": ["A1"], "scope": "public", "action": "exclude"}).status_code == 400
     assert c.get("/api/export/1/preview?profile=nextstrain").json()["excluded"] == 0
+
+
+def _ds_env(tmp_path, monkeypatch):
+    """_qc_env plus: A1 = clade Ib (2024, Uganda), X2 = clade IIa (2019, Peru), N3 = clade Ib without a sequence file; all with PPX accessions; QC run."""
+    from genomecurator import qc
+    _qc_env(tmp_path, monkeypatch)
+    from genomecurator.db import connect
+    con = connect()
+    con.execute("UPDATE genome SET pathoplexus_accession='PP_A1.1', clade='Ib', isolation_country='Uganda', collection_date='2024-05-06', accession_version=1 WHERE accession='A1'")
+    con.execute("UPDATE genome SET pathoplexus_accession='PP_X2.1', clade='IIa', isolation_country='Peru', collection_date='2019-01-02', accession_version=1 WHERE accession='X2'")
+    con.execute("INSERT INTO genome(genome_id,watch_id,accession,genome_length,clade,pathoplexus_accession,isolation_country,collection_date,accession_version) VALUES('g9',1,'N3',200,'Ib','PP_N3.1','Uganda','2023',1)")
+    con.commit()
+    con.close()
+    qc.dataset_update("nextstrain/mpox/all-clades")
+    qc.run(1)
+
+
+def test_dataset_rules_and_storage(tmp_path, monkeypatch):
+    import pytest
+    from genomecurator import datasets, export
+    _ds_env(tmp_path, monkeypatch)
+    assert datasets.describe({}) == "제한 없음 (전체)" and "clade Ib" in datasets.describe({"clade": ["Ib"]}) and "서열 없는 것 포함" in datasets.describe({"require_sequence": False})
+    n = datasets.normalize({"clade": [" Ib ", ""], "year_min": "2020", "year_max": "", "bogus": 1, "min_length": "abc"})
+    assert n["clade"] == ["Ib"] and n["year_min"] == 2020 and n["year_max"] is None and n["min_length"] is None and "bogus" not in n and n["require_sequence"] is True
+    ib = datasets.save(1, "clade Ib", {"clade": ["Ib"]}, "only Ib", build="clade-i")
+    assert ib["id"] and ib["rules"]["clade"] == ["Ib"] and ib["build"] == "clade-i" and datasets.find(1, "clade Ib")["id"] == ib["id"]
+    with pytest.raises(ValueError):
+        datasets.save(1, "clade Ib", {})                                                         # names are unique per virus
+    with pytest.raises(ValueError):
+        datasets.save(1, "x", {}, build="nope")
+    with pytest.raises(ValueError):
+        datasets.save(1, "  ", {})
+    ids = lambda ds, **kw: [r["PPX_accession"] for r in export.table(1, "nextstrain", ds, **kw)[1]]
+    assert ids(ib) == ["PP_A1"]                                                                  # N3 is Ib too, but has no sequence file
+    both = datasets.save(1, "Ib incl. no sequence", {"clade": ["Ib"], "require_sequence": False})
+    assert ids(both) == ["PP_A1", "PP_N3"]
+    assert ids(datasets.save(1, "years", {"year_min": 2020})) == ["PP_A1"] and ids(datasets.save(1, "old", {"year_max": 2019})) == ["PP_X2"]
+    assert ids(datasets.save(1, "peru", {"country": ["Peru"]})) == ["PP_X2"] and ids(datasets.save(1, "len", {"min_length": 190})) == ["PP_A1", "PP_X2"] and ids(datasets.save(1, "len2", {"min_length": 201})) == []
+    assert ids(datasets.save(1, "all", {})) == ["PP_A1", "PP_X2"]
+    # manual add / remove: add wins over the rules, remove wins over everything; ids may be the PPX or the INSDC accession
+    assert ids(datasets.save(1, "Ib + X2", {"clade": ["Ib"]}, manual_include=["X2"])) == ["PP_A1", "PP_X2"]
+    assert ids(datasets.save(1, "Ib - A1", {"clade": ["Ib"]}, manual_exclude=["PP_A1"])) == []
+    # a QC status can leave members out (X2's Nextclade QC is bad in the fake)
+    assert ids(datasets.save(1, "all but bad", {"qc_not": ["bad"]})) == ["PP_A1"]
+    # the global exclusion still applies to every dataset
+    from genomecurator import exclusions
+    exclusions.add(1, ["A1"], "public", "x")
+    assert ids(ib) == [] and ids(datasets.save(1, "all2", {})) == ["PP_X2"]
+    exclusions.remove(1, ["A1"])
+    # update in place; the definition can be deleted, the genomes stay
+    up = datasets.save(1, "clade Ib (renamed)", {"clade": ["Ib", "IIa"]}, dataset_id=ib["id"])
+    assert up["id"] == ib["id"] and datasets.get(ib["id"])["name"] == "clade Ib (renamed)" and ids(up) == ["PP_A1", "PP_X2"]
+    assert datasets.delete(ib["id"]) and not datasets.delete(ib["id"]) and datasets.get(ib["id"]) is None
+    from genomecurator.db import connect
+    assert connect().execute("SELECT COUNT(*) FROM genome WHERE accession='A1'").fetchone()[0] == 1
+
+
+def test_dataset_export_snapshot_and_private(tmp_path, monkeypatch):
+    import json
+    from genomecurator import datasets, export, private
+    _ds_env(tmp_path, monkeypatch)
+    private.import_texts(1, *_priv_files([{"PPX_accession": "LAB_U1", "strain": "a", "date": "2025", "country": "Uganda"},
+                                          {"PPX_accession": "LAB_P1", "strain": "b", "date": "2025", "country": "Peru"}], {"LAB_U1": "ACGT" * 40, "LAB_P1": "ACGT" * 41}))
+    ds = datasets.save(1, "Uganda only", {"country": ["Uganda"]}, "test", include_private=True, build="clade-i")
+    pv = export.preview(1, "nextstrain", include_private=True, dataset=ds)
+    assert pv["selected"] == 1 and pv["private"] == 1                                            # the rules apply to private rows too
+    r = export.write(1, None, "nextstrain", dataset=ds)
+    out = __import__("pathlib").Path(r["dir"])
+    assert out.parent.name == "Uganda_only" and out.parent.parent.name == "Mpox"                 # exports/<virus>/<dataset>/<stamp>
+    assert r["rows"] == 1 and r["private"] == 1                                                  # the dataset asked for the private part, no flag needed
+    assert "PP_X2" not in (out / "metadata.tsv").read_text(encoding="utf-8") and "LAB_U1" in (out / "metadata-private.tsv").read_text(encoding="utf-8")
+    assert "LAB_P1" not in (out / "metadata-private.tsv").read_text(encoding="utf-8")
+    mf = json.loads((out / "manifest.json").read_text(encoding="utf-8"))
+    assert mf["dataset"]["name"] == "Uganda only" and mf["dataset"]["rules"]["country"] == ["Uganda"] and mf["dataset"]["members_sha256"] == datasets.members_hash(["PP_A1", "private:LAB_U1"])
+    assert "defaults/clade-i/config.yaml" in (out / "nextstrain-config.yaml").read_text(encoding="utf-8")
+    h = datasets.export_history(ds["id"])
+    assert len(h) == 1 and h[0]["rows"] == 1 and h[0]["private_rows"] == 1 and h[0]["dir"] == str(out) and h[0]["members_sha256"] == mf["dataset"]["members_sha256"]
+    assert datasets.listing(1)[0]["last_export"] and export.list_exports()[0]["dataset"] == "Uganda only"
+    # the same dataset exported again later has the same member hash while the members are the same (traceable), and differs when they change
+    r2 = export.write(1, tmp_path / "again", "nextstrain", dataset=ds)
+    assert json.loads((tmp_path / "again" / "manifest.json").read_text(encoding="utf-8"))["dataset"]["members_sha256"] == mf["dataset"]["members_sha256"] and r2["rows"] == 1
+    private.import_texts(1, *_priv_files([{"PPX_accession": "LAB_U2", "strain": "c", "date": "2025", "country": "Uganda"}], {"LAB_U2": "ACGT" * 42}))
+    export.write(1, tmp_path / "later", "nextstrain", dataset=ds)
+    assert json.loads((tmp_path / "later" / "manifest.json").read_text(encoding="utf-8"))["dataset"]["members_sha256"] != mf["dataset"]["members_sha256"]
+    # a plain (non-dataset) export is untouched
+    assert export.write(1, tmp_path / "plain", "nextstrain")["rows"] == 2 and json.loads((tmp_path / "plain" / "manifest.json").read_text(encoding="utf-8"))["dataset"] is None
+
+
+def test_dataset_api(tmp_path, monkeypatch):
+    import time
+    from fastapi.testclient import TestClient
+    from genomecurator import web
+    _ds_env(tmp_path, monkeypatch)
+    c = TestClient(web.create_app(scheduler=False))
+    assert c.get("/datasets?watch=1").status_code == 200
+    f = c.get("/api/datasets/facets?watch=1").json()
+    cl = {x["value"]: x for x in f["fields"]["clade"]}
+    assert f["genomes"] == 3 and f["with_sequence"] == 2 and cl["Ib"]["n"] == 2 and cl["Ib"]["with_seq"] == 1 and cl["IIa"]["n"] == 1
+    assert c.get("/api/datasets/facets?watch=99").status_code == 404
+    body = {"watch": 1, "name": "Ib", "description": "d", "build": "clade-i", "rules": {"clade": ["Ib"]}, "include_private": False, "manual_include": [], "manual_exclude": []}
+    pv = c.post("/api/datasets/preview", json=body).json()
+    assert pv["selected"] == 1 and pv["by_clade"] == [["Ib", 1]] and pv["by_country"][0][0] == "Uganda" and "clade Ib" in pv["summary"]
+    assert c.get("/api/datasets?watch=1").json() == []                                           # a preview saves nothing
+    ds = c.post("/api/datasets", json=body).json()
+    assert ds["id"] and c.post("/api/datasets", json=body).status_code == 400                    # duplicate name
+    assert [d["name"] for d in c.get("/api/datasets?watch=1").json()] == ["Ib"]
+    t = c.get(f"/api/export/1/metadata.tsv?dataset={ds['id']}")
+    fa = c.get(f"/api/export/1/sequences.fasta?dataset={ds['id']}")
+    assert [ln.split("\t")[0] for ln in t.text.splitlines()[1:]] == ["PP_A1"] == [ln[1:] for ln in fa.text.splitlines() if ln.startswith(">")]
+    assert c.get(f"/api/export/1/metadata.tsv?dataset={ds['id']}").status_code == 200 and c.get("/api/export/1/metadata.tsv?dataset=999").status_code == 400
+    jid = c.post(f"/api/datasets/{ds['id']}/export").json()["job"]
+    for _ in range(100):
+        j = c.get(f"/api/job/{jid}").json()
+        if j["done"]:
+            break
+        time.sleep(0.05)
+    assert j["status"] == "done" and j["result"]["rows"] == 1 and j["kind"] == "dataset"
+    assert len(c.get(f"/api/datasets/{ds['id']}/history").json()) == 1
+    assert c.post("/api/datasets/999/export").status_code == 404
+    assert c.delete(f"/api/datasets/{ds['id']}").json() == {"deleted": True} and c.get("/api/datasets?watch=1").json() == []

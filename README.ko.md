@@ -25,7 +25,8 @@
 10. **다른 프로그램으로 내보내기.** 탭·CLI·내부 API에서 정렬된 `metadata.tsv` + `sequences.fasta`(체크섬이 든 manifest 포함)를 만들며, [Nextstrain mpox](https://github.com/nextstrain/mpox) 워크플로의 입력 열에 맞춘 형식이 있습니다.
 11. **비공개 저장소.** 공개되지 않은 로컬 유전체를 하나씩 또는 스프레드시트(템플릿 제공)로 올려(올릴 때마다 버전 기록, dry-run 먼저) 공개 세트와 분리된 저장소에 두고, Nextstrain 워크플로 자체의 `private_metadata` / `private_sequences`에 연결되는 *별도 파일*로 내보내므로, 둘을 섞지 않고 최종 분석용 데이터세트를 만들 수 있습니다.
 12. **삭제하지 않고 데이터셋에서 제외.** 최종 데이터셋에서 뺄 유전체를 사유와 함께 표시(되돌릴 수 있음)하면 내보내기가 건너뛰고 `excluded.tsv`에 기록합니다.
-13. **Apache Superset 분석**(선택, 읽기 전용)과 GitHub Pages용 **읽기 전용 정적 페이지**.
+13. **데이터셋.** 이름 붙인 임의 선별(예: clade Ib만)을 저장하고 실시간 미리보기와 추적 가능한 내보내기(manifest에 규칙·멤버 해시)를 합니다.
+14. **Apache Superset 분석**(선택, 읽기 전용)과 GitHub Pages용 **읽기 전용 정적 페이지**.
 
 ## 화면
 

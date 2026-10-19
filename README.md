@@ -25,7 +25,8 @@ It is for viruses only. Bacteria differ in record structure (multi-contig assemb
 10. **Export for other programs.** Aligned `metadata.tsv` + `sequences.fasta` (+ manifest with checksums) from a tab, the CLI or an internal API, with a profile that matches the [Nextstrain mpox](https://github.com/nextstrain/mpox) workflow's input columns.
 11. **Private store.** Local, unpublished genomes are uploaded one at a time or from a spreadsheet (template included; every upload is a version; dry run first) into a store separate from the public set and exported as *separate files* wired to the Nextstrain workflow's own `private_metadata` / `private_sequences`, so a final analysis dataset can combine both without mixing them.
 12. **Leave genomes out, don't delete them.** Mark genomes as excluded from the final dataset (with a reason, reversible); exports skip them and record them in `excluded.tsv`.
-13. **Analysis with Apache Superset** (optional, read-only view of your data) and a **read-only static page** for GitHub Pages.
+13. **Datasets.** Save named, ad hoc selections (e.g. only clade Ib) with live preview and traceable exports (rules + member hash in the manifest).
+14. **Analysis with Apache Superset** (optional, read-only view of your data) and a **read-only static page** for GitHub Pages.
 
 ## Screenshots
 

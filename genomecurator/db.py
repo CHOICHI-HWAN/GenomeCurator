@@ -74,6 +74,12 @@ CREATE TABLE IF NOT EXISTS private_version(
 CREATE TABLE IF NOT EXISTS dataset_exclusion(
   scope TEXT, watch_id INTEGER, id TEXT, reason TEXT, excluded_at TEXT,   -- scope: public (id = accession) | private (id = private id)
   PRIMARY KEY(scope, watch_id, id));
+-- named, saved datasets for analysis (datasets.py): rules over the curated (and optionally private) genomes plus manual adds / removals
+CREATE TABLE IF NOT EXISTS dataset(
+  id INTEGER PRIMARY KEY, watch_id INTEGER, name TEXT, description TEXT, rules_json TEXT, include_private INTEGER DEFAULT 0,
+  manual_include_json TEXT, manual_exclude_json TEXT, build TEXT, created TEXT, updated TEXT, UNIQUE(watch_id, name));
+CREATE TABLE IF NOT EXISTS dataset_export(
+  id INTEGER PRIMARY KEY, dataset_id INTEGER, exported TEXT, dir TEXT, rows INTEGER, private_rows INTEGER, members_sha256 TEXT, rules_json TEXT);
 -- sequence QC (qc.py): one row per accession and tool (seqstats, nextclade); derived data, safe to delete and recompute
 CREATE TABLE IF NOT EXISTS qc_result(
   accession TEXT, tool TEXT, watch_id INTEGER, status TEXT,  -- good|mediocre|bad|error

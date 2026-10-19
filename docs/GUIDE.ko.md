@@ -287,6 +287,18 @@ FASTA 실제 길이·md5가 기록과 맞는지, 날짜가 미래가 아닌지, 
 * `Removed`와 다릅니다: `Removed`는 NCBI에서 사라졌거나 커버리지 하한 미만이라 *큐레이션 세트에서 빠진* 것이고, 제외는 *특정 데이터셋에서만 빼는* 결정입니다.
 * CLI: `python -m genomecurator exclude "Orthopoxvirus monkeypox" ACC1 ACC2 --reason "오염 의심"` (`--undo`로 해제, `--private`로 비공개 id, `--list`로 목록). API: `GET/POST /api/exclusions/{바이러스id}`.
 
+### 10. 데이터셋 (분석할 유전체를 골라 저장하기)
+
+분석마다 대상이 다릅니다(예: clade Ib만, 2024년 이후만, 완전한 게놈만). **데이터셋** 탭에서 대상을 *정의*해 이름으로 저장하고 필요할 때마다 내보냅니다.
+
+* **정의일 뿐입니다**: 유전체·서열을 복사하거나 지우지 않습니다. 구성: **규칙**(모두 만족해야 하며 비우면 제한 없음) — clade, lineage, outbreak, 대륙, 국가, 숙주, 완성도, 수집 연도 범위, 길이 범위, 뺄 QC 상태, 서열이 있는 것만; **직접 넣기**(규칙과 상관없이 포함, accession 한 줄에 하나)와 **직접 빼기**(이 데이터셋에서만 제외); **비공개 포함**(별도 파일로).
+* **규칙 고르기**: 탭이 데이터에 실제로 있는 값을 건수·서열 있는 수와 함께 보여 줍니다(많으면 찾기). 클릭할 때마다 **멤버 수**, clade·국가·연도 분포, 경고(서열이 없어 빠지는 수 등)가 바로 나옵니다. 처음이면 **프리셋**(mpox: clade Ib / Ia / I(Ia+Ib) / IIb / 완전한 게놈)으로 시작하세요.
+* **판단 기준**: 규칙은 내보내기가 쓰는 *그 행*(큐레이션된 clade, 없으면 Nextclade 값 등)으로 판정하므로 "미리보기가 센 것"과 "내보낸 것"이 같습니다. 전역 **데이터셋에서 제외** 표시는 모든 데이터셋에서 빠지고, *직접 빼기*가 *직접 넣기*와 규칙보다 우선합니다.
+* **내보내기**: `exports/<바이러스>/<데이터셋 이름>/<시각>/`에 `metadata.tsv`, `sequences.fasta`, `manifest.json`, 설정(비공개 포함이면 별도 파일도)을 씁니다. manifest의 `dataset`에 이름·규칙·**멤버 id 해시**가 기록되고 데이터셋의 *내보낸 기록*에도 남으므로, 규칙이나 데이터가 나중에 바뀌어도 어떤 멤버로 만든 결과인지 추적할 수 있습니다(같은 멤버면 해시가 같습니다). **Nextstrain 빌드**(`mpxv`/`hmpxv1`/`clade-i`)를 정해 두면 설정 파일이 그 빌드의 명령을 안내합니다(Ib는 `clade-i`).
+* **정의 삭제**는 정의와 내보낸 기록만 지웁니다. 유전체·서열·이미 내보낸 파일은 그대로입니다.
+* CLI: `python -m genomecurator dataset-create "Orthopoxvirus monkeypox" "clade Ib" --clade Ib --build clade-i` / `dataset-list` / `dataset-export ... [--nextstrain-dir ~/mpox/phylogenetic]` / `dataset-delete`. API: `GET/POST /api/datasets`, `POST /api/datasets/{id}/export`, `GET /api/export/{virus}/metadata.tsv?dataset={id}`(+ `sequences.fasta`; 다운로드에는 비공개가 실리지 않음).
+* 서열을 아직 다 받지 않았다면 멤버 수가 서열 있는 것만 셉니다(미리보기가 건수를 알려 줍니다) — 유전체 탭에서 서열을 받은 뒤 다시 보세요.
+
 ## 명령어 모음 (Cheat sheet)
 
 | 명령 | 설명 |

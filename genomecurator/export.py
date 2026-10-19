@@ -17,7 +17,7 @@ import re
 from datetime import datetime
 from pathlib import Path
 
-from . import __version__, completeness, config, db, exclusions, log, qc, reconcile
+from . import __version__, completeness, config, datasets, db, exclusions, log, qc, reconcile
 from .db import connect
 
 _log = log.get("export")
@@ -234,26 +234,41 @@ def _keep_identified(profile: str, sel: list[dict], out: list[dict]) -> tuple[li
     return kept, by_id, no_id, dup
 
 
-def table(watch_id: int, profile: str = "nextstrain", **filters) -> tuple[list[str], list[dict], dict, dict]:
-    """(columns, rows, selected genome rows keyed by the id column, watch)."""
+def _in_dataset(dataset: dict | None, sel: list[dict], out: list[dict], profile: str = "nextstrain") -> tuple[list[dict], list[dict]]:
+    """Keep only the members of a dataset. Rules are judged on the nextstrain-profile row - the one the export writes - whatever the profile."""
+    if not dataset:
+        return sel, out
+    keep = [(g, o) for g, o in zip(sel, out) if datasets.matches(dataset, o if profile == "nextstrain" else nextstrain_row(g), g)]
+    return [g for g, _ in keep], [o for _, o in keep]
+
+
+def _dataset_filters(dataset: dict | None, filters: dict) -> dict:
+    return {"require_sequence": dataset["rules"]["require_sequence"], "skip_excluded": True} if dataset else filters
+
+
+def table(watch_id: int, profile: str = "nextstrain", dataset: dict | None = None, **filters) -> tuple[list[str], list[dict], dict, dict]:
+    """(columns, rows, selected genome rows keyed by the id column, watch). With a dataset its rules (not `filters`) decide who is in."""
     if profile not in PROFILES:
         raise ValueError(f"알 수 없는 형식입니다: {profile} (가능: {', '.join(PROFILES)})")
     w, rows = _load(watch_id)
-    sel = select(rows, **filters)
+    sel = select(rows, **_dataset_filters(dataset, filters))
     prof = PROFILES[profile]
     out = [prof["row"](r) for r in sel]
+    sel, out = _in_dataset(dataset, sel, out, profile)
     out, by_id, _, _ = _keep_identified(profile, sel, out)
     cols = prof["columns"] or (list(out[0]) if out else ["INSDC_accession_version"])
     return cols, out, by_id, w
 
 
-def preview(watch_id: int, profile: str = "nextstrain", include_private: bool = False, **filters) -> dict:
+def preview(watch_id: int, profile: str = "nextstrain", include_private: bool = False, dataset: dict | None = None, **filters) -> dict:
     """Counts and warnings, without writing anything."""
     if profile not in PROFILES:
         raise ValueError(f"알 수 없는 형식입니다: {profile} (가능: {', '.join(PROFILES)})")
     w, rows = _load(watch_id)
+    filters = _dataset_filters(dataset, filters)
     sel = select(rows, **filters)
     out_all = [PROFILES[profile]["row"](r) for r in sel]
+    sel, out_all = _in_dataset(dataset, sel, out_all, profile)
     out, by_id, no_id, dup = _keep_identified(profile, sel, out_all)
     n = len(out)
     warn = []
@@ -280,7 +295,7 @@ def preview(watch_id: int, profile: str = "nextstrain", include_private: bool = 
     if include_private:
         from . import private as _private
         ex_priv = exclusions.marked(watch_id, "private")
-        n_priv = sum(1 for r in _private.rows_for_export(watch_id) if r["id"] not in ex_priv)
+        n_priv = len(private_table(watch_id, dataset)[1])
         if ex_priv:
             warn.append(f"제외 표시한 비공개 유전체 {len(ex_priv):,}건은 빠집니다 (보관 중).")
         if n_priv:
@@ -312,11 +327,14 @@ def private_row(rec: dict) -> dict:
     return row
 
 
-def private_table(watch_id: int) -> tuple[list[str], list[dict], dict[str, str]]:
+def private_table(watch_id: int, dataset: dict | None = None) -> tuple[list[str], list[dict], dict[str, str]]:
     from . import private as _private
     ex = exclusions.marked(watch_id, "private")
     recs = [r for r in _private.rows_for_export(watch_id) if r["id"] not in ex]
     rows = [private_row(r) for r in recs]
+    if dataset:
+        keep = [(r, o) for r, o in zip(recs, rows) if datasets.matches(dataset, o, None, key=r["id"])]
+        recs, rows = [r for r, _ in keep], [o for _, o in keep]
     extra = sorted({k for r in rows for k in r} - set(NEXTSTRAIN_COLUMNS))
     return NEXTSTRAIN_COLUMNS + extra, rows, {r["id"]: r["file_path"] for r in recs}
 
@@ -370,20 +388,25 @@ def exports_dir() -> Path:
     return config.DATA_DIR / "exports"
 
 
-def write(watch_id: int, out_dir: Path | None = None, profile: str = "nextstrain", progress=None, nextstrain_dir: Path | None = None, include_private: bool = False, **filters) -> dict:
+def write(watch_id: int, out_dir: Path | None = None, profile: str = "nextstrain", progress=None, nextstrain_dir: Path | None = None, include_private: bool = False, dataset: dict | None = None, **filters) -> dict:
     """Write metadata.tsv, sequences.fasta, manifest.json and nextstrain-config.yaml. Default folder: data/exports/<virus>/<timestamp>/.
     With nextstrain_dir (the `phylogenetic/` folder of a nextstrain/mpox checkout) the files go to <it>/data/genomecurator/ and the config to
     <it>/build-configs/genomecurator/config.yaml with paths relative to that folder - the form that also works inside the Docker runtime.
     include_private additionally writes the private store as metadata-private.tsv / sequences-private.fasta (never mixed into the public files)
-    and wires them to the workflow's private_metadata / private_sequences."""
+    and wires them to the workflow's private_metadata / private_sequences.
+    dataset (datasets.py) decides who is in: its rules, manual adds / removals and its own include_private; the manifest records the rules and a
+    hash of the exact member ids, and the folder defaults to exports/<virus>/<dataset>/<timestamp>/."""
+    if dataset and dataset.get("include_private"):
+        include_private = True
     p = progress or (lambda *a: None)
     p(5, "선택한 유전체와 QC 결과를 모으는 중…")
-    cols, rows, sel, w = table(watch_id, profile, **filters)
+    cols, rows, sel, w = table(watch_id, profile, dataset, **filters)
     stamp = datetime.now().strftime("%Y%m%d-%H%M%S")
     ns = Path(nextstrain_dir).expanduser() if nextstrain_dir else None
     if ns and not (ns / "Snakefile").exists():
         raise ValueError(f"{ns}에 Snakefile이 없습니다. nextstrain/mpox 저장소의 phylogenetic/ 폴더를 지정하세요.")
-    out = (ns / "data" / "genomecurator") if ns else (Path(out_dir) if out_dir else exports_dir() / slug(w["name"]) / stamp)
+    sub = ([slug(dataset["name"])] if dataset else []) + [stamp]
+    out = (ns / "data" / "genomecurator") if ns else (Path(out_dir) if out_dir else exports_dir() / slug(w["name"]) / Path(*sub))
     out.mkdir(parents=True, exist_ok=True)
     meta, fa = out / "metadata.tsv", out / "sequences.fasta"
     h_meta, h_fa = hashlib.sha256(), hashlib.sha256()
@@ -403,7 +426,7 @@ def write(watch_id: int, out_dir: Path | None = None, profile: str = "nextstrain
     priv = None
     if include_private:
         p(96, "비공개 유전체 쓰는 중…")
-        pcols, prows, pfiles = private_table(watch_id)
+        pcols, prows, pfiles = private_table(watch_id, dataset)
         hp_m, hp_f = hashlib.sha256(), hashlib.sha256()
         with open(out / "metadata-private.tsv", "w", encoding="utf-8", newline="\n") as f:
             for chunk in iter_metadata(pcols, prows):
@@ -420,8 +443,8 @@ def write(watch_id: int, out_dir: Path | None = None, profile: str = "nextstrain
         (out / "PRIVATE_DATA.txt").write_text("This folder contains PRIVATE (unpublished) genomes: metadata-private.tsv and sequences-private.fasta.\n"
                                               "Do not share, publish or commit it. The public files (metadata.tsv, sequences.fasta) contain no private data.\n", encoding="utf-8")
         from . import private as _pv
-        priv = {"rows": len(prows), "sequences": n_pseq, "versions": {r["id"]: r["version"] for r in _pv.rows_for_export(watch_id)}, "files": {"metadata-private.tsv": {"sha256": hp_m.hexdigest(), "columns": pcols}, "sequences-private.fasta": {"sha256": hp_f.hexdigest()}}}
-    pv = preview(watch_id, profile, include_private=include_private, **filters)
+        priv = {"rows": len(prows), "sequences": n_pseq, "ids": list(pfiles), "versions": {r["id"]: r["version"] for r in _pv.rows_for_export(watch_id) if r["id"] in pfiles}, "files": {"metadata-private.tsv": {"sha256": hp_m.hexdigest(), "columns": pcols}, "sequences-private.fasta": {"sha256": hp_f.hexdigest()}}}
+    pv = preview(watch_id, profile, include_private=include_private, dataset=dataset, **filters)
     excl_files = []
     if filters.get("skip_excluded", True):
         pub = [r for r in exclusions.listing(watch_id, "public")]
@@ -448,12 +471,17 @@ def write(watch_id: int, out_dir: Path | None = None, profile: str = "nextstrain
         dbv = db.version_info()
     finally:
         con.close()
+    members_sha = datasets.members_hash(list(sel) + [("private:" + i) for i in (priv["ids"] if priv else [])]) if dataset else ""
     manifest = {"generated": datetime.now().isoformat(timespec="seconds"), "virus": w["name"], "taxon": w["taxon"], "profile": profile,
                 "app": {"name": "genomecurator", "version": __version__, "db_schema": dbv.get("db_schema_version")},
                 "filters": {k: v for k, v in filters.items() if v not in (None, [], "")}, "rows": len(rows), "sequences": n_seq,
                 "id_column": PROFILES[profile]["id"], "warnings": pv["warnings"], "nextclade": {"datasets": tags, "versions": nver},
                 "files": {"metadata.tsv": {"sha256": h_meta.hexdigest(), "columns": cols}, "sequences.fasta": {"sha256": h_fa.hexdigest()}},
                 "contains_private": bool(priv), "private": priv,
+                "dataset": ({"id": dataset["id"], "name": dataset["name"], "description": dataset["description"], "rules": dataset["rules"], "summary": datasets.describe(dataset["rules"]),
+                             "manual_include": len(dataset["manual_include"]), "manual_exclude": len(dataset["manual_exclude"]), "build": dataset["build"],
+                             "members_sha256": members_sha}
+                            if dataset else None),
                 "excluded": {"public": pv.get("excluded", 0), "files": excl_files,
                              "note": "marked as left out of the dataset; nothing is deleted - see excluded.tsv for who/why/when"},
                 "data_use": "metadata.tsv / sequences.fasta: open data only - the curated set is defined by INSDC (NCBI) accessions, so Pathoplexus restricted-use records are not included. "
@@ -463,10 +491,10 @@ def write(watch_id: int, out_dir: Path | None = None, profile: str = "nextstrain
     if ns:
         cfg_path = ns / "build-configs" / "genomecurator" / "config.yaml"
         cfg_path.parent.mkdir(parents=True, exist_ok=True)
-        cfg = nextstrain_config(out, profile, relative_to=ns, private=bool(priv))
+        cfg = nextstrain_config(out, profile, relative_to=ns, private=bool(priv), build=(dataset or {}).get("build"))
     else:
         cfg_path = out / "nextstrain-config.yaml"
-        cfg = nextstrain_config(out, profile, private=bool(priv))
+        cfg = nextstrain_config(out, profile, private=bool(priv), build=(dataset or {}).get("build"))
     cfg_path.write_text(cfg, encoding="utf-8")
     con = connect()
     try:
@@ -474,6 +502,8 @@ def write(watch_id: int, out_dir: Path | None = None, profile: str = "nextstrain
         con.commit()
     finally:
         con.close()
+    if dataset:
+        datasets.record_export(dataset["id"], str(out), len(rows), priv["rows"] if priv else 0, members_sha, dataset["rules"])
     p(100, "내보내기 완료")
     _log.info("export %r profile=%s rows=%d sequences=%d -> %s", w["name"], profile, len(rows), n_seq, out)
     return {"dir": str(out), "rows": len(rows), "sequences": n_seq, "private": priv["rows"] if priv else 0, "warnings": pv["warnings"], "config": str(cfg_path),
@@ -481,7 +511,7 @@ def write(watch_id: int, out_dir: Path | None = None, profile: str = "nextstrain
             "excluded": pv.get("excluded", 0)}
 
 
-def nextstrain_config(out: Path, profile: str = "nextstrain", relative_to: Path | None = None, private: bool = False) -> str:
+def nextstrain_config(out: Path, profile: str = "nextstrain", relative_to: Path | None = None, private: bool = False, build: str | None = None) -> str:
     """A config *overlay* for the Nextstrain mpox workflow: only `inputs` (local files instead of data.nextstrain.org) and use_remote_files.
     The workflow's Snakefile loads its own defaults/<build>/config.yaml only when no config is given, so pass the build's defaults first."""
     def path(name: str) -> str:
@@ -491,8 +521,9 @@ def nextstrain_config(out: Path, profile: str = "nextstrain", relative_to: Path 
     idc = PROFILES[profile]["id"]
     return (f"# Overlay for github.com/nextstrain/mpox (phylogenetic/). Run with the build's own defaults FIRST, then this file:\n"
             f"#   cd phylogenetic\n"
-            f"#   nextstrain build . --configfile defaults/mpxv/config.yaml {cfgp}        # all clades\n"
-            f"#   nextstrain build . --configfile defaults/hmpxv1/config.yaml {cfgp}      # clade IIb   (or defaults/clade-i/config.yaml)\n"
+            + (f"#   nextstrain build . --configfile defaults/{build}/config.yaml {cfgp}        # the build chosen for this dataset\n" if build else
+               f"#   nextstrain build . --configfile defaults/mpxv/config.yaml {cfgp}        # all clades\n"
+               f"#   nextstrain build . --configfile defaults/hmpxv1/config.yaml {cfgp}      # clade IIb   (or defaults/clade-i/config.yaml)\n") +
             f"# (the Snakefile only loads defaults/*/config.yaml when no config is given, so this file alone is not a complete config)\n"
             f"# Inputs replace the default URLs; local paths are used as they are, nothing is downloaded.\n"
             f"{'' if relative_to else '# Absolute paths do not exist inside the Docker runtime: use --nextstrain-dir to write into the checkout, or run with --ambient/--conda.' + chr(10)}"
@@ -512,11 +543,18 @@ def list_exports(watch_name: str | None = None, limit: int = 20) -> list[dict]:
     for vdir in sorted(base.iterdir()):
         if watch_name and vdir.name != slug(watch_name):
             continue
-        for d in sorted((x for x in vdir.iterdir() if x.is_dir()), reverse=True)[:limit]:
-            mf = d / "manifest.json"
+        cands = [d for d in vdir.iterdir() if d.is_dir()]
+        stamps = []
+        for d in cands:
+            if (d / "manifest.json").exists():
+                stamps.append(d)
+            else:                                   # a dataset folder: its children are the exports
+                stamps += [x for x in d.iterdir() if x.is_dir() and (x / "manifest.json").exists()]
+        for d in sorted(stamps, key=lambda x: x.name, reverse=True)[:limit]:
             try:
-                m = json.loads(mf.read_text(encoding="utf-8"))
+                m = json.loads((d / "manifest.json").read_text(encoding="utf-8"))
             except (OSError, ValueError):
                 continue
-            out.append({"virus": m.get("virus"), "dir": str(d), "generated": m.get("generated"), "rows": m.get("rows"), "sequences": m.get("sequences"), "profile": m.get("profile")})
+            out.append({"virus": m.get("virus"), "dir": str(d), "generated": m.get("generated"), "rows": m.get("rows"), "sequences": m.get("sequences"), "profile": m.get("profile"),
+                        "dataset": (m.get("dataset") or {}).get("name") or ""})
     return out

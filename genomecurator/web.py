@@ -6,7 +6,7 @@ from fastapi import FastAPI, Form, Request
 from fastapi.responses import HTMLResponse, JSONResponse, RedirectResponse, Response, StreamingResponse
 from fastapi.templating import Jinja2Templates
 
-from . import __version__, analysis, completeness, exclusions, export, private, qc, config, curate, jobs, log
+from . import __version__, analysis, completeness, datasets, exclusions, export, private, qc, config, curate, jobs, log
 from .db import audit_now, connect
 
 _log = log.get("web")
@@ -465,6 +465,16 @@ def create_app(scheduler: bool = True) -> FastAPI:
         return {"require_sequence": qp.get("require_sequence", "1") not in ("0", "false"), "min_length": int(qp["min_length"]) if qp.get("min_length", "").isdigit() else None,
                 "completeness_in": lst("completeness"), "qc_not": lst("qc_not"), "clade": qp.get("clade") or None}
 
+    def _ds(request: Request, watch: int):
+        """?dataset=<id>: the named dataset decides who is in (its rules replace the other filters). Downloads never carry private genomes."""
+        v = request.query_params.get("dataset", "")
+        if not v:
+            return None
+        d = datasets.get(int(v)) if v.isdigit() else None
+        if not d or d["watch_id"] != watch:
+            raise ValueError("그 바이러스에 없는 데이터셋입니다.")
+        return d
+
     def _export_watch(watch: int):
         w = _rows("SELECT id, name FROM watchlist WHERE id=?", watch)
         return w[0] if w else None
@@ -493,6 +503,77 @@ def create_app(scheduler: bool = True) -> FastAPI:
         except ValueError as e:
             return JSONResponse({"error": str(e)}, 400)
 
+    # ------------------------------------------------------------------------------------------------ datasets
+    @app.get("/datasets")
+    def datasets_page(request: Request, watch: int = 0):
+        watches = _rows("SELECT id, name FROM watchlist ORDER BY name")
+        wid = watch or next((w["id"] for w in watches if "monkeypox" in w["name"].lower()), watches[0]["id"] if watches else 0)
+        return render(request, "datasets.html", nav="ds", watches=watches, wid=wid, builds=datasets.BUILDS)
+
+    @app.get("/api/datasets")
+    def api_datasets(watch: int = 0):
+        return datasets.listing(watch or None)
+
+    @app.get("/api/datasets/facets")
+    def api_datasets_facets(watch: int):
+        try:
+            return datasets.facets(watch)
+        except ValueError as e:
+            return JSONResponse({"error": str(e)}, 404)
+
+    def _ds_from_body(body: dict) -> dict:
+        return {"id": body.get("id"), "watch_id": int(body["watch"]), "name": body.get("name") or "", "description": body.get("description") or "",
+                "rules": datasets.normalize(body.get("rules")), "include_private": bool(body.get("include_private")),
+                "manual_include": [str(x).strip() for x in body.get("manual_include", []) if str(x).strip()],
+                "manual_exclude": [str(x).strip() for x in body.get("manual_exclude", []) if str(x).strip()], "build": body.get("build") or ""}
+
+    @app.post("/api/datasets/preview")
+    async def api_datasets_preview(request: Request):
+        """Counts for a dataset that is still being edited (nothing is saved): body = the dataset fields + watch."""
+        body = await request.json()
+        try:
+            ds = _ds_from_body(body)
+            pv = export.preview(ds["watch_id"], "nextstrain", include_private=ds["include_private"], dataset=ds)
+            cols, rows, sel, _ = export.table(ds["watch_id"], "nextstrain", ds)
+            from collections import Counter
+            top = lambda k: Counter(r.get(k) or "(비어 있음)" for r in rows).most_common(8)
+            return {**pv, "by_clade": top("clade"), "by_country": top("country"), "by_year": sorted(Counter((r["date"] or "????")[:4] for r in rows).items())[-12:],
+                    "summary": datasets.describe(ds["rules"])}
+        except (ValueError, KeyError, TypeError) as e:
+            return JSONResponse({"error": str(e)}, 400)
+
+    @app.post("/api/datasets")
+    async def api_datasets_save(request: Request):
+        if not _same_origin(request):
+            return JSONResponse({"error": "cross-site request refused"}, 403)
+        body = await request.json()
+        try:
+            return datasets.save(int(body["watch"]), body.get("name", ""), body.get("rules"), body.get("description", ""), bool(body.get("include_private")),
+                                 body.get("manual_include"), body.get("manual_exclude"), body.get("build", ""), body.get("id"))
+        except (ValueError, KeyError) as e:
+            return JSONResponse({"error": str(e)}, 400)
+
+    @app.delete("/api/datasets/{dsid}")
+    def api_datasets_delete(request: Request, dsid: int):
+        if not _same_origin(request):
+            return JSONResponse({"error": "cross-site request refused"}, 403)
+        return {"deleted": datasets.delete(dsid)}
+
+    @app.get("/api/datasets/{dsid}/history")
+    def api_datasets_history(dsid: int):
+        return datasets.export_history(dsid)
+
+    @app.post("/api/datasets/{dsid}/export")
+    def api_datasets_export(request: Request, dsid: int):
+        """Write this dataset's files (metadata.tsv, sequences.fasta, manifest, config; plus the private files if the dataset includes them) as a server job."""
+        if not _same_origin(request):
+            return JSONResponse({"error": "cross-site request refused"}, 403)
+        ds = datasets.get(dsid)
+        if not ds:
+            return JSONResponse({"error": "unknown dataset"}, 404)
+        return start_job(lambda p: {"redirect": f"/datasets?watch={ds['watch_id']}", "result": export.write(ds["watch_id"], None, "nextstrain", p, dataset=ds)},
+                         f"데이터셋 내보내기 · {ds['name']}", "dataset")
+
     @app.get("/api/export/profiles")
     def api_export_profiles():
         return {k: {"label": v["label"], "id_column": v["id"], "columns": v["columns"]} for k, v in export.PROFILES.items()}
@@ -513,7 +594,8 @@ def create_app(scheduler: bool = True) -> FastAPI:
         if not w:
             return JSONResponse({"error": "unknown virus"}, 404)
         try:
-            cols, rows, _, _ = export.table(watch, profile, **_xf(request))
+            ds = _ds(request, watch)
+            cols, rows, _, _ = export.table(watch, profile, ds, **({} if ds else _xf(request)))
         except ValueError as e:
             return JSONResponse({"error": str(e)}, 400)
         return StreamingResponse(export.iter_metadata(cols, rows), media_type="text/tab-separated-values; charset=utf-8",
@@ -526,7 +608,8 @@ def create_app(scheduler: bool = True) -> FastAPI:
         if not w:
             return JSONResponse({"error": "unknown virus"}, 404)
         try:
-            _, _, sel, _ = export.table(watch, profile, **_xf(request))
+            ds = _ds(request, watch)
+            _, _, sel, _ = export.table(watch, profile, ds, **({} if ds else _xf(request)))
         except ValueError as e:
             return JSONResponse({"error": str(e)}, 400)
         return StreamingResponse(export.iter_fasta(profile, sel), media_type="text/plain; charset=utf-8",

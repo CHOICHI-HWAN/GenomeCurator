@@ -64,6 +64,33 @@ def _main(argv=None):
         x.add_argument("name", help="the registered virus these genomes belong to")
         x.add_argument("--metadata", required=True, help="TSV with an id column (PPX_accession or accession), strain, date, country, ...")
         x.add_argument("--fasta", required=True, help="FASTA whose ids are those ids")
+    dc = sub.add_parser("dataset-create", help="save a named dataset (rules over the curated genomes) - e.g. only clade Ib")
+    dc.add_argument("name", help="the registered virus")
+    dc.add_argument("dataset", help="the dataset's name")
+    for opt in ("clade", "lineage", "outbreak", "region", "country", "host", "completeness"):
+        dc.add_argument(f"--{opt}", help="comma list, e.g. --clade Ib or --clade Ia,Ib")
+    dc.add_argument("--exclude-qc", help="comma list of QC statuses to leave out, e.g. bad,error")
+    dc.add_argument("--year-min", type=int)
+    dc.add_argument("--year-max", type=int)
+    dc.add_argument("--min-length", type=int)
+    dc.add_argument("--max-length", type=int)
+    dc.add_argument("--include", help="comma list of accessions that always belong")
+    dc.add_argument("--leave-out", help="comma list of accessions that never belong")
+    dc.add_argument("--private", action="store_true", help="the dataset also contains the private store")
+    dc.add_argument("--with-missing-sequences", action="store_true", help="also members without a sequence file")
+    dc.add_argument("--build", choices=("mpxv", "hmpxv1", "clade-i"), help="the nextstrain/mpox build the exported config suggests")
+    dc.add_argument("--description", default="")
+    dc.add_argument("--update", action="store_true", help="replace an existing dataset of that name")
+    dl = sub.add_parser("dataset-list", help="list the saved datasets of a virus")
+    dl.add_argument("name")
+    de = sub.add_parser("dataset-export", help="write a saved dataset (metadata.tsv, sequences.fasta, manifest ...)")
+    de.add_argument("name")
+    de.add_argument("dataset")
+    de.add_argument("--out")
+    de.add_argument("--nextstrain-dir")
+    dx = sub.add_parser("dataset-delete", help="delete a dataset's definition (genomes and exported files stay)")
+    dx.add_argument("name")
+    dx.add_argument("dataset")
     xc = sub.add_parser("exclude", help="leave genomes out of the final analysis dataset (nothing is deleted); --undo puts them back")
     xc.add_argument("name", help="the registered virus")
     xc.add_argument("ids", nargs="*", help="accessions (or private ids with --private)")
@@ -131,6 +158,39 @@ def _main(argv=None):
                 "SELECT id FROM changeset_item WHERE changeset_id=? AND decision='pending'", (args.changeset,))]
             curate.decide(ids, "approved")
         print(curate.apply(args.changeset))
+    elif args.cmd in ("dataset-create", "dataset-list", "dataset-export", "dataset-delete"):
+        from pathlib import Path
+        from . import datasets, export
+        con = connect()
+        try:
+            w = con.execute("SELECT id FROM watchlist WHERE name=?", (args.name,)).fetchone()
+        finally:
+            con.close()
+        if not w:
+            raise SystemExit(f"unknown watch: {args.name}")
+        try:
+            if args.cmd == "dataset-list":
+                for d in datasets.listing(w["id"]):
+                    print(f"{d['name']}\t{d['summary']}\t{'비공개 포함' if d['include_private'] else ''}\t{d['last_export'] or ''}")
+            elif args.cmd == "dataset-create":
+                csv_ = lambda s: [x.strip() for x in s.split(",") if x.strip()] if s else []
+                rules = {k: csv_(getattr(args, k)) for k in ("clade", "lineage", "outbreak", "region", "country", "host", "completeness")}
+                rules.update(qc_not=csv_(args.exclude_qc), year_min=args.year_min, year_max=args.year_max, min_length=args.min_length, max_length=args.max_length,
+                             require_sequence=not args.with_missing_sequences)
+                old = datasets.find(w["id"], args.dataset) if args.update else None
+                d = datasets.save(w["id"], args.dataset, rules, args.description, args.private, csv_(args.include), csv_(args.leave_out), args.build or "", old["id"] if old else None)
+                print(json.dumps({"id": d["id"], "name": d["name"], "rules": datasets.describe(d["rules"])}, ensure_ascii=False))
+            else:
+                d = datasets.find(w["id"], args.dataset)
+                if not d:
+                    raise ValueError(f"데이터셋이 없습니다: {args.dataset}")
+                if args.cmd == "dataset-delete":
+                    print(json.dumps({"deleted": datasets.delete(d["id"])}))
+                else:
+                    pr = lambda pct, msg: print(f"[{round(pct):3d}%] {msg}", file=sys.stderr)
+                    print(json.dumps(export.write(w["id"], Path(args.out) if args.out else None, "nextstrain", pr, nextstrain_dir=args.nextstrain_dir, dataset=d), ensure_ascii=False, indent=2))
+        except ValueError as e:
+            raise SystemExit(str(e))
     elif args.cmd == "exclude":
         from . import exclusions
         con = connect()

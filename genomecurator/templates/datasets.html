@@ -1,0 +1,103 @@
+{% extends "base.html" %}{% block body %}
+<div class="pagehead"><h2>데이터셋</h2><span class="mut">분석할 유전체를 골라 이름을 붙여 저장하고, 필요할 때마다 다시 내보냅니다 (예: clade Ib만)</span></div>
+<div class="help">데이터셋은 <b>정의</b>(규칙 + 직접 넣기/빼기)일 뿐이라 유전체·서열은 복사하거나 지우지 않습니다. 규칙은 모두 만족해야 하고, 비워 두면 제한이 없습니다. 내보낼 때마다 <b>그 시점의 멤버 목록</b>이 확정되어
+<code>manifest.json</code>에 규칙과 멤버 해시가 기록됩니다(나중에 같은 데이터셋인지 확인할 수 있습니다). <i>데이터셋에서 제외</i>로 표시한 유전체는 모든 데이터셋에서 빠집니다.</div>
+
+<div style="display:grid;grid-template-columns:minmax(240px,300px) 1fr;gap:16px;align-items:start">
+ <div>
+  <div class="card" style="padding:10px">
+   <label>바이러스<br><select id="w" onchange="location.href='/datasets?watch='+this.value" style="width:100%">{% for w in watches %}<option value="{{ w.id }}" {{ 'selected' if w.id == wid }}>{{ w.name }}</option>{% endfor %}</select></label>
+   <div id="info" class="mut" style="font-size:12.5px;margin:6px 0"></div>
+   <button type="button" class="p" onclick="newDs()" style="width:100%">+ 새 데이터셋</button>
+   <div id="presets" style="margin-top:8px;font-size:12.5px"></div>
+  </div>
+  <h3 style="margin-top:12px">저장된 데이터셋</h3>
+  <div id="list"></div>
+ </div>
+
+ <div>
+  <div class="card" id="ed">
+   <div style="display:flex;gap:12px;flex-wrap:wrap;align-items:end">
+    <label style="flex:1;min-width:220px">이름<br><input id="nm" style="width:100%" placeholder="예: mpox clade Ib"></label>
+    <label>Nextstrain 빌드<br><select id="bd"><option value="">(고르지 않음)</option>{% for b in builds %}<option>{{ b }}</option>{% endfor %}</select></label>
+   </div>
+   <label style="display:block;margin-top:8px">설명(선택)<br><input id="ds" style="width:100%" placeholder="무엇을 위한 데이터셋인지"></label>
+   <h3 style="margin:14px 0 6px">규칙</h3>
+   <div id="rules" style="display:grid;grid-template-columns:repeat(auto-fill,minmax(250px,1fr));gap:8px"></div>
+   <div style="display:flex;gap:14px;flex-wrap:wrap;margin-top:10px;align-items:end;font-size:13px">
+    <label>수집 연도<br><input id="y0" type="number" style="width:84px" placeholder="부터"> – <input id="y1" type="number" style="width:84px" placeholder="까지"></label>
+    <label>길이(bp)<br><input id="l0" type="number" style="width:110px" placeholder="최소"> – <input id="l1" type="number" style="width:110px" placeholder="최대"></label>
+    <span>QC 제외: <label><input type="checkbox" class="qn" value="bad"> bad</label> <label><input type="checkbox" class="qn" value="error"> error</label></span>
+    <label title="끄면 서열 파일이 없는 유전체도 멤버로 셉니다 (FASTA에는 서열이 있는 것만 들어갑니다)"><input type="checkbox" id="rq" checked> 서열이 있는 것만</label>
+    <label style="color:var(--warn)" title="비공개 저장소의 유전체도 별도 파일(metadata-private.tsv …)로 함께 내보냅니다"><input type="checkbox" id="ip"> 비공개 포함 (별도 파일)</label>
+   </div>
+   <div style="display:grid;grid-template-columns:1fr 1fr;gap:12px;margin-top:10px">
+    <label>직접 넣기 — 규칙과 상관없이 포함 (accession, 줄마다 하나)<br><textarea id="mi" rows="3" style="width:100%;font:12px monospace"></textarea></label>
+    <label>직접 빼기 — 이 데이터셋에서만 제외 (accession)<br><textarea id="me" rows="3" style="width:100%;font:12px monospace"></textarea></label>
+   </div>
+  </div>
+
+  <div class="card" id="pv" style="border-left:4px solid var(--acc)"><span class="mut">규칙을 고르면 멤버 수가 여기에 바로 나타납니다.</span></div>
+  <div style="display:flex;gap:8px;flex-wrap:wrap;margin-bottom:14px">
+   <button type="button" class="p" onclick="saveDs()">저장</button>
+   <button type="button" onclick="exportDs()" title="멤버를 확정해 metadata.tsv, sequences.fasta, manifest.json, 설정을 폴더에 만듭니다 (서버 작업)">내보내기 (폴더 만들기)</button>
+   <a id="dm"><button type="button" disabled>metadata.tsv 받기</button></a><a id="df"><button type="button" disabled>sequences.fasta 받기</button></a>
+   <span style="flex:1"></span><button type="button" id="bdel" onclick="delDs()" disabled>이 데이터셋 정의 삭제</button>
+  </div>
+  <div id="hist"></div>
+ </div>
+</div>
+<form id="jf" method="post" style="display:none"></form>
+<script>
+const WID={{ wid }},FIELDS=[['clade','clade'],['lineage','lineage'],['outbreak','outbreak'],['region','대륙'],['country','국가'],['host','숙주'],['completeness','완성도']];
+const esc=s=>String(s??'').replace(/[&<>"]/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c]));
+let F=null,CUR=null,timer=null;
+const val=id=>document.getElementById(id).value;
+function collect(){const rules={};FIELDS.forEach(([k])=>{rules[k]=[...document.querySelectorAll('.rk-'+k+':checked')].map(x=>x.value)});
+ rules.qc_not=[...document.querySelectorAll('.qn:checked')].map(x=>x.value);rules.year_min=val('y0')||null;rules.year_max=val('y1')||null;rules.min_length=val('l0')||null;rules.max_length=val('l1')||null;rules.require_sequence=document.getElementById('rq').checked;
+ const lines=s=>val(s).split(/[\s,]+/).map(x=>x.trim()).filter(Boolean);
+ return {watch:WID,id:CUR?CUR.id:null,name:val('nm').trim(),description:val('ds').trim(),build:val('bd'),include_private:document.getElementById('ip').checked,rules,manual_include:lines('mi'),manual_exclude:lines('me')}}
+function renderRules(sel){const box=document.getElementById('rules');box.innerHTML='';
+ FIELDS.forEach(([k,label])=>{const items=F.fields[k]||[];if(!items.length||(items.length===1&&!items[0].value))return;
+  const d=document.createElement('details');d.open=['clade','completeness','region'].includes(k)||(sel[k]||[]).length>0;d.style.cssText='border:1px solid var(--bd);border-radius:4px;padding:4px 8px;background:var(--card)';
+  const n=(sel[k]||[]).length;d.innerHTML='<summary style="cursor:pointer"><b>'+label+'</b> <span class="mut" style="font-size:12px">'+(n?n+'개 선택':'전체')+'</span></summary>'
+   +(items.length>12?'<input placeholder="찾기" style="width:100%;height:24px;margin:4px 0" oninput="filt(this)">':'')+'<div style="max-height:170px;overflow:auto;margin-top:4px">'
+   +items.map(i=>'<label style="display:flex;gap:6px;align-items:center;padding:1px 0;white-space:nowrap" data-v="'+esc(i.value.toLowerCase())+'"><input type="checkbox" class="rk-'+k+'" value="'+esc(i.value)+'" '+((sel[k]||[]).includes(i.value)?'checked':'')+'> '+(esc(i.value)||'<i class="mut">(비어 있음)</i>')+' <span class="mut" style="font-size:12px">'+i.n.toLocaleString()+(i.with_seq!==i.n?' · 서열 '+i.with_seq.toLocaleString():'')+'</span></label>').join('')+'</div>';
+  d.addEventListener('change',()=>{const c=d.querySelectorAll('input[type=checkbox]:checked').length;d.querySelector('summary span').textContent=c?c+'개 선택':'전체';changed()});box.appendChild(d)})}
+function filt(inp){const q=inp.value.toLowerCase();inp.parentElement.querySelectorAll('label[data-v]').forEach(l=>l.style.display=l.dataset.v.includes(q)?'':'none')}
+function fill(ds){CUR=ds&&ds.id?ds:null;const r=(ds&&ds.rules)||{};document.getElementById('nm').value=ds?ds.name:'';document.getElementById('ds').value=ds?ds.description||'':'';document.getElementById('bd').value=ds?ds.build||'':'';
+ document.getElementById('ip').checked=!!(ds&&ds.include_private);document.getElementById('rq').checked=r.require_sequence!==false;
+ document.getElementById('y0').value=r.year_min||'';document.getElementById('y1').value=r.year_max||'';document.getElementById('l0').value=r.min_length||'';document.getElementById('l1').value=r.max_length||'';
+ document.querySelectorAll('.qn').forEach(x=>x.checked=(r.qc_not||[]).includes(x.value));document.getElementById('mi').value=((ds&&ds.manual_include)||[]).join('\n');document.getElementById('me').value=((ds&&ds.manual_exclude)||[]).join('\n');
+ renderRules(r);document.getElementById('bdel').disabled=!CUR;links();preview()}
+function links(){const a=document.getElementById('dm'),b=document.getElementById('df');
+ if(CUR){a.href='/api/export/'+WID+'/metadata.tsv?dataset='+CUR.id;b.href='/api/export/'+WID+'/sequences.fasta?dataset='+CUR.id;a.firstChild.disabled=b.firstChild.disabled=false}else{a.removeAttribute('href');b.removeAttribute('href');a.firstChild.disabled=b.firstChild.disabled=true}}
+function changed(){clearTimeout(timer);timer=setTimeout(preview,350)}
+async function preview(){const el=document.getElementById('pv');el.innerHTML='<span class="mut">계산 중…</span>';let r;
+ try{r=await (await fetch('/api/datasets/preview',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(collect())})).json()}catch(e){el.textContent='미리보기 실패: '+e;return}
+ if(r.error){el.innerHTML='<span style="color:var(--bad)">'+esc(r.error)+'</span>';return}
+ const top=a=>a.map(x=>esc(x[0])+' <b>'+x[1].toLocaleString()+'</b>').join(' · ');
+ el.innerHTML='<div style="font-size:15px"><b>'+r.selected.toLocaleString()+'건</b>이 멤버입니다 <span class="mut" style="font-size:12.5px">(전체 유전체 '+r.genomes.toLocaleString()+'건 중'+(r.private?' · 비공개 <b>'+r.private+'건</b>이 별도 파일로':'')+')</span></div>'
+  +'<div class="mut" style="font-size:12.5px;margin:4px 0">'+esc(r.summary)+'</div>'
+  +(r.selected?'<div style="font-size:12.5px"><b>clade</b> '+top(r.by_clade)+'<br><b>국가</b> '+top(r.by_country)+'<br><b>연도</b> '+r.by_year.map(x=>x[0]+' <b>'+x[1]+'</b>').join(' · ')+'</div>':'')
+  +((r.warnings||[]).length?'<ul style="margin:6px 0 0 18px;color:var(--warn);font-size:12.5px">'+r.warnings.map(x=>'<li>'+esc(x)+'</li>').join('')+'</ul>':'')}
+document.getElementById('ed').addEventListener('input',changed);document.getElementById('ed').addEventListener('change',changed);
+async function loadList(){const L=await (await fetch('/api/datasets?watch='+WID)).json();const el=document.getElementById('list');
+ el.innerHTML=L.length?L.map(d=>'<div class="card" style="padding:8px 10px;margin-bottom:8px;'+(CUR&&CUR.id===d.id?'border-color:var(--acc)':'')+'"><b>'+esc(d.name)+'</b>'+(d.include_private?' <span style="color:var(--warn);font-size:12px">비공개 포함</span>':'')+'<div class="mut" style="font-size:12px">'+esc(d.summary)+'</div><div class="mut" style="font-size:11.5px">'+(d.last_export?'마지막 내보내기 '+d.last_export.replace('T',' '):'아직 내보낸 적 없음')+'</div><button type="button" onclick="openDs('+d.id+')" style="margin-top:4px">열기</button></div>').join(''):'<div class="mut" style="font-size:12.5px">아직 없습니다. 오른쪽에서 규칙을 고르고 저장하거나 위의 프리셋으로 시작하세요.</div>';window._L=L}
+function openDs(id){fill(window._L.find(d=>d.id===id));loadList();loadHist()}
+function newDs(){fill(null);loadList();document.getElementById('hist').innerHTML=''}
+async function saveDs(){const b=collect();if(!b.name){alert('이름을 입력하세요.');return null}
+ const r=await (await fetch('/api/datasets',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(b)})).json();if(r.error){alert(r.error);return null}
+ CUR=r;await loadList();links();document.getElementById('bdel').disabled=false;loadHist();return r}
+async function exportDs(){const d=await saveDs();if(!d)return;const f=document.getElementById('jf');f.action='/api/datasets/'+d.id+'/export';runJob(f)}
+async function delDs(){if(!CUR||!confirm('"'+CUR.name+'" 데이터셋의 정의를 삭제할까요?\n(유전체·서열·이미 내보낸 파일은 그대로 남습니다)'))return;
+ await fetch('/api/datasets/'+CUR.id,{method:'DELETE'});newDs()}
+async function loadHist(){if(!CUR){document.getElementById('hist').innerHTML='';return}const h=await (await fetch('/api/datasets/'+CUR.id+'/history')).json();
+ document.getElementById('hist').innerHTML=h.length?'<h3>내보낸 기록</h3><table><tr><th>시각</th><th>행</th><th>비공개</th><th>멤버 해시</th><th>폴더</th></tr>'+h.map(x=>'<tr><td class="nw">'+esc(x.exported.replace('T',' '))+'</td><td>'+x.rows.toLocaleString()+'</td><td>'+(x.private_rows||0)+'</td><td class="mut"><code>'+esc((x.members_sha256||'').slice(0,12))+'</code></td><td class="mut"><code>'+esc(x.dir)+'</code></td></tr>').join('')+'</table>':''}
+(async()=>{F=await (await fetch('/api/datasets/facets?watch='+WID)).json();if(F.error){document.getElementById('info').textContent=F.error;return}
+ document.getElementById('info').innerHTML='유전체 <b>'+F.genomes.toLocaleString()+'건</b> (서열 있음 '+F.with_sequence.toLocaleString()+'건)'+(F.private?' · 비공개 '+F.private+'건':'');
+ document.getElementById('presets').innerHTML=F.presets.length?'<div class="mut" style="margin-bottom:3px">프리셋으로 시작:</div>'+F.presets.map((p,i)=>'<button type="button" onclick="usePreset('+i+')" style="margin:2px 4px 2px 0">'+esc(p.name)+'</button>').join(''):'';
+ await loadList();fill(null)})();
+function usePreset(i){const p=F.presets[i];fill({name:p.name,build:p.build,rules:Object.assign({require_sequence:true},p.rules),description:'',include_private:false,manual_include:[],manual_exclude:[]})}
+</script>
+{% endblock %}
