@@ -213,3 +213,12 @@ Windows에서 `git`이 PATH에 없으면 `C:\Program Files\Git\cmd\git.exe`로 �
 - 담은 것: Near complete 등급, 소스 값 중 고르기(추천·신뢰도·Auto-pick, `field_choice`), 스키마 탭의 간단히 보기와 테이블 구조도, 바이러스 전용 범위와 표시 이름(Virus Genome Metadata Curator). 자세한 내용은 `CHANGELOG`.
 - DB 스키마 버전은 1 그대로(`field_choice`는 추가형). 의존성 변경 없음.
 - 절차는 `docs/RELEASING.md`대로: CHANGELOG(한·영) 정리 → `__version__` → 테스트 → 릴리스 커밋 → 주석 태그 `v0.2.0` → push(커밋+태그). 워크플로 파일을 바꾼 커밋(CI)은 릴리스 커밋 **뒤**에 두어야 `workflow` 권한 없이 태그를 올릴 수 있다.
+
+## 분석 기능 전반 (2026-10-19, Unreleased)
+- **conda 환경 3개**: `genomecurator`(앱), `gc-nextstrain`(`nextstrain/environment.yml`: nextstrain-cli·augur·snakemake·nextclade·iqtree·mafft·auspice), `gc-squirrel`(`squirrel/environment.yml`: squirrel·minimap2·mutation-profile). 도구는 별도 프로그램으로 실행하며 저장소·Docker 이미지에 들어가지 않습니다(`docs/LICENSES.md`).
+- **데이터 흐름**: 공개 유전체(큐레이션) + 비공개 저장소(`private.py`, 버전 관리) → **데이터셋**(`datasets.py`: 규칙 + 수동 추가/제외, 제외 표시 `exclusions.py`) → 내보내기 / QC / **분석 이력**(`analysis_run`, 도구별: nextstrain · squirrel · mutprofile).
+- **분석 모듈**: `nextstrain.py`(워크플로 실행, 설정 overlay, 보관·비교, 로컬 Auspice), `squirrel.py`(2단계 실행, iqtree `-st DNA`), `mutprofile.py`(참조 서열 선택: 기본 NC_063383.1, clade I 빌드는 KJ642613.1; NC_003310.1은 다른 유전체라 선택), `lineages.py`(lineage-designation 정의, 전파 타임라인: lineage / 대표 변이 × 나라 × ISO 주·월, 월까지만 있는 날짜는 옅은 띠), `insight.py`(APOBEC3 전달 검증, 신규 변이·묶음, 시그니처), `outbreak.py`(Lee, Choi 외 2026 접근: 트리 서브클러스터, 크기 과분산, APOBEC3 누적, 변이 유형, 유전자 hotspot·탐색용 dN/dS), `pathoplexus.py`(제출 파일 준비만; 업로드·인증 정보는 다루지 않음).
+- **화면**: Nextstrain 탭(분석 실행·이력) → 변이 프로파일 줄의 버튼 `변이 그림` / `전파 타임라인`(▶ 애니메이션) / `변이 분석` / `유행 분석`; Pathoplexus 탭.
+- **보안**: 모든 쓰기 요청(POST 등)은 다른 사이트에서 온 것이면 전역 미들웨어가 거절합니다. 결과 파일 API는 분석 폴더 밖을 열지 않습니다. 비공개 유전체는 일반 백업·공개 페이지·TSV 다운로드에 나가지 않습니다.
+- **알아 둘 것**: `resources/opg_categories.tsv`(유전자 기능 범주)는 논문 보충표 1을 옮겨 적은 것이라 원문과 대조가 필요합니다. dN/dS는 탐색용입니다. 첫 관찰은 유입 시점이 아닙니다. 합의 서열로는 환자 내 소수 변이를 알 수 없습니다.
+- **남은 일**: 로컬 커밋 push(터미널에서 `git push origin main`, 이후 Actions의 Windows 테스트 확인) · 공식 mpox/clade-i 공개 데이터와의 비교(미실시; 예제 데이터로는 업스트림 직접 실행과 일치 확인) · 환자 내 소수 변이(iSNV)·역학 정보 겹치기는 자료가 생기면.

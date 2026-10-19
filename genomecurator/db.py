@@ -84,7 +84,7 @@ CREATE TABLE IF NOT EXISTS dataset_export(
 CREATE TABLE IF NOT EXISTS analysis_run(
   id INTEGER PRIMARY KEY, dataset_id INTEGER, watch_id INTEGER, name TEXT UNIQUE, status TEXT,  -- running|done|error|interrupted
   started TEXT, finished TEXT, runtime TEXT, build TEXT, rules_json TEXT, params_yaml TEXT, params_sha TEXT, members_sha TEXT, n_public INTEGER, n_private INTEGER,
-  workflow_commit TEXT, run_dir TEXT, auspice_file TEXT, log_path TEXT, error TEXT, note TEXT, versions_json TEXT, dataset_name TEXT, tool TEXT DEFAULT 'nextstrain');
+  workflow_commit TEXT, run_dir TEXT, auspice_file TEXT, log_path TEXT, error TEXT, note TEXT, versions_json TEXT, dataset_name TEXT, tool TEXT DEFAULT 'nextstrain', content_sha TEXT);
 -- files prepared for submitting private genomes to Pathoplexus (pathoplexus.py); the app never uploads, the person does
 CREATE TABLE IF NOT EXISTS submission_package(
   id INTEGER PRIMARY KEY, watch_id INTEGER, organism TEXT, created TEXT, dir TEXT, terms TEXT, restricted_until TEXT, group_id TEXT, n INTEGER,
@@ -156,6 +156,8 @@ def migrate(con: sqlite3.Connection) -> None:
         if col not in have:
             con.execute(f"ALTER TABLE genome ADD COLUMN {col} TEXT")
     acols = {r[1] for r in con.execute("PRAGMA table_info(analysis_run)")}
+    if acols and "content_sha" not in acols:
+        con.execute("ALTER TABLE analysis_run ADD COLUMN content_sha TEXT")
     if acols and "tool" not in acols:
         con.execute("ALTER TABLE analysis_run ADD COLUMN tool TEXT DEFAULT 'nextstrain'")
     dcols = {r[1] for r in con.execute("PRAGMA table_info(dataset)")}

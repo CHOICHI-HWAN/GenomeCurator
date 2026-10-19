@@ -54,6 +54,9 @@ re-pinned (the full list with licences is in [docs/DEPENDENCIES.md](docs/DEPENDE
 - Scheduled checks and the daily schema check are recorded as jobs instead of only appearing in the log.
 
 ### Fixed
+- **An old analysis is no longer presented as current for data that changed under the same ids**: runs were compared with the dataset by the member ids only, so a new sequence version, a corrected curated value, new QC or a new version of a private genome still read as *same members* and an identical earlier run was reused. Every run now also stores a content fingerprint (per member the exported metadata row and the sequence md5; private members with their version); a change shows as *same ids, but sequence version / values / QC changed*, the run is not reused, and runs made before the fingerprint existed say that their content cannot be compared.
+- **Cross-site writes are refused for every route**: ten POST routes that predate the per-route origin check (approve / apply a changeset, `deploy`, `watch/.../check`, sequence uploads ...) accepted a request from a page of another site opened in the same browser. A global guard now refuses any POST / PUT / PATCH / DELETE whose `Origin` is another site (or `null`, or `Sec-Fetch-Site: cross-site`); same-origin use and reading are unaffected.
+- **Backup now keeps your dataset decisions**: the general backup left out saved datasets, *exclude from dataset* marks and the export history, so a restore lost them. They are included; anything that names a private genome (private ids in manual lists, private exclusion marks, the `include private` flag, Pathoplexus packages) stays out unless `--with-private`.
 - Concurrent database connections could fail with `view v_genome_analysis already exists`; the analysis view is now rebuilt only when its definition changed, in one transaction.
 
 ### Data & compatibility

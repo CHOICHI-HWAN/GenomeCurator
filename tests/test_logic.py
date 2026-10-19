@@ -1225,8 +1225,23 @@ def test_backup_keeps_private_data_out_unless_asked(tmp_path, monkeypatch):
     src.mkdir()
     _qc_env(src, monkeypatch)
     private.import_texts(1, *_priv_files([{"PPX_accession": "LAB_B1", "strain": "s", "date": "2024-01-02", "country": "Uganda"}], {"LAB_B1": "ACGT" * 25}))
+    from genomecurator import datasets
+    datasets.save(1, "mine", {"clade": ["Ib"]}, include_private=True, manual_include=["LAB_B1", "PUB1"], manual_exclude=["PUB2"])
+    from genomecurator.db import connect as _c
+    _con = _c()
+    _con.execute("INSERT OR REPLACE INTO dataset_exclusion(scope,watch_id,id,reason,excluded_at) VALUES('private',1,'LAB_B1','x','now'),('public',1,'PUB9','bad','now')")
+    _con.commit()
+    _con.close()
     plain = backup.export_backup(tmp_path / "plain.zip")
-    assert plain["contains_private"] is False and "private_genome" not in plain["tables"]
+    assert plain["contains_private"] is False and "private_genome" not in plain["tables"] and "submission_package" not in plain["tables"]
+    assert plain["tables"]["dataset"] == 1 and plain["tables"]["dataset_exclusion"] == 1                                    # the user's dataset decisions are in a general backup ...
+    import sqlite3 as _s, json as _j
+    with zipfile.ZipFile(tmp_path / "plain.zip") as _z:
+        (tmp_path / "x.db").write_bytes(_z.read("genomecurator.db"))
+    _d = _s.connect(str(tmp_path / "x.db"))
+    assert _j.loads(_d.execute("SELECT manual_include_json FROM dataset").fetchone()[0]) == ["PUB1"]                         # ... but without the private id
+    assert _d.execute("SELECT id FROM dataset_exclusion").fetchall() == [("PUB9",)] and _d.execute("SELECT include_private FROM dataset").fetchone()[0] == 0
+    _d.close()
     assert not [n for n in zipfile.ZipFile(tmp_path / "plain.zip").namelist() if n.startswith("private/")]
     full = backup.export_backup(tmp_path / "full.zip", with_private=True)
     assert full["contains_private"] is True and full["tables"]["private_genome"] == 1 and full["tables"]["private_version"] == 1 and full["private_files"] == 2     # current file + its version copy
@@ -2278,3 +2293,46 @@ def test_outbreak_statistics_clusters_and_categories(monkeypatch):
     assert set(labs) == {"T20C", "G30A"} and c["clusters"][0]["first"] == "2024-01-05"
     assert not labs["T20C"]["homoplasy"] and [x["label"] for x in c["columns"]] == ["T20C", "G30A"]
     assert c["matrix"][0]["cells"] == {"T20C": "C", "G30A": "A"} and "G10A" in c["clusters"][0]["path"]   # the parent branch's mutation is part of the cluster's path
+
+
+def test_cross_site_writes_are_refused_for_every_route(tmp_path, monkeypatch):
+    _qc_env(tmp_path, monkeypatch)
+    from fastapi.testclient import TestClient
+    from genomecurator import web
+    c = TestClient(web.create_app(scheduler=False))
+    for path in ("/deploy", "/changeset/1/apply", "/watch/x/check", "/genomes/fasta", "/api/datasets/preview"):      # routes that had no check of their own
+        r = c.post(path, headers={"origin": "https://evil.example"})
+        assert r.status_code == 403 and r.json()["error"] == "cross-site request refused", path
+        assert c.post(path, headers={"origin": "null"}).status_code == 403
+        assert c.post(path, headers={"sec-fetch-site": "cross-site"}).status_code == 403
+    r = c.post("/api/datasets/preview", json={}, headers={"origin": "http://testserver"})                         # same origin is not stopped by the guard
+    assert r.status_code != 403
+    assert c.get("/", headers={"origin": "https://evil.example"}).status_code == 200                              # reading stays possible
+
+
+def test_changed_content_under_the_same_ids_is_not_the_same_analysis(tmp_path, monkeypatch):
+    from genomecurator import datasets, nextstrain, private
+    from genomecurator.db import connect
+    sq = _sq_env(tmp_path, monkeypatch)
+    private.import_texts(1, *_priv_files([{"PPX_accession": "LAB_C1", "strain": "a", "date": "2025", "country": "Uganda", "clade": "Ib"}], {"LAB_C1": "ACGT" * 40}))
+    ds = datasets.get(datasets.save(1, "Ib set", {"clade": ["Ib"]}, include_private=True, build="clade-i")["id"])
+    r1 = sq.run(ds)
+    assert sq.run(ds)["id"] == r1["id"]                                                      # unchanged -> reused
+    base = nextstrain.content_sha(ds)
+    cmp0 = nextstrain.compare(nextstrain.get_run(r1["id"]), nextstrain.current_members(ds), sq.settings_sha(ds), r1["workflow_commit"], base)
+    assert cmp0["same_content"] is True and cmp0["current"] is True
+    con = connect()                                                                           # a curated value of a public member changes (same ids)
+    con.execute("UPDATE genome SET isolation_country='Kenya', clade='Ib' WHERE accession='A1'")
+    con.commit()
+    con.close()
+    changed = nextstrain.content_sha(ds)
+    r_ = nextstrain.get_run(r1["id"])
+    cmp1 = nextstrain.compare(r_, nextstrain.current_members(ds), sq.settings_sha(ds), r1["workflow_commit"], changed)
+    assert changed != base
+    assert cmp1["same_content"] is False and cmp1["current"] is False
+    assert sq.run(ds)["id"] != r1["id"]                                                      # and a new run is made, not the old one reused
+    # a private genome gets a new version -> different content
+    private.import_texts(1, *_priv_files([{"PPX_accession": "LAB_C1", "strain": "a", "date": "2025", "country": "Kenya", "clade": "Ib"}], {"LAB_C1": "ACGT" * 40}), source_name="v2")
+    assert nextstrain.content_sha(ds) != changed
+    old = dict(r_); old["content_sha"] = None                                                 # a run from before the fingerprint existed
+    assert nextstrain.compare(old, nextstrain.current_members(ds), "x", "y", changed)["same_content"] is None

@@ -41,6 +41,7 @@ async function pick(id){if(!id)return;const r=await (await fetch('/api/datasets/
  INFO=r;CUR=r.dataset;history.replaceState(null,'','/nextstrain?dataset='+id);render()}
 function cmpBadge(c,r){if(r.status!=='done')return '';if(!c)return '';const b=[];
  b.push(c.same_members?'<span style="color:var(--ok)">멤버 같음</span>':'<span style="color:var(--warn)">데이터가 바뀜 (현재 기준 +'+c.added+' / −'+c.removed+')</span>');
+ if(c.same_members&&c.same_content===false)b.push('<span style="color:var(--bad)">같은 id인데 서열 버전·값·QC가 바뀜</span>');else if(c.same_members&&c.same_content===null)b.push('<span style="color:var(--mut)">내용 비교 불가(이전 기록)</span>');
  if(!c.same_params)b.push('<span style="color:var(--warn)">설정이 다름</span>');if(!c.same_workflow)b.push('<span style="color:var(--mut)">워크플로 버전이 다름</span>');
  return b.join(' · ')+(c.current?' <b style="color:var(--ok)">← 현재와 같은 입력</b>':'')}
 function render(){const d=INFO.dataset,runs=INFO.runs,last=runs.find(r=>r.status==='done');

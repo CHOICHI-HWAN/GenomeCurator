@@ -9,12 +9,10 @@ changes would be enriched among private mutations and rare among shared ones. Th
 mutations (by site, and - when a Nextstrain tree of the dataset exists - by branch: terminal branches carry what is private to a tip, internal branches what was inherited
 by two or more). A difference is tested with a chi-square test. Limits: minor variants within a patient are invisible in a consensus (that needs reads, or several samples
 from one patient); a shared mutation could also be a recurrent one at a hot spot; context is taken from the reference (sites) or the tree's root sequence (branches)."""
-import csv
 import json
 import math
 from collections import Counter, defaultdict
 from datetime import date, timedelta
-from pathlib import Path
 
 from . import lineages, log, mutprofile, nextstrain
 

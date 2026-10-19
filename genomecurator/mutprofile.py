@@ -274,9 +274,10 @@ def run(ds: dict, cores: int | None = None, force: bool = False, note: str = "",
     if not members:
         raise ValueError("데이터셋에 멤버가 없습니다 (서열이 있는 유전체가 있어야 합니다).")
     msha = datasets.members_hash(members)
+    csha = nextstrain.content_sha(ds)
     if not force:
         for r in nextstrain.list_runs(ds["id"]):
-            if r["tool"] == "mutprofile" and r["status"] == "done" and r["members_sha"] == msha and r["params_sha"] == sha and r["workflow_commit"] == ver:
+            if r["tool"] == "mutprofile" and r["status"] == "done" and r["members_sha"] == msha and r.get("content_sha") == csha and r["params_sha"] == sha and r["workflow_commit"] == ver:
                 p(100, f"같은 데이터·설정·버전으로 이미 분석했습니다 ({r['name']})")
                 return {**r, "reused": True}
     ref_fa, gff = reference_files(ds)
@@ -305,6 +306,7 @@ def run(ds: dict, cores: int | None = None, force: bool = False, note: str = "",
                           (ds["id"], ds["watch_id"], name, "running", now.isoformat(timespec="seconds"), "ambient", ds.get("build") or "", json.dumps(ds["rules"], ensure_ascii=False),
                            json.dumps(settings, ensure_ascii=False), sha, msha, sum(1 for m in members if not m.startswith("private:")), sum(1 for m in members if m.startswith("private:")),
                            ver, str(rdir), str(logp), note.strip(), json.dumps(versions), ds["name"], "mutprofile")).lastrowid
+        con.execute("UPDATE analysis_run SET content_sha=? WHERE id=?", (csha, rid))
         con.commit()
     finally:
         con.close()

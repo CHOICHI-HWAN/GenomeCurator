@@ -173,6 +173,17 @@ def create_app(scheduler: bool = True) -> FastAPI:
     nextstrain.mark_interrupted()
     app = FastAPI(title="Virus Genome Metadata Curator")
 
+    @app.middleware("http")
+    async def refuse_cross_site_writes(request: Request, call_next):
+        """The app runs on the user's own machine, so a web page opened in the same browser must not be able to make it change anything: a write (POST / PUT / PATCH / DELETE)
+        whose Origin is another site is refused for every route, including the ones that predate the per-route check."""
+        if request.method in ("POST", "PUT", "PATCH", "DELETE"):
+            from urllib.parse import urlparse
+            origin = request.headers.get("origin")
+            if (origin and origin != "null" and urlparse(origin).netloc != request.headers.get("host")) or origin == "null" or request.headers.get("sec-fetch-site") == "cross-site":
+                return JSONResponse({"error": "cross-site request refused"}, 403)
+        return await call_next(request)
+
     def pending_count():
         return pending_total()
 
@@ -676,6 +687,7 @@ def create_app(scheduler: bool = True) -> FastAPI:
             merged_text = defaults_text = psha = ""
             err = str(e)
         now_ids = nextstrain.current_members(ds)
+        ccontent = nextstrain.content_sha(ds)
         commit = nextstrain.workflow_commit()
         runs = []
         try:
@@ -688,16 +700,16 @@ def create_app(scheduler: bool = True) -> FastAPI:
             msha_, mver = "", ""
         for r in nextstrain.list_runs(dsid):
             if r["tool"] == "mutprofile":
-                r["cmp"] = nextstrain.compare(r, now_ids, msha_, mver) if msha_ else None
+                r["cmp"] = nextstrain.compare(r, now_ids, msha_, mver, ccontent) if msha_ else None
                 r["files"] = mutprofile.result_files(r) if r["status"] == "done" else []
                 r["summary"] = mutprofile.summary(r) if r["status"] == "done" else {}
                 r["url"] = ""
             elif r["tool"] == "squirrel":
-                r["cmp"] = nextstrain.compare(r, now_ids, ssha, sver) if ssha else None
+                r["cmp"] = nextstrain.compare(r, now_ids, ssha, sver, ccontent) if ssha else None
                 r["url"] = f"/api/analyses/{r['id']}/files/{r['auspice_file']}" if r["status"] == "done" and r["auspice_file"] else ""
                 r["files"] = squirrel.result_files(r) if r["status"] == "done" else []
             else:
-                r["cmp"] = nextstrain.compare(r, now_ids, psha, commit) if psha else None
+                r["cmp"] = nextstrain.compare(r, now_ids, psha, commit, ccontent) if psha else None
                 r["url"] = nextstrain.viewer_url(r["name"]) if r["status"] == "done" else ""
             runs.append(r)
         return {"dataset": {"id": ds["id"], "name": ds["name"], "build": ds["build"] or "mpxv", "include_private": ds["include_private"], "params_yaml": ds["params_yaml"], "summary": datasets.describe(ds["rules"])},

@@ -24,7 +24,6 @@ import shutil
 import signal
 import socket
 import subprocess
-import threading
 import time
 from datetime import datetime
 from pathlib import Path
@@ -225,6 +224,28 @@ def current_members(ds: dict) -> list[str]:
     return ids
 
 
+def content_sha(ds: dict) -> str:
+    """A fingerprint of what an analysis would read for the dataset: per member the exported metadata row and the sequence's md5 (private members: their version and md5).
+    The members hash only says *which* genomes; this also changes when a genome's sequence version, curated values or QC change, so an old result is never presented as current
+    for data that has changed under the same ids."""
+    _c, rows, sel, _w = export.table(ds["watch_id"], "nextstrain", ds)
+    con = connect()
+    try:
+        md5 = {r["accession"]: r["md5"] for r in con.execute("SELECT accession, md5 FROM genome_sequence")}
+        priv = {r["id"]: (r["version"], r["seq_md5"]) for r in con.execute("SELECT id, version, seq_md5 FROM private_genome WHERE watch_id=?", (ds["watch_id"],))}
+    finally:
+        con.close()
+    lines = []
+    for row in rows:
+        g = sel.get(row.get("PPX_accession")) or {}
+        lines.append(json.dumps([row, md5.get(g.get("accession"))], sort_keys=True, ensure_ascii=False, default=str))
+    if ds.get("include_private"):
+        _pc, prow, _f = export.private_table(ds["watch_id"], ds)
+        for row in prow:
+            lines.append("private:" + json.dumps([row, priv.get(row.get("PPX_accession"))], sort_keys=True, ensure_ascii=False, default=str))
+    return hashlib.sha256("\n".join(sorted(lines)).encode()).hexdigest()
+
+
 def qc_missing(ds: dict) -> int:
     """Members the workflow's default filter will drop because they have no Nextclade QC (`QC_rare_mutations`): run the dataset's QC first.
     Private members are not filtered by the workflow, so they are not counted."""
@@ -275,12 +296,13 @@ def run_members(run: dict) -> list[str]:
     return f.read_text(encoding="utf-8").split() if f.exists() else []
 
 
-def compare(run: dict, now_ids: list[str], now_params_sha: str, commit: str) -> dict:
-    """How a past run relates to the dataset as it is today."""
+def compare(run: dict, now_ids: list[str], now_params_sha: str, commit: str, now_content: str | None = None) -> dict:
+    """How a past run relates to the dataset as it is today. `same_content` is None for runs made before the content fingerprint existed (only the ids can be compared)."""
     then, now = set(run_members(run)), set(now_ids)
     same_members = run["members_sha"] == datasets.members_hash(now_ids)
-    return {"same_members": same_members, "added": len(now - then), "removed": len(then - now), "same_params": run["params_sha"] == now_params_sha,
-            "same_workflow": (run["workflow_commit"] or "") == commit, "current": same_members and run["params_sha"] == now_params_sha}
+    same_content = (run.get("content_sha") == now_content) if (run.get("content_sha") and now_content) else None
+    return {"same_members": same_members, "same_content": same_content, "added": len(now - then), "removed": len(then - now), "same_params": run["params_sha"] == now_params_sha,
+            "same_workflow": (run["workflow_commit"] or "") == commit, "current": same_members and same_content is not False and run["params_sha"] == now_params_sha}
 
 
 def mark_interrupted() -> int:
@@ -348,9 +370,10 @@ def run(ds: dict, runtime: str = "ambient", cores: int | None = None, force: boo
     if not members:
         raise ValueError("데이터셋에 멤버가 없습니다 (서열이 있는 유전체가 있어야 합니다).")
     msha = datasets.members_hash(members)
+    csha = content_sha(ds)
     if not force:
         for r in list_runs(ds["id"]):
-            if r["tool"] == "nextstrain" and r["status"] == "done" and r["members_sha"] == msha and r["params_sha"] == psha and r["workflow_commit"] == commit and r["build"] == build:
+            if r["tool"] == "nextstrain" and r["status"] == "done" and r["members_sha"] == msha and r.get("content_sha") == csha and r["params_sha"] == psha and r["workflow_commit"] == commit and r["build"] == build:
                 p(100, f"같은 데이터·설정·워크플로로 이미 분석했습니다 ({r['name']})")
                 return {**r, "reused": True}
     now = datetime.now()
@@ -371,6 +394,7 @@ def run(ds: dict, runtime: str = "ambient", cores: int | None = None, force: boo
                           (ds["id"], ds["watch_id"], name, "running", now.isoformat(timespec="seconds"), runtime, build, json.dumps(ds["rules"], ensure_ascii=False), ds.get("params_yaml", ""), psha,
                            msha, sum(1 for m in members if not m.startswith("private:")), sum(1 for m in members if m.startswith("private:")), commit, str(rdir), str(logp), note.strip(),
                            json.dumps(versions), ds["name"])).lastrowid
+        con.execute("UPDATE analysis_run SET content_sha=? WHERE id=?", (csha, rid))
         con.commit()
     finally:
         con.close()

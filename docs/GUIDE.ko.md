@@ -356,7 +356,7 @@ FASTA 실제 길이·md5가 기록과 맞는지, 날짜가 미래가 아닌지, 
 | `reconcile <이름>` | 마지막 check의 소스 간 대조 보고서 |
 | `verify [--no-files]` | 로컬 데이터 무결성 검사 |
 | `schema-check [--daily]` | 소스·로컬 스키마 점검 (`--daily`는 스케줄러가 쓰는 가벼운 판) |
-| `backup [zip]` / `restore <zip>` | 이사할 때: 큐레이션 결과 + FASTA만 담은 이식 가능한 백업 |
+| `backup [zip]` / `restore <zip>` | 이사할 때: 큐레이션 결과 + 데이터셋 정의·제외 표시 + FASTA를 담은 이식 가능한 백업 (비공개는 `--with-private`일 때만) |
 | `serve [--port N] [--open] [--no-scheduler]` | 웹 서버 |
 
 ```bash
@@ -428,7 +428,7 @@ python scripts/build_static.py     # 로컬 DB로 docs/index.html 다시 만들�
 ## 이사 가기 (백업 / 복원)
 
 ```bash
-python -m genomecurator backup my-backup.zip      # 큐레이션 결과 · 결정 이력 · FASTA (원본 응답과 대기 중 항목은 제외)
+python -m genomecurator backup my-backup.zip      # 큐레이션 결과 · 결정 이력 · 데이터셋 정의와 제외 표시 · FASTA (원본 응답·대기 중 항목·분석 결과 파일은 제외)
 python -m genomecurator restore my-backup.zip     # 새 컴퓨터의 data 폴더로 (기존 DB가 있으면 --force)
 ```
 
