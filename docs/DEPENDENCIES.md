@@ -46,6 +46,7 @@ Versions are the ones **this project was tested with**; the allowed ranges live 
 | 라이브러리 / Library | 버전 / Version | 라이선스 / Licence | 역할 / Purpose |
 |---|---|---|---|
 | [Chart.js](https://www.chartjs.org/) | 4.4.1 (jsDelivr CDN) | MIT | 대시보드와 공개 페이지의 차트(보는 쪽에 인터넷 필요) / Charts on the dashboard and the public page (viewer needs internet) |
+| [Jspreadsheet CE](https://github.com/jspreadsheet/ce) + [jsuites](https://github.com/jsuites/jsuites) | 4.15.0 + 5.6.5 (jsDelivr CDN) | MIT | 비공개 탭의 스프레드시트 입력(인터넷 필요, 서버에는 저장하지 않음) / The spreadsheet on the Private tab (needs internet; not stored on the server) |
 
 ## 도구 / Tools (not Python libraries)
 

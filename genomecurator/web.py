@@ -552,6 +552,21 @@ def create_app(scheduler: bool = True) -> FastAPI:
         defaults = {"clade": str(form.get("default_clade") or "").strip()}
         return await m.read(), (await f.read()).decode("utf-8", "replace"), getattr(m, "filename", "") or "", defaults, str(form.get("note") or "").strip()
 
+    @app.post("/api/private/parse")
+    async def api_private_parse(request: Request):
+        """Read an uploaded spreadsheet (.xlsx) / TSV / CSV into columns and rows, so it can be opened in the page's sheet and fixed there. Nothing is stored."""
+        if not _same_origin(request):
+            return JSONResponse({"error": "cross-site request refused"}, 403)
+        form = await request.form()
+        m = form.get("metadata")
+        if m is None or not hasattr(m, "read"):
+            return JSONResponse({"error": "파일이 필요합니다."}, 400)
+        try:
+            cols, rows = private._read_table(await m.read(), getattr(m, "filename", "") or "")
+        except ValueError as e:
+            return JSONResponse({"error": str(e)}, 400)
+        return {"cols": cols, "rows": rows[:5000]}
+
     @app.get("/api/private/template.xlsx")
     def api_private_template(watch: int = 0):
         w = _rows("SELECT name, taxon FROM watchlist WHERE id=?", watch)

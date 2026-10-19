@@ -1368,6 +1368,19 @@ def test_private_import_respects_the_coverage_floor(tmp_path, monkeypatch):
     assert private.one(1, {"PPX_accession": "SHORT_1", "strain": "s", "date": "2025", "country": "Uganda"}, "ACGT" * 150, dry_run=True)["ok"]
 
 
+def test_private_parse_endpoint_opens_a_file_in_the_sheet(tmp_path, monkeypatch):
+    from fastapi.testclient import TestClient
+    from genomecurator import web
+    _qc_env(tmp_path, monkeypatch)
+    c = TestClient(web.create_app(scheduler=False))
+    x = _xlsx([{"PPX_accession": "P1", "strain": "s", "date": "2025-01-02", "country": "Peru"}])
+    r = c.post("/api/private/parse", files={"metadata": ("a.xlsx", x)}).json()
+    assert r["cols"] == ["PPX_accession", "strain", "date", "country", "clade"] and r["rows"][0]["strain"] == "s" and len(r["rows"]) == 1
+    r = c.post("/api/private/parse", files={"metadata": ("a.tsv", b"PPX_accession\tstrain\nQ1\tz\n")}).json()
+    assert r["rows"] == [{"PPX_accession": "Q1", "strain": "z"}]
+    assert c.get("/private?watch=1").text.count("jspreadsheet") >= 2 and c.post("/api/private/parse").status_code == 400
+
+
 def test_private_api_one_template_and_history(tmp_path, monkeypatch):
     from fastapi.testclient import TestClient
     from genomecurator import web

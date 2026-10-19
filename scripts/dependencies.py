@@ -114,7 +114,8 @@ def main():
         L.append("")
     L += ["## 브라우저에서 불러오는 것 / Loaded in the browser", "",
           "| 라이브러리 / Library | 버전 / Version | 라이선스 / Licence | 역할 / Purpose |", "|---|---|---|---|",
-          "| [Chart.js](https://www.chartjs.org/) | 4.4.1 (jsDelivr CDN) | MIT | 대시보드와 공개 페이지의 차트(보는 쪽에 인터넷 필요) / Charts on the dashboard and the public page (viewer needs internet) |", "",
+          "| [Chart.js](https://www.chartjs.org/) | 4.4.1 (jsDelivr CDN) | MIT | 대시보드와 공개 페이지의 차트(보는 쪽에 인터넷 필요) / Charts on the dashboard and the public page (viewer needs internet) |",
+          "| [Jspreadsheet CE](https://github.com/jspreadsheet/ce) + [jsuites](https://github.com/jsuites/jsuites) | 4.15.0 + 5.6.5 (jsDelivr CDN) | MIT | 비공개 탭의 스프레드시트 입력(인터넷 필요, 서버에는 저장하지 않음) / The spreadsheet on the Private tab (needs internet; not stored on the server) |", "",
           "## 도구 / Tools (not Python libraries)", "",
           "- **conda / mamba** — 환경 생성 / environment creation (`environment.yml`).",
           "- **[Nextclade](https://github.com/nextstrain/nextclade) CLI** — clade/lineage·서열 품질 / clade, lineage and sequence QC. 라이선스 MIT (conda-forge/bioconda `nextclade`, `environment.yml`에 포함; 없으면 서열 통계만 동작). License: MIT. Datasets are by their listed authors (see each dataset's README); no licence file ships with them, so they are fetched on demand and not redistributed here.",
