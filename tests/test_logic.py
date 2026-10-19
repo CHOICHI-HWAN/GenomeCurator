@@ -2336,3 +2336,35 @@ def test_changed_content_under_the_same_ids_is_not_the_same_analysis(tmp_path, m
     assert nextstrain.content_sha(ds) != changed
     old = dict(r_); old["content_sha"] = None                                                 # a run from before the fingerprint existed
     assert nextstrain.compare(old, nextstrain.current_members(ds), "x", "y", changed)["same_content"] is None
+
+
+def test_itr_mask_unknown_bases_and_within_lineage_trend(tmp_path, monkeypatch):
+    import json
+    from genomecurator import lineages, mutprofile, outbreak
+    assert mutprofile.in_itr(100, 196442) and mutprofile.in_itr(196000, 196442) and not mutprofile.in_itr(100000, 196442) and not mutprofile.in_itr(10, 100)   # a tiny reference is never masked
+    assert mutprofile.parse_settings({"mask_itr": False, "itr_bp": "3000"}) == {"mask_itr": False, "itr_bp": 3000}
+    with __import__("pytest").raises(ValueError):
+        mutprofile.parse_settings({"itr_bp": 99999})
+    # ITR variants are left out when the run's mutations are read (also for runs made before the setting existed)
+    rd = tmp_path / "run" / "mutprofile"
+    rd.mkdir(parents=True)
+    hdr = "sample\tpos\tref\talt\tgene\tproduct\tstrand\taa_change\teffect\tref_codon\talt_codon\tcodon_pos\tcodon_base\tmotif_ref\tobserved_profile\tprofile_of_interest\n"
+    row = lambda s, p: f"{s}\t{p}\tG\tA\t\t\t\t\tintergenic\t\t\t\t\t\t\tother\n"
+    (rd / "mutations.tsv").write_text(hdr + row("a", 100) + row("a", 50000) + row("a", 196000), encoding="utf-8")
+    (rd / "summary.json").write_text(json.dumps({"reference": "R", "reference_length": 196442}), encoding="utf-8")
+    run = {"run_dir": str(tmp_path / "run"), "dataset_id": 1}
+    assert [int(r["pos"]) for r in mutprofile._load_mutations(run)] == [50000]
+    assert mutprofile.run_itr(run) == (6501, 189942)
+    (rd / "samples.tsv").write_text("id\tlength\tn_frac\na\t196000\t0.01\nb\t150000\t0.4\n", encoding="utf-8")
+    assert mutprofile.good_samples(run, 0.05) == {"a"} and mutprofile.good_samples(run, 1) is None and mutprofile.good_samples(run, None) is None
+    # N, deletions and uncovered stretches are 'unknown' bases of a genome (minimap2 --cs)
+    paf = ["q1\t200\t0\t100\t+\tref\t1000\t0\t100\t90\t100\t60\tcs:Z::10*gn:5-ac:20"]
+    gaps = lineages.gap_intervals_from_paf(paf, 150)["q1"]
+    assert (11, 11) in gaps and (17, 18) in gaps and (101, 150) in gaps and lineages.is_unknown(gaps, 12) is False and lineages.is_unknown(gaps, 11) and lineages.is_unknown(gaps, 120)
+    # Simpson's paradox: later genomes belong to the lineage that carries more inherited mutations; inside each lineage nothing changes over time
+    rows = [{"t": 2024.0 + i * 0.05, "apobec_var": 10, "lineage": "X"} for i in range(10)] + [{"t": 2025.0 + i * 0.05, "apobec_var": 30, "lineage": "Y"} for i in range(10)]
+    assert outbreak.trend([r["t"] for r in rows], [r["apobec_var"] for r in rows])["slope_per_year"] > 10                     # overall: strong rise
+    w = outbreak.within_lineage_trend(rows)
+    assert abs(w["slope_per_year"]) < 1e-6 and w["lineages"] == 2                                                             # within lineages: none
+    rows2 = [{"t": 2024.0 + i * 0.1, "apobec_var": 10 + 6 * i * 0.1, "lineage": "X"} for i in range(10)]
+    assert abs(outbreak.within_lineage_trend(rows2)["slope_per_year"] - 6) < 0.01

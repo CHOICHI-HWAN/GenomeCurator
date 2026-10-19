@@ -18,6 +18,7 @@ from . import datasets, export, log, nextstrain, squirrel
 from .db import audit, connect
 
 _log = log.get("mutprofile")
+ITR_BP = 6500                       # inverted terminal repeats: the two ends of the genome are copies of each other, so reads / assemblies cannot say which end a variant belongs to
 BASES = "TCAG"
 AMINO = "FFLLSSSSYY**CC*WLLLLPPPPHHQQRRRRIIIMTTTTNNKKSSRRVVVVAAAADDEEGGGG"
 CODON = {a + b + c: AMINO[i] for i, (a, b, c) in enumerate((x, y, z) for x in BASES for y in BASES for z in BASES)}
@@ -46,7 +47,7 @@ def status() -> dict:
 
 # ------------------------------------------------------------------------------------------------ settings
 def defaults_for(ds: dict) -> dict:
-    return {"before": 5, "after": 5, "profiles": "GA>AA,TC>TT", "reference": "auto"}
+    return {"before": 5, "after": 5, "profiles": "GA>AA,TC>TT", "reference": "auto", "mask_itr": True, "itr_bp": ITR_BP}
 
 
 def parse_settings(text) -> dict:
@@ -61,7 +62,7 @@ def parse_settings(text) -> dict:
             raise ValueError(f"설정(JSON)을 읽을 수 없습니다: {e}") from None
     if not isinstance(d, dict):
         raise ValueError("설정은 JSON 객체여야 합니다.")
-    unknown = sorted(set(d) - {"before", "after", "profiles", "reference"})
+    unknown = sorted(set(d) - {"before", "after", "profiles", "reference", "mask_itr", "itr_bp"})
     if unknown:
         raise ValueError(f"알 수 없는 설정: {', '.join(unknown)}")
     out = {}
@@ -70,6 +71,12 @@ def parse_settings(text) -> dict:
             if not str(d[k]).isdigit() or not 0 <= int(d[k]) <= 50:
                 raise ValueError(f"{k}는 0~50의 정수입니다.")
             out[k] = int(d[k])
+    if "mask_itr" in d:
+        out["mask_itr"] = bool(d["mask_itr"])
+    if str(d.get("itr_bp", "")).strip() != "":
+        if not str(d["itr_bp"]).isdigit() or not 0 <= int(d["itr_bp"]) <= 20000:
+            raise ValueError("itr_bp는 0~20000의 정수입니다.")
+        out["itr_bp"] = int(d["itr_bp"])
     if d.get("reference") not in (None, ""):
         if d["reference"] != "auto" and d["reference"] not in REFERENCES:
             raise ValueError("reference는 auto, " + ", ".join(REFERENCES) + " 중 하나입니다.")
@@ -339,6 +346,11 @@ def run(ds: dict, cores: int | None = None, force: bool = False, note: str = "",
         snps = list(snvs_from_paf(open(paf, encoding="utf-8")))
         with_snps = len({q for q, *_ in snps})
         n_seq = sum(1 for line in open(fasta, encoding="utf-8") if line.startswith(">"))
+        if settings.get("mask_itr", True) and settings.get("itr_bp", ITR_BP):
+            before = len(snps)
+            snps = [s_ for s_ in snps if not in_itr(s_[1], len(refseq), settings.get("itr_bp", ITR_BP))]
+            logf.write(f"\nITR(양 끝 {settings.get('itr_bp', ITR_BP):,} bp)의 SNP {before - len(snps):,}건은 마스킹하여 뺐습니다.\n")
+        with_snps = len({q for q, *_ in snps})
         logf.write(f"\nSNP {len(snps):,}건 (서열 {n_seq:,}건 중 SNP가 있는 서열 {with_snps:,}건)\n")
         with open(out / "snps.tsv", "w", encoding="utf-8", newline="") as f:
             w = csv.writer(f, delimiter="\t", lineterminator="\n")
@@ -381,7 +393,7 @@ def run(ds: dict, cores: int | None = None, force: bool = False, note: str = "",
             for gname, c in sorted(genes.items(), key=lambda x: -x[1]["total"]):
                 w.writerow([gname, c["total"], c["nonsynonymous"], c["synonymous"], c["stop_gained"], c["intergenic"], c["poi"]])
         summary = {"snps": len(snps), "samples_with_snps": with_snps, "samples": n_seq, "distinct_sites": len(sites), "genes_hit": len([g for g in genes if g != "(intergenic)"]),
-                   "profile_of_interest": sum(c["poi"] for c in genes.values()), "settings": settings, "reference": refname}
+                   "profile_of_interest": sum(c["poi"] for c in genes.values()), "settings": settings, "reference": refname, "reference_length": len(refseq)}
         (out / "summary.json").write_text(json.dumps(summary, indent=2, ensure_ascii=False), encoding="utf-8")
         logf.write("\n" + json.dumps(summary, ensure_ascii=False) + "\n")
         logf.close()
@@ -429,13 +441,81 @@ def _run_meta(run: dict) -> dict[str, dict]:
 _SNIPIT_CACHE: dict = {}
 
 
+def in_itr(pos: int, length: int, bp: int = ITR_BP) -> bool:
+    return bp > 0 and 2 * bp < length and (pos <= bp or pos > length - bp)      # a reference shorter than two ITRs (a test, a fragment) is not masked
+
+
+def run_itr(run: dict) -> tuple[int, int] | None:
+    """(first, last) position of the interior of the run's reference, i.e. what is left after the ITR mask; None when the run is not masked. Old runs (made before the setting
+    existed) are masked at read time too, because ITR variants are not reliable."""
+    sm = summary(run)
+    st = sm.get("settings", {})
+    if not st.get("mask_itr", True) or not st.get("itr_bp", ITR_BP):
+        return None
+    L = sm.get("reference_length")
+    if not L and not sm.get("reference"):
+        return None
+    if not L:
+        try:
+            fa, _g = reference_by_name(sm.get("reference", ""))
+            L = len(read_fasta(fa)[1])
+        except Exception:
+            return None
+    bp = st.get("itr_bp", ITR_BP)
+    return (bp + 1, L - bp) if 2 * bp < L else None
+
+
 def _load_mutations(run: dict) -> list[dict]:
+    """The run's mutations.tsv rows, with the ITR variants left out (see run_itr)."""
     f = Path(run["run_dir"] or "") / "mutprofile" / "mutations.tsv"
     key = (str(f), f.stat().st_mtime if f.exists() else 0)
     if key not in _SNIPIT_CACHE:
         _SNIPIT_CACHE.clear()
-        _SNIPIT_CACHE[key] = list(csv.DictReader(open(f, encoding="utf-8"), delimiter="\t")) if f.exists() else []
+        rows = list(csv.DictReader(open(f, encoding="utf-8"), delimiter="\t")) if f.exists() else []
+        win = run_itr(run)
+        _SNIPIT_CACHE[key] = [r for r in rows if win[0] <= int(r["pos"]) <= win[1]] if win else rows
     return _SNIPIT_CACHE[key]
+
+
+def sample_quality(run: dict) -> dict[str, dict]:
+    """{genome id: {length, n_frac}} of the run's members (read from the sequences once and kept as samples.tsv next to the run). Genomes with many N's have SNPs called only where
+    there is sequence, so their counts are lower and their lineage-defining sites are often unknown rather than absent."""
+    f = Path(run["run_dir"]) / "mutprofile" / "samples.tsv"
+    if not f.exists():
+        ds = datasets.get(run["dataset_id"])
+        keep = set(nextstrain.run_members(run))
+        tmp = Path(run["run_dir"]) / "q_input.fasta"
+        squirrel.write_input(ds, tmp)
+        rows, cur, n, ln = [], None, 0, 0
+        for line in open(tmp, encoding="utf-8"):
+            if line.startswith(">"):
+                if cur is not None:
+                    rows.append((cur, ln, n / ln if ln else 1.0))
+                cur, n, ln = line[1:].split()[0], 0, 0
+            else:
+                s_ = line.strip().upper()
+                ln += len(s_)
+                n += sum(1 for c in s_ if c not in "ACGT")
+        if cur is not None:
+            rows.append((cur, ln, n / ln if ln else 1.0))
+        tmp.unlink(missing_ok=True)
+        with open(f, "w", encoding="utf-8", newline="") as fo:
+            w = csv.writer(fo, delimiter="\t", lineterminator="\n")
+            w.writerow(["id", "length", "n_frac"])
+            w.writerows((i, l_, round(nf, 5)) for i, l_, nf in rows if not keep or i in keep or ("private:" + i) in keep)
+    return {r["id"]: {"length": int(r["length"]), "n_frac": float(r["n_frac"])} for r in csv.DictReader(open(f, encoding="utf-8"), delimiter="\t")}
+
+
+def good_samples(run: dict, max_n: float | None) -> set | None:
+    """Genome ids whose share of non-ACGT characters is at most `max_n` (None / 1 = no filter)."""
+    if max_n is None or max_n >= 1:
+        return None
+    try:
+        q = sample_quality(run)
+    except Exception:
+        _log.warning("sample quality unavailable", exc_info=True)
+        return None
+    return {i for i, v in q.items() if v["n_frac"] <= max_n}
 
 
 def snipit_data(run: dict, lineages=(), clades=(), gene: str = "", start: int = 0, end: int = 0, apobec_only: bool = False, hide_common: float = 0.0,
@@ -495,5 +575,6 @@ def snipit_data(run: dict, lineages=(), clades=(), gene: str = "", start: int = 
         snps = [[int(r["pos"]), r["ref"], r["alt"], r["gene"], r["aa_change"], r["effect"], int(r["profile_of_interest"] not in ("", "other")), r["profile_of_interest"], dm.get((int(r["pos"]), r["alt"]), "")]
                 for r in by[i] if keep(r) and not (hide_common and cnt[(r["pos"], r["alt"])] / n >= hide_common)]
         samples.append({"id": i, **m_, "n_total": len(by[i]), "snps": snps})
-    return {"reference": refname or ref, "length": len(refseq), "start": start, "end": end, "genes": genes, "samples": samples, "available": len(ids), "all_samples": len(by), "definitions": have_defs,
+    win = run_itr(run)
+    return {"reference": refname or ref, "length": len(refseq), "start": start, "end": end, "itr_masked": ([1, win[0] - 1], [win[1] + 1, len(refseq)]) if win else None, "genes": genes, "samples": samples, "available": len(ids), "all_samples": len(by), "definitions": have_defs,
             "lineages": sorted({m["lineage"] for i, m in meta.items() if i in by and m["lineage"]}), "clades": sorted({m["clade"] for i, m in meta.items() if i in by and m["clade"]})}

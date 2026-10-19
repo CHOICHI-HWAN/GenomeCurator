@@ -45,6 +45,7 @@ function render(){const syn=document.getElementById('f_syn').checked,ids=documen
  o+='<circle cx="156" cy="39" r="3.5" fill="#d6249f"/><text x="164" y="43">APOBEC3형</text>';
  o+='<rect x="226" y="33" width="5" height="12" fill="#999" stroke="#000"/><text x="236" y="43">'+(D.definitions?'굵게 = lineage 정의 변이':'(lineage 정의 없음: 전파 타임라인에서 정의 받기)')+'</text>';
  o+='<rect x="'+X0+'" y="'+(top-10)+'" width="'+W+'" height="6" fill="#ddd" rx="2"/>';
+ (D.itr_masked||[]).forEach(b=>{const a=Math.max(b[0],D.start),e=Math.min(b[1],D.end);if(a<=e)o+='<rect x="'+x(a)+'" y="'+(top-2)+'" width="'+Math.max(1,x(e)-x(a))+'" height="'+(S.length*H+2)+'" fill="#999" opacity=".18"><title>ITR (마스킹: 변이를 그리지 않음)</title></rect><text x="'+(x(a)+2)+'" y="'+(top-12)+'" fill="#888" font-size="9">ITR</text>'});
  const ticks=Math.min(10,Math.max(2,Math.floor(span/20000)));for(let i=0;i<=ticks;i++){const p=Math.round(D.start+span*i/ticks);o+='<text x="'+x(p)+'" y="'+(top-14)+'" text-anchor="middle" fill="#666">'+p.toLocaleString()+'</text>'}
  S.forEach((s,i)=>{const y=top+i*H;if(i%2==0)o+='<rect x="0" y="'+y+'" width="'+tot+'" height="'+H+'" fill="#f6f6f6"/>';
   if(ids)o+='<text x="4" y="'+(y+10)+'" font-family="Menlo,Consolas,monospace">'+esc(s.id)+'</text>';

@@ -222,19 +222,49 @@ def _desc(r):
     return out
 
 
+def within_lineage_trend(rows: list[dict], key: str = "apobec_var", min_n: int = 5) -> dict | None:
+    """The trend of `key` over time **inside lineages**: both the date and the count are taken relative to the lineage's own mean, so a rise that only reflects later samples belonging to
+    lineages that already carry more inherited mutations (phylogenetic depth) does not count. Lineages with fewer than `min_n` dated genomes are left out."""
+    by = defaultdict(list)
+    for r in rows:
+        by[r["lineage"] or "-"].append(r)
+    x, y, used = [], [], 0
+    for lin, v in by.items():
+        if len(v) < min_n:
+            continue
+        used += 1
+        mt, my = sum(r["t"] for r in v) / len(v), sum(r[key] for r in v) / len(v)
+        x += [r["t"] - mt for r in v]
+        y += [r[key] - my for r in v]
+    if len(x) < 10:
+        return None
+    t = trend(x, y)
+    if t:
+        t["lineages"] = used
+    return t
+
+
 # ------------------------------------------------------------------------------------------------ 3-4: per genome
-def _fixed_sites(run: dict, share: float) -> set:
+def _rows(run: dict, max_n: float | None = None) -> list[dict]:
+    return insight._mutations(run, max_n)
+
+
+def _fixed_sites(run: dict, share: float, max_n: float | None = None) -> set:
     by = defaultdict(set)
-    for r in mutprofile._load_mutations(run):
+    rows = _rows(run, max_n)
+    for r in rows:
         by[(int(r["pos"]), r["alt"])].add(r["sample"])
-    n = len({r["sample"] for r in mutprofile._load_mutations(run)}) or 1
+    n = len({r["sample"] for r in rows}) or 1
     return {k for k, s in by.items() if len(s) / n >= share}
 
 
-def accumulation(run: dict, fixed: float = 0.9) -> dict:
+def accumulation(run: dict, fixed: float = 0.9, max_n: float | None = None) -> dict:
     """APOBEC3-type mutations per genome against NC_063383.1 over collection date (own rule: G>A followed by A, C>T preceded by T), all and without the sites nearly every genome has."""
     ncname, ncseq, _cds = lineages.nc_reference()
     nc = lineages._nc_snps(run)
+    ok = mutprofile.good_samples(run, max_n)
+    if ok is not None:
+        nc = {i: v for i, v in nc.items() if i in ok}
     gs = {g["id"]: g for g in lineages._genomes(run)}
     allc = Counter(pos for sn in nc.values() for pos in sn)
     n = len(nc) or 1
@@ -275,16 +305,17 @@ def accumulation(run: dict, fixed: float = 0.9) -> dict:
     by_year = [{"year": y, "n": len(v), "all_median": q([r["apobec_all"] for r in v], .5), "all_q1": q([r["apobec_all"] for r in v], .25), "all_q3": q([r["apobec_all"] for r in v], .75),
                 "var_median": q([r["apobec_var"] for r in v], .5), "var_q1": q([r["apobec_var"] for r in v], .25), "var_q3": q([r["apobec_var"] for r in v], .75)} for y, v in sorted(years.items())]
     t = [r["t"] for r in rows]
-    return {"reference": ncname, "fixed_share": fixed, "n": len(rows), "by_year": by_year, "trend_all": trend(t, [r["apobec_all"] for r in rows]), "trend_variable": trend(t, [r["apobec_var"] for r in rows]),
+    return {"reference": ncname, "fixed_share": fixed, "max_n": max_n, "n": len(rows), "by_year": by_year, "trend_all": trend(t, [r["apobec_all"] for r in rows]), "trend_variable": trend(t, [r["apobec_var"] for r in rows]),
+            "trend_within_lineage": within_lineage_trend(rows),
             "points": [{k: r[k] for k in ("id", "date", "t", "apobec_all", "apobec_var", "snps_all", "snps_var", "lineage")} for r in rows]}
 
 
-def spectrum(run: dict, fixed: float = 0.9) -> dict:
+def spectrum(run: dict, fixed: float = 0.9, max_n: float | None = None) -> dict:
     """Per genome (chronological): APOBEC3-type / other x nonsynonymous / synonymous (stop gained counts as nonsynonymous; intergenic apart), against the run's reference."""
     gs = {g["id"]: g for g in lineages._genomes(run)}
-    skip = _fixed_sites(run, fixed) if fixed < 1 else set()
+    skip = _fixed_sites(run, fixed, max_n) if fixed < 1 else set()
     per: dict[str, Counter] = defaultdict(Counter)
-    for r in mutprofile._load_mutations(run):
+    for r in _rows(run, max_n):
         if (int(r["pos"]), r["alt"]) in skip:
             continue
         a = "a3" if insight._is_apo(r) else "other"
@@ -316,17 +347,17 @@ def _sites(codon: str) -> float:
     return s
 
 
-def genes(run: dict, hotspot: int = 100, fixed: float = 0.9) -> dict:
+def genes(run: dict, hotspot: int = 100, fixed: float = 0.9, max_n: float | None = None) -> dict:
     ref = mutprofile.summary(run).get("reference", "")
     fa, gff = mutprofile.reference_by_name(ref) if ref else (None, None)
     refname, refseq = mutprofile.read_fasta(fa) if fa else ("", "")
     cds = mutprofile.load_cds(gff)
     cat = categories()
-    skipfixed = _fixed_sites(run, fixed) if fixed < 1 else set()
+    skipfixed = _fixed_sites(run, fixed, max_n) if fixed < 1 else set()
     ev: dict[str, Counter] = defaultdict(Counter)
     distinct: dict[str, dict] = defaultdict(dict)
     L = len(refseq)
-    for r in mutprofile._load_mutations(run):
+    for r in _rows(run, max_n):
         pos = int(r["pos"])
         if pos <= ITR or pos > L - ITR:
             continue
@@ -377,9 +408,10 @@ def genes(run: dict, hotspot: int = 100, fixed: float = 0.9) -> dict:
             "categories": [{"category": k, **dict(v)} for k, v in sorted(bycat.items(), key=lambda kv: -kv[1]["events"])]}
 
 
-def analysis(run: dict, min_size: int = 5, hotspot: int = 100, fixed: float = 0.9) -> dict:
-    out = {}
-    for name, fn in (("clusters", lambda: clusters(run, min_size)), ("accumulation", lambda: accumulation(run, fixed)), ("spectrum", lambda: spectrum(run, fixed)), ("genes", lambda: genes(run, hotspot, fixed))):
+def analysis(run: dict, min_size: int = 5, hotspot: int = 100, fixed: float = 0.9, max_n: float | None = None) -> dict:
+    out = {"max_n": max_n}
+    for name, fn in (("clusters", lambda: clusters(run, min_size)), ("accumulation", lambda: accumulation(run, fixed, max_n)), ("spectrum", lambda: spectrum(run, fixed, max_n)),
+                     ("genes", lambda: genes(run, hotspot, fixed, max_n))):
         try:
             out[name] = fn()
         except Exception as e:

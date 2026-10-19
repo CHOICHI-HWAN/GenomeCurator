@@ -169,40 +169,97 @@ def liftover(ref_fa: Path, nc_fa: Path) -> dict[int, int]:
     return m
 
 
+def gap_intervals_from_paf(paf_lines, length: int) -> dict[str, list[tuple[int, int]]]:
+    """{query: [(first, last)]} positions of the reference (1-based) where the genome has no usable base: N / ambiguity characters, deletions and everything the alignment
+    does not cover. A defining SNP at such a position is *unknown*, not absent."""
+    cover: dict[str, list[tuple[int, int]]] = defaultdict(list)
+    gaps: dict[str, list[tuple[int, int]]] = defaultdict(list)
+    for line in paf_lines:
+        f = line.rstrip("\n").split("\t")
+        if len(f) < 12:
+            continue
+        cs = next((x[5:] for x in f[12:] if x.startswith("cs:Z:")), None)
+        if not cs:
+            continue
+        q, t = f[0], int(f[7])
+        cover[q].append((t + 1, int(f[8])))
+        for tok in mutprofile._CS.findall(cs):
+            if tok[0] == ":":
+                t += int(tok[1:])
+            elif tok[0] == "*":
+                if tok[2] not in "acgt":
+                    gaps[q].append((t + 1, t + 1))
+                t += 1
+            elif tok[0] == "-":
+                gaps[q].append((t + 1, t + len(tok) - 1))
+                t += len(tok) - 1
+            elif tok[0] == "~":
+                n = int(re.search(r"\d+", tok).group())
+                gaps[q].append((t + 1, t + n))
+                t += n
+    for q, cv in cover.items():
+        pos = 1
+        for a, b in sorted(cv):
+            if a > pos:
+                gaps[q].append((pos, a - 1))
+            pos = max(pos, b + 1)
+        if pos <= length:
+            gaps[q].append((pos, length))
+    return gaps
+
+
+def nc_unknown(run: dict) -> dict[str, list[tuple[int, int]]]:
+    """{genome id: intervals of NC_063383.1 where the genome has no usable base} (built together with the NC_063383.1 SNPs)."""
+    _nc_snps(run)
+    f = Path(run["run_dir"]) / "mutprofile" / "nc_gaps.tsv"
+    out: dict[str, list] = defaultdict(list)
+    if f.exists():
+        for r in csv.DictReader(open(f, encoding="utf-8"), delimiter="\t"):
+            out[r["ID"]].append((int(r["START"]), int(r["END"])))
+    return out
+
+
+def is_unknown(intervals, pos: int) -> bool:
+    return any(a <= pos <= b for a, b in intervals or ())
+
+
 def _nc_snps(run: dict) -> dict[str, dict[int, str]]:
-    """{genome id: {position in NC_063383.1: alt}} for the run's members (own pass against NC_063383.1, kept as snps_nc063383.tsv next to the run)."""
+    """{genome id: {position in NC_063383.1: alt}} for the run's members (own pass against NC_063383.1, kept as snps_nc063383.tsv next to the run, with nc_gaps.tsv: where a genome
+    has no usable base)."""
     out = Path(run["run_dir"]) / "mutprofile"
     f = out / "snps_nc063383.tsv"
-    if not f.exists():
-        if mutprofile.summary(run).get("reference") == NC:
-            src = out / "snps.tsv"
-            f = src
-        else:
-            ds = datasets.get(run["dataset_id"])
-            members = set(nextstrain.run_members(run))
-            tmp = Path(run["run_dir"]) / "nc_input.fasta"
-            squirrel.write_input(ds, tmp)
-            keep = {m for m in members}
-            # keep only the members of the run (the dataset may have changed since)
-            with open(tmp, encoding="utf-8") as fin, open(str(tmp) + ".sel", "w", encoding="utf-8") as fout:
-                on = False
-                for line in fin:
-                    if line.startswith(">"):
-                        on = line[1:].split()[0] in keep or ("private:" + line[1:].split()[0]) in keep
-                    if on:
-                        fout.write(line)
-            nc_fa = nextstrain.workflow_dir() / "defaults" / "reference.fasta"
-            paf = Path(run["run_dir"]) / "nc.paf"
-            with open(paf, "w") as pf:
-                r = subprocess.run([mutprofile._bin("minimap2"), "-x", "asm10", "-c", "--cs", "--secondary=no", "-t", "4", str(nc_fa), str(tmp) + ".sel"], stdout=pf, stderr=subprocess.PIPE, text=True, env=mutprofile.tool_env())
-            if r.returncode != 0:
-                raise RuntimeError(f"minimap2 실패: {r.stderr[-300:]}")
-            with open(f, "w", encoding="utf-8", newline="") as fo:
-                w = csv.writer(fo, delimiter="\t", lineterminator="\n")
-                w.writerow(["ID", "POS", "REF", "ALT"])
-                w.writerows(mutprofile.snvs_from_paf(open(paf, encoding="utf-8")))
-            for x in (tmp, Path(str(tmp) + ".sel"), paf):
-                x.unlink(missing_ok=True)
+    if not (f.exists() and (out / "nc_gaps.tsv").exists()):
+        ds = datasets.get(run["dataset_id"])
+        members = set(nextstrain.run_members(run))
+        tmp = Path(run["run_dir"]) / "nc_input.fasta"
+        squirrel.write_input(ds, tmp)
+        keep = {m for m in members}
+        # keep only the members of the run (the dataset may have changed since)
+        with open(tmp, encoding="utf-8") as fin, open(str(tmp) + ".sel", "w", encoding="utf-8") as fout:
+            on = False
+            for line in fin:
+                if line.startswith(">"):
+                    on = line[1:].split()[0] in keep or ("private:" + line[1:].split()[0]) in keep
+                if on:
+                    fout.write(line)
+        nc_fa = nextstrain.workflow_dir() / "defaults" / "reference.fasta"
+        paf = Path(run["run_dir"]) / "nc.paf"
+        with open(paf, "w") as pf:
+            r = subprocess.run([mutprofile._bin("minimap2"), "-x", "asm10", "-c", "--cs", "--secondary=no", "-t", "4", str(nc_fa), str(tmp) + ".sel"], stdout=pf, stderr=subprocess.PIPE, text=True, env=mutprofile.tool_env())
+        if r.returncode != 0:
+            raise RuntimeError(f"minimap2 실패: {r.stderr[-300:]}")
+        with open(f, "w", encoding="utf-8", newline="") as fo:
+            w = csv.writer(fo, delimiter="\t", lineterminator="\n")
+            w.writerow(["ID", "POS", "REF", "ALT"])
+            w.writerows(mutprofile.snvs_from_paf(open(paf, encoding="utf-8")))
+        gaps = gap_intervals_from_paf(open(paf, encoding="utf-8"), len(mutprofile.read_fasta(nc_fa)[1]))
+        with open(out / "nc_gaps.tsv", "w", encoding="utf-8", newline="") as fo:
+            w = csv.writer(fo, delimiter="\t", lineterminator="\n")
+            w.writerow(["ID", "START", "END"])
+            for q_, iv in gaps.items():
+                w.writerows((q_, a, b) for a, b in sorted(iv))
+        for x in (tmp, Path(str(tmp) + ".sel"), paf):
+            x.unlink(missing_ok=True)
     d: dict[str, dict[int, str]] = defaultdict(dict)
     for r in csv.DictReader(open(f, encoding="utf-8"), delimiter="\t"):
         d[r["ID"]][int(r["POS"])] = r["ALT"]

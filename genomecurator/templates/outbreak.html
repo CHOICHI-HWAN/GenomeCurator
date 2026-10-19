@@ -4,6 +4,7 @@
 <div class="card" style="font-size:13px"><div style="display:flex;gap:14px;flex-wrap:wrap;align-items:end">
  <label title="이 크기 이상의 단계통군을 서브클러스터로">서브클러스터 최소 크기<br><input id="ms" type="number" min="2" value="5" style="width:70px"></label>
  <label title="유전자의 변이 수(유전체 합)가 이 값을 넘으면 hotspot (ITR 제외)">hotspot 기준<br><input id="hs" type="number" min="1" value="100" style="width:70px"></label>
+<label title="서열에서 N·모호 염기가 차지하는 비율이 이보다 큰 유전체는 이 분석에서 뺍니다. N 구간은 SNP을 부를 수 없어 변이 수가 실제보다 적게 나오므로, 개수를 비교하는 분석은 낮출수록 믿을 만합니다">N 비율 상한<br><select id="mn"><option value="0.05">5% 이하</option><option value="0.01">1% 이하</option><option value="0.2">20% 이하</option><option value="1">제한 없음</option></select></label>
  <label title="이 비율 이상의 유전체가 가진 위치(참조와 데이터셋 전체의 차이)는 '새로 생긴 변이' 계산에서 뺍니다">고정 변이 기준<br><select id="fx"><option value="0.9">90% 이상 제외</option><option value="0.5">50% 이상 제외</option><option value="1">제외하지 않음</option></select></label>
  <button type="button" class="p" onclick="load()">다시 계산</button></div><div class="mut" id="info" style="margin-top:6px"></div></div>
 <div id="root"><div class="card mut">계산하는 중…</div></div>
@@ -15,7 +16,7 @@ const PAL=['#4e79a7','#f28e2b','#e15759','#76b7b2','#59a14f','#edc948','#b07aa1'
 const BC={A:'#4e9a06',C:'#3465a4',G:'#c4a000',T:'#cc0000'};
 let D=null;
 async function load(){document.getElementById('root').innerHTML='<div class="card mut">계산하는 중…</div>';
- const q=new URLSearchParams({min_size:document.getElementById('ms').value,hotspot:document.getElementById('hs').value,fixed:document.getElementById('fx').value});
+ const q=new URLSearchParams({min_size:document.getElementById('ms').value,hotspot:document.getElementById('hs').value,fixed:document.getElementById('fx').value,max_n:document.getElementById('mn').value});
  D=await (await fetch('/api/analyses/'+RID+'/outbreak?'+q)).json();render()}
 function sec(t,sub){return '<h3 style="margin-top:22px">'+t+(sub?' <span class="mut" style="font-size:12.5px;font-weight:400">'+sub+'</span>':'')+'</h3>'}
 function fail(x){return '<div class="card mut">'+esc(x.reason||'계산할 수 없습니다')+'</div>'}
@@ -51,8 +52,8 @@ function render(){let h='';const C=D.clusters,A=D.accumulation,S=D.spectrum,G=D.
   s+='</svg>';
   const row=(k,T)=>T?'<tr><td>'+k+'</td><td>'+T.n+'</td><td>'+T.slope_per_year+'건 / 년</td><td>'+T.rho+'</td><td>'+pv(T.p)+'</td></tr>':'';
   h+='<div style="overflow:auto;background:#fff;border:1px solid var(--bd);border-radius:6px"><div style="font-size:11px;padding:4px 8px"><span style="color:#d6249f">●</span> 전체 APOBEC3형(참조 대비) &nbsp; <span style="color:#4e79a7">●</span> 새로 생긴 것(고정 변이 제외)</div>'+s+'</div>';
-  h+='<table style="margin-top:8px"><tr><th>기준</th><th>유전체</th><th>추세(선형)</th><th>Spearman ρ</th><th>유의성</th></tr>'+row('전체',A.trend_all)+row('새로 생긴 것(고정 '+pc(A.fixed_share)+' 이상 제외)',A.trend_variable)+'</table>';
-  h+='<table style="margin-top:8px"><tr><th>연도</th><th>유전체</th><th>전체 중앙값 (사분위)</th><th>새로 생긴 것 중앙값 (사분위)</th></tr>'+A.by_year.map(r=>'<tr><td>'+r.year+'</td><td>'+r.n+'</td><td>'+r.all_median+' ('+r.all_q1+'–'+r.all_q3+')</td><td>'+r.var_median+' ('+r.var_q1+'–'+r.var_q3+')</td></tr>').join('')+'</table><div class="mut" style="margin-top:4px">APOBEC3형 = G→A(뒤가 A) 또는 C→T(앞이 T) · 양 끝 ITR 제외 · 유전체 안에서의 누적이 아니라 수집 시기별 보유 개수의 변화입니다(표집 편향 주의).</div>'}}
+  h+='<table style="margin-top:8px"><tr><th>기준</th><th>유전체</th><th>추세(선형)</th><th>Spearman ρ</th><th>유의성</th></tr>'+row('전체',A.trend_all)+row('새로 생긴 것(고정 '+pc(A.fixed_share)+' 이상 제외)',A.trend_variable)+row('<b>lineage 안에서만</b> (lineage 평균 대비, 계통 깊이 효과 제거 · lineage '+(A.trend_within_lineage?A.trend_within_lineage.lineages:0)+'개)',A.trend_within_lineage)+'</table>';
+  h+='<table style="margin-top:8px"><tr><th>연도</th><th>유전체</th><th>전체 중앙값 (사분위)</th><th>새로 생긴 것 중앙값 (사분위)</th></tr>'+A.by_year.map(r=>'<tr><td>'+r.year+'</td><td>'+r.n+'</td><td>'+r.all_median+' ('+r.all_q1+'–'+r.all_q3+')</td><td>'+r.var_median+' ('+r.var_q1+'–'+r.var_q3+')</td></tr>').join('')+'</table><div class="mut" style="margin-top:4px">전체 추세는 나중에 채취한 유전체가 이미 변이를 더 물려받은 lineage에 속해서(계통 깊이) 생기는 부분을 포함합니다. <b>lineage 안에서만</b> 본 추세가 시간에 따른 누적에 더 가깝습니다. N이 많은 유전체는 변이가 적게 불리므로 N 비율 상한을 두고 보세요. APOBEC3형 = G→A(뒤가 A) 또는 C→T(앞이 T) · 양 끝 ITR 제외 · 유전체 안에서의 누적이 아니라 수집 시기별 보유 개수의 변화입니다(표집 편향 주의).</div>'}}
  // 3 spectrum
  h+=sec('3. 유전체별 변이 유형','수집일 순서 · 참조 대비 '+(D.spectrum.fixed_share<1?'(고정 변이 '+pc(D.spectrum.fixed_share)+' 이상 제외)':'(전부)'));
  const rows=S.rows;if(rows.length){const bw2=Math.max(1.2,Math.min(6,1000/rows.length)),Ht=220,mx2=Math.max(...rows.map(r=>r.a3_nonsyn+r.a3_syn+r.other_nonsyn+r.other_syn+r.a3_inter+r.other_inter))+1;
@@ -68,7 +69,7 @@ function render(){let h='';const C=D.clusters,A=D.accumulation,S=D.spectrum,G=D.
   h+='<div class="mut">기능 범주는 논문 보충표 1(NC_063383 주석, ViralZone)에서 옮겨 온 것입니다. hotspot = 변이 수 > '+G.hotspot+'. <b>dN/dS는 탐색용</b>입니다: 이 데이터셋의 서로 다른 변이(공유된 것은 한 번만)를 참조 서열의 코돈 자리 수(Nei–Gojobori)로 나눠 Jukes–Cantor로 보정했으며 선택압의 검정이 아닙니다(논문의 KaKs 쌍별 추정과 방식이 다릅니다). 변이가 아주 적은 유전자는 값이 불안정합니다.</div>';
   h+='<table style="margin:8px 0"><tr><th>기능 범주</th><th>유전자 수</th><th>변이 수</th><th>APOBEC3형</th><th>새로 생긴 변이 수</th></tr>'+G.categories.map(c=>'<tr><td>'+esc(c.category)+'</td><td>'+c.genes+'</td><td>'+c.events.toLocaleString()+'</td><td>'+pc(c.events?c.a3/c.events:null)+'</td><td>'+c.var_events.toLocaleString()+'</td></tr>').join('')+'</table>';
   h+='<table><tr><th>유전자</th><th>기능</th><th>범주</th><th>변이 수</th><th>새로 생긴 변이</th><th>APOBEC3형</th><th>비동의 / 동의</th><th>서로 다른 변이 (비동의/동의)</th><th>dN/dS (탐색)</th><th></th></tr>'+G.genes.slice(0,60).map(g=>'<tr><td><b>'+esc(g.gene)+'</b> <span class="mut">'+esc(g.homolog)+'</span></td><td style="font-size:12px">'+esc(g.function)+'</td><td style="font-size:12px">'+esc(g.category)+'</td><td>'+g.events.toLocaleString()+'</td><td>'+g.var_events.toLocaleString()+'</td><td>'+pc(g.a3_share)+'</td><td>'+g.nonsyn+' / '+g.syn+'</td><td>'+g.distinct+' ('+g.distinct_nonsyn+'/'+g.distinct_syn+')</td><td>'+(g.dnds&&g.dnds.ratio!=null?'<b style="color:'+(g.dnds.ratio>=1?'var(--bad)':'inherit')+'">'+g.dnds.ratio+'</b>':'<span class="mut">-</span>')+'</td><td>'+(g.hotspot?'<b style="color:var(--bad)">hotspot</b>':'')+(g.var_hotspot&&!g.hotspot?'':'')+'</td></tr>').join('')+'</table><div class="mut" style="margin-top:4px">'+G.n_genes+'개 유전자 중 변이 수 상위 60개</div>'}
- document.getElementById('root').innerHTML=h;document.getElementById('info').textContent='참조: '+(C.reference||G.reference||'')+' · 고정 변이 기준 '+pc(D.spectrum.fixed_share)}
+ document.getElementById('root').innerHTML=h;document.getElementById('info').textContent='참조: '+(C.reference||G.reference||'')+' · 고정 변이 기준 '+pc(D.spectrum.fixed_share)+' · N 비율 '+(D.max_n==null||D.max_n>=1?'제한 없음':'≤ '+(D.max_n*100)+'%')+' · ITR 마스킹'}
 load();
 </script>
 {% endblock %}

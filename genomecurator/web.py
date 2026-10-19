@@ -825,13 +825,13 @@ def create_app(scheduler: bool = True) -> FastAPI:
         return render(request, "insight.html", nav="ns", run=r)
 
     @app.get("/api/analyses/{rid}/insight")
-    def api_analysis_insight(rid: int, window_days: int = 120, min_carriers: int = 3, skip_apobec: int = 0):
+    def api_analysis_insight(rid: int, window_days: int = 120, min_carriers: int = 3, skip_apobec: int = 0, max_n: float = 0.05):
         """APOBEC3 transmission check, new (non-defining) mutations and clusters, per-lineage signatures of a mutation-profile run."""
         r = nextstrain.get_run(rid)
         if not r or r["tool"] != "mutprofile" or r["status"] != "done":
             return JSONResponse({"error": "finished mutation-profile run not found"}, 404)
         try:
-            return insight.insight(r, window_days=max(1, window_days), min_carriers=max(2, min_carriers), skip_apobec=bool(skip_apobec))
+            return insight.insight(r, window_days=max(1, window_days), min_carriers=max(2, min_carriers), skip_apobec=bool(skip_apobec), max_n=min(1.0, max(0.0, max_n)))
         except (ValueError, RuntimeError) as e:
             return JSONResponse({"error": str(e)}, 400)
 
@@ -843,12 +843,12 @@ def create_app(scheduler: bool = True) -> FastAPI:
         return render(request, "outbreak.html", nav="ns", run=r)
 
     @app.get("/api/analyses/{rid}/outbreak")
-    def api_analysis_outbreak(rid: int, min_size: int = 5, hotspot: int = 100, fixed: float = 0.9):
+    def api_analysis_outbreak(rid: int, min_size: int = 5, hotspot: int = 100, fixed: float = 0.9, max_n: float = 0.05):
         """Genomic subclusters from the tree, cluster-size distribution, APOBEC3 accumulation, per-genome mutation types, gene burden / hotspots / exploratory dN/dS."""
         r = nextstrain.get_run(rid)
         if not r or r["tool"] != "mutprofile" or r["status"] != "done":
             return JSONResponse({"error": "finished mutation-profile run not found"}, 404)
-        return outbreak.analysis(r, max(2, min_size), max(1, hotspot), min(1.0, max(0.5, fixed)))
+        return outbreak.analysis(r, max(2, min_size), max(1, hotspot), min(1.0, max(0.5, fixed)), min(1.0, max(0.0, max_n)))
 
     @app.get("/analysis/{rid}/snipit")
     def analysis_snipit_page(request: Request, rid: int):
