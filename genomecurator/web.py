@@ -209,7 +209,7 @@ def create_app(scheduler: bool = True) -> FastAPI:
     @app.get("/")
     def index(request: Request, msg: str = ""):
         return render(request, "index.html", msg=msg, nav="cur",
-                      watches=_rows("SELECT w.*, (SELECT COUNT(*) FROM genome g WHERE g.watch_id=w.id) n_genomes FROM watchlist w"),
+                      watches=_rows("SELECT w.*, (SELECT COUNT(*) FROM genome g WHERE g.watch_id=w.id AND IFNULL(g.genome_status,'')!='Removed') n_genomes FROM watchlist w"),
                       changesets=_changeset_cards())
 
     STATUS_TEXT = {"PENDING": ("준비 중", "warn"), "READY": ("검토 대기", "warn"), "BLOCKED": ("적용 불가", "bad"), "APPLIED": ("적용 완료", "ok")}
@@ -595,7 +595,7 @@ def create_app(scheduler: bool = True) -> FastAPI:
     # ------------------------------------------------------------------------------------------------ QC (sequence stats, Nextclade)
     @app.get("/qc")
     def qc_page(request: Request, watch: int = 0):
-        watches = _rows("SELECT w.id, w.name, w.taxon, (SELECT COUNT(*) FROM genome g WHERE g.watch_id=w.id) n, "
+        watches = _rows("SELECT w.id, w.name, w.taxon, (SELECT COUNT(*) FROM genome g WHERE g.watch_id=w.id AND IFNULL(g.genome_status,'')!='Removed') n, "
                        "(SELECT COUNT(*) FROM genome_sequence s JOIN genome g ON g.genome_id=s.genome_id WHERE g.watch_id=w.id) ns FROM watchlist w ORDER BY w.name")
         return render(request, "qc.html", nav="qc", watches=watches, tool_version=qc.nextclade_version(), tool_ok=qc.nextclade_bin() is not None,
                       summary={w["id"]: qc.summary(w["id"]) for w in watches},
@@ -769,11 +769,11 @@ def create_app(scheduler: bool = True) -> FastAPI:
 
     @app.get("/genomes")
     def genomes(request: Request, watch: int = 0, msg: str = ""):
-        watches = _rows("SELECT w.id, w.name, w.taxon_id, (SELECT COUNT(*) FROM genome g WHERE g.watch_id=w.id) n FROM watchlist w")
+        watches = _rows("SELECT w.id, w.name, w.taxon_id, (SELECT COUNT(*) FROM genome g WHERE g.watch_id=w.id AND IFNULL(g.genome_status,'')!='Removed') n FROM watchlist w")
         watch = current_watch(request, watch, watches)
         cur = next((w for w in watches if w["id"] == watch), None)
         rows = _rows("SELECT g.*, s.md5, s.gc_content FROM genome g LEFT JOIN genome_sequence s ON s.accession=g.accession "
-                     "WHERE g.watch_id=? ORDER BY g.genome_id", watch)
+                     "WHERE g.watch_id=? AND IFNULL(g.genome_status,'')!='Removed' ORDER BY g.genome_id", watch)
         prov: dict[str, dict] = {}
         for p in _rows("SELECT p.genome_id, p.field, p.source FROM field_provenance p JOIN genome g ON g.genome_id=p.genome_id "
                        "WHERE g.watch_id=?", watch):
@@ -818,7 +818,7 @@ def create_app(scheduler: bool = True) -> FastAPI:
     @app.get("/genomes.tsv")
     def genomes_tsv():
         return _tsv(_rows("SELECT g.*, s.gc_content, s.md5, s.file_path FROM genome g "
-                          "LEFT JOIN genome_sequence s ON s.accession=g.accession ORDER BY g.genome_id"), "genomes.tsv")
+                          "LEFT JOIN genome_sequence s ON s.accession=g.accession WHERE IFNULL(g.genome_status,'')!='Removed' ORDER BY g.genome_id"), "genomes.tsv")
 
     @app.post("/integrity/seqplan")
     def integrity_seqplan(request: Request, watch: int = Form(0)):
@@ -913,7 +913,7 @@ def create_app(scheduler: bool = True) -> FastAPI:
     def dashboard(request: Request, watch: int = 0):
         watches = _rows("SELECT w.id, w.name, (SELECT COUNT(*) FROM genome g WHERE g.watch_id=w.id) n FROM watchlist w")
         watch = current_watch(request, watch, watches)
-        g = _rows("SELECT * FROM genome WHERE watch_id=?", watch)
+        g = _rows("SELECT * FROM genome WHERE watch_id=? AND IFNULL(genome_status,'')!='Removed'", watch)
         _c = connect()
         try:
             _ref = completeness.reference_map(_c).get(watch)

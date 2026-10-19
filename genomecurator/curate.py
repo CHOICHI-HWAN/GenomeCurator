@@ -6,7 +6,7 @@ import shutil
 from pathlib import Path
 from datetime import datetime
 
-from . import config, log, reconcile, resolve, seqcheck, sources
+from . import completeness, config, log, reconcile, resolve, seqcheck, sources
 from .db import audit, connect, tx
 
 GENOME_COLS = [
@@ -252,6 +252,27 @@ def _diff(old: dict | None, new: dict) -> dict:
 
 
 # ---------------------------------------------------------------------- check
+def _below_coverage(con, watch_id: int, per_source: dict) -> dict[str, float]:
+    """{accession: coverage %} of the genomes shorter than MIN_COVERAGE_PCT of the reference (the longest RefSeq among the fetched NCBI records,
+    else the one already held). NCBI 'Complete' genomes are exempt. No reference, no rule."""
+    if not config.MIN_COVERAGE_PCT:
+        return {}
+    ncbi = per_source.get("ncbi", {})
+    refs = [r.get("genome_length") or 0 for r in ncbi.values() if r.get("refseq_accessions")]
+    ref = max(refs, default=0)
+    if not ref:
+        held = completeness.reference_map(con).get(watch_id)
+        ref = held[1] if held else 0
+    if not ref:
+        return {}
+    out = {}
+    for acc, r in ncbi.items():
+        ln = r.get("genome_length") or 0
+        if r.get("genome_status") != "Complete" and 100 * ln / ref < config.MIN_COVERAGE_PCT:
+            out[acc] = 100 * ln / ref
+    return out
+
+
 def _check(watch_name: str, progress=None) -> int | None:
     """Fetch sources, diff against local DB, store a changeset (no local data change).
     Returns changeset id or None when nothing changed."""
@@ -273,6 +294,12 @@ def _check(watch_name: str, progress=None) -> int | None:
         per_source, notes = sources.fetch_all(w["name"], w["taxon"], w["taxon_id"],
                                               json.loads(w["filters_json"] or "{}"), progress=p)
         notes = notes0 + notes
+        below = _below_coverage(con, w["id"], per_source)
+        for src in per_source:               # not worth curating: out of every source's view, so no changeset, conflict or count mentions them
+            for a in below:
+                per_source[src].pop(a, None)
+        if below:
+            notes.append(f"기준 게놈의 {config.MIN_COVERAGE_PCT:g}% 미만이라 큐레이션하지 않는 유전체 {len(below):,}건")
         from . import qc
         ncs = {a: r for a, r in qc.nextclade_source(w["id"], con).items() if a in per_source["ncbi"]}
         if ncs:      # Nextclade's clade/lineage from the stored sequences take part as one more source (QC tab)
@@ -303,6 +330,7 @@ def _check(watch_name: str, progress=None) -> int | None:
             "WHERE c.watch_id=? AND i.decision='hold'", (w["id"],))}
 
         items = []
+        gone_below = {a: v for a, v in below.items() if a in local and local[a].get("genome_status") != "Removed"}
         for acc, (rec, prov) in merged.items():
             old = local.get(acc)
             if old is None:
@@ -314,7 +342,8 @@ def _check(watch_name: str, progress=None) -> int | None:
                 items.append((acc, kind, diff, rec, prov))
         for acc, old in local.items():
             if acc not in merged and old.get("genome_status") != "Removed":
-                items.append((acc, "removed", {"genome_status": [old.get("genome_status"), "Removed"]}, old, {}))
+                reason = {"reason": f"기준 게놈 대비 {gone_below[acc]:.1f}% < {config.MIN_COVERAGE_PCT:g}%"} if acc in gone_below else {}
+                items.append((acc, "removed", {"genome_status": [old.get("genome_status"), "Removed"]}, old, reason))
 
         fresh = []
         for acc, kind, diff, rec, prov in items:
@@ -339,7 +368,7 @@ def _check(watch_name: str, progress=None) -> int | None:
         con.execute("UPDATE changeset SET status='DISCARDED' WHERE watch_id=? AND status IN ('PENDING','READY','BLOCKED')",
                     (w["id"],))
         from . import __version__
-        summary = {"new": 0, "changed": 0, "removed": 0, "notes": notes, "app_version": __version__,
+        summary = {"new": 0, "changed": 0, "removed": 0, "below_coverage": len(below), "notes": notes, "app_version": __version__,
                    "sources": {s: len(r) for s, r in per_source.items()}}
         cur = con.execute("INSERT INTO changeset(watch_id, summary_json) VALUES(?,?)", (w["id"], "{}"))
         cs = cur.lastrowid
@@ -349,7 +378,7 @@ def _check(watch_name: str, progress=None) -> int | None:
                 "INSERT INTO changeset_item(changeset_id,accession,kind,diff_json,new_record_json,provenance_json,fingerprint,decision)"
                 " VALUES(?,?,?,?,?,?,?,?)",
                 (cs, acc, kind, json.dumps(diff), json.dumps(rec, default=str), json.dumps(prov), fp,
-                 "hold" if fp in held else "pending"))
+                 "hold" if fp in held else ("approved" if (kind == "removed" and prov.get("reason")) else "pending")))
         con.execute("UPDATE changeset SET summary_json=? WHERE id=?", (json.dumps(summary), cs))
         audit(con, "check", f"{watch_name}: changeset {cs} {summary}")
         con.commit()

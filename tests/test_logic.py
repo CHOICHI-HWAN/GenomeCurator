@@ -1234,3 +1234,38 @@ def test_backup_keeps_private_data_out_unless_asked(tmp_path, monkeypatch):
     monkeypatch.setattr(config, "DB_PATH", dst / "g.db")
     backup.restore_backup(tmp_path / "full.zip")
     assert [r["id"] for r in private.list_rows(1)] == ["LAB_B1"] and (dst / "private" / "Mpox" / "LAB_B1.fna").exists()
+
+
+def test_check_drops_genomes_below_the_coverage_floor(tmp_path, monkeypatch):
+    import json
+    from genomecurator import config, curate, sources
+    from genomecurator.db import connect
+    monkeypatch.setattr(config, "DATA_DIR", tmp_path)
+    monkeypatch.setattr(config, "DB_PATH", tmp_path / "g.db")
+    monkeypatch.setattr(config, "MIN_COVERAGE_PCT", 80.0)
+    con = connect()
+    con.execute("INSERT INTO watchlist(id,name,taxon,taxon_id) VALUES(1,'V','Some virus',5)")
+    con.execute("INSERT INTO genome(genome_id,watch_id,accession,genome_length,genome_status) VALUES('g1',1,'OLDSHORT',600,'Partial')")     # held before, 60% of the reference
+    con.execute("INSERT INTO genome(genome_id,watch_id,accession,genome_length,genome_status) VALUES('g2',1,'OLDGOOD',950,'Partial')")
+    con.commit()
+    con.close()
+    rec = lambda ln, st="Partial", ref="": {"genome_length": ln, "genome_status": st, "refseq_accessions": ref, "accession_version": 1}
+    ncbi = {"REF": rec(1000, "Complete", "NC_1"), "OKAY": rec(850), "SHORTNEW": rec(700), "TINY": rec(10), "SHORTCOMPLETE": rec(700, "Complete"),
+            "OLDSHORT": rec(600), "OLDGOOD": rec(950)}
+    monkeypatch.setattr(sources, "ncbi_species_scope", lambda tid: None)
+    monkeypatch.setattr(sources, "pathoplexus_resolve", lambda *a, **k: None)
+    monkeypatch.setattr(sources, "fetch_all", lambda *a, **k: ({"ncbi": json.loads(json.dumps(ncbi)), "bvbrc": {}, "pathoplexus": {}}, []))
+    cs = curate.check("V")
+    con = connect()
+    items = {r["accession"]: dict(r) for r in con.execute("SELECT * FROM changeset_item WHERE changeset_id=?", (cs,))}
+    summ = json.loads(con.execute("SELECT summary_json FROM changeset WHERE id=?", (cs,)).fetchone()[0])
+    con.close()
+    assert "SHORTNEW" not in items and "TINY" not in items                                   # never proposed
+    assert {"REF", "OKAY", "SHORTCOMPLETE"} <= set(items)                                    # NCBI 'Complete' is exempt, 85% stays
+    r = items["OLDSHORT"]
+    assert r["kind"] == "removed" and r["decision"] == "approved" and "60.0%" in json.loads(r["provenance_json"])["reason"]   # held ones: removal pre-approved, with the reason
+    assert "OLDGOOD" not in items or items["OLDGOOD"]["kind"] != "removed"
+    assert summ["below_coverage"] == 3 and any("80%" in n for n in summ["notes"])
+    # off switch
+    monkeypatch.setattr(config, "MIN_COVERAGE_PCT", 0.0)
+    assert curate._below_coverage(connect(), 1, {"ncbi": ncbi}) == {}

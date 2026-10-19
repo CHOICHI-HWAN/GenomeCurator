@@ -94,7 +94,7 @@ python -m genomecurator serve --open                        # 웹 화면 http://
 | `backup [zip]` / `restore <zip>` | 큐레이션 결과와 FASTA의 이식 가능한 백업 |
 | `serve [--port N] [--open] [--superset] [--no-scheduler]` | 웹 서버 (Superset도 함께 켤 수 있음) |
 
-주요 설정(환경변수): `GC_DATA_DIR`(데이터 위치), `NCBI_API_KEY`(NCBI 요청 한도 증가), `GC_CHECK_INTERVAL_HOURS`(기본 24), `GC_NEAR_COMPLETE_PCT`(기본 90), `GC_SCHEMA_CHECK_HOUR`(기본 3). 전체 목록은 [가이드](docs/GUIDE.ko.md#설정-환경변수)에 있습니다.
+주요 설정(환경변수): `GC_MIN_COVERAGE_PCT`(기본 80: 기준 게놈 대비 이보다 짧으면 큐레이션 안 함), `GC_DATA_DIR`(데이터 위치), `NCBI_API_KEY`(NCBI 요청 한도 증가), `GC_CHECK_INTERVAL_HOURS`(기본 24), `GC_NEAR_COMPLETE_PCT`(기본 90), `GC_SCHEMA_CHECK_HOUR`(기본 3). 전체 목록은 [가이드](docs/GUIDE.ko.md#설정-환경변수)에 있습니다.
 
 ## 출력 파일
 

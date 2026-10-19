@@ -263,7 +263,8 @@ def run(watch_id: int, progress=None, force: bool = False) -> dict:
         if not w:
             raise ValueError("바이러스를 찾을 수 없습니다.")
         rows = [dict(r) for r in con.execute(
-            "SELECT g.accession, g.genome_length, s.md5, s.file_path FROM genome g JOIN genome_sequence s ON s.genome_id=g.genome_id WHERE g.watch_id=?", (watch_id,))]
+            "SELECT g.accession, g.genome_length, s.md5, s.file_path FROM genome g JOIN genome_sequence s ON s.genome_id=g.genome_id WHERE g.watch_id=? "
+            "AND IFNULL(g.genome_status,'')!='Removed'", (watch_id,))]
         have = {(r[0], r[1]): (r[2], r[3], r[4]) for r in con.execute(
             "SELECT accession, tool, seq_md5, version, dataset_tag FROM qc_result WHERE watch_id=?", (watch_id,))}
     finally:

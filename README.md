@@ -94,7 +94,7 @@ Other commands (`python -m genomecurator --help` for all options):
 | `backup [zip]` / `restore <zip>` | Portable backup of curated data and FASTA |
 | `serve [--port N] [--open] [--superset] [--no-scheduler]` | Web server (optionally with Superset) |
 
-Useful settings (environment variables): `GC_DATA_DIR` (data location), `NCBI_API_KEY` (higher NCBI rate limit), `GC_CHECK_INTERVAL_HOURS` (default 24), `GC_NEAR_COMPLETE_PCT` (default 90), `GC_SCHEMA_CHECK_HOUR` (default 3). The full list is in the [guide](docs/GUIDE.ko.md#설정-환경변수).
+Useful settings (environment variables): `GC_MIN_COVERAGE_PCT` (default 80: shorter genomes are not curated), `GC_DATA_DIR` (data location), `NCBI_API_KEY` (higher NCBI rate limit), `GC_CHECK_INTERVAL_HOURS` (default 24), `GC_NEAR_COMPLETE_PCT` (default 90), `GC_SCHEMA_CHECK_HOUR` (default 3). The full list is in the [guide](docs/GUIDE.ko.md#설정-환경변수).
 
 ## Output
 
