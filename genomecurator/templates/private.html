@@ -1,0 +1,50 @@
+{% extends "base.html" %}{% block body %}
+<div class="pagehead"><h2>비공개 유전체</h2><span class="mut">공개되지 않은 로컬 유전체를 따로 보관하고, 최종 분석용 데이터세트에 붙입니다</span></div>
+<div class="help"><b>공개 데이터와 완전히 분리</b>되어 보관됩니다 — 유전체 화면, 공개 페이지 배포, Superset, 일반 백업, <i>지금 확인</i>에 나타나지 않습니다.
+내보내기에서 <b>"비공개 포함"</b>을 켰을 때만 <code>metadata-private.tsv</code> / <code>sequences-private.fasta</code>로 <u>별도 파일</u>에 나가며, Nextstrain의 <code>private_metadata</code> / <code>private_sequences</code>로 연결됩니다.
+<br><b>입력 형식</b>: Nextstrain에 준하는 메타데이터 TSV(열: id <code>PPX_accession</code> 또는 <code>accession</code>, <code>strain</code>, <code>date</code>, <code>country</code>, <code>division</code>, <code>location</code>, <code>host</code>, <code>clade</code>…)와, 헤더가 그 id인 FASTA.
+먼저 <b>검사(dry-run)</b>로 구조 오류(id 누락·중복·공개 accession과 충돌·서열 없는 행·서열 문자 오류)를 확인하고, 오류가 없을 때만 가져옵니다. 날짜·대륙·길이는 자동으로 맞추고 경고로 알려 줍니다.</div>
+
+<div class="card">
+ <div style="display:flex;gap:12px;flex-wrap:wrap;align-items:end">
+  <label>바이러스<br><select id="w" onchange="location.href='/private?watch='+this.value">{% for w in watches %}<option value="{{ w.id }}" {{ 'selected' if w.id == wid }}>{{ w.name }}</option>{% endfor %}</select></label>
+  <label>메타데이터 TSV<br><input type="file" id="fm" accept=".tsv,.txt,.csv"></label>
+  <label>FASTA<br><input type="file" id="ff" accept=".fasta,.fa,.fna,.txt"></label>
+  <button type="button" id="bc" onclick="chk()">검사 (dry-run)</button>
+  <button type="button" class="p" id="bi" onclick="imp()" disabled>가져오기</button>
+ </div>
+ <div id="rep" style="margin-top:10px"></div>
+</div>
+
+<h3>보관 중인 비공개 유전체 ({{ rows|length }}건)</h3>
+<div style="margin-bottom:8px;display:flex;gap:8px;flex-wrap:wrap"><button type="button" onclick="pqc(0)" {% if not rows %}disabled{% endif %}>QC 실행</button>
+ <button type="button" onclick="pqc(1)" {% if not rows %}disabled{% endif %} title="이미 한 것도 다시 계산">QC 다시 계산</button>
+ <a href="/export"><button type="button">내보내기로 →</button></a></div>
+<form id="pf" method="post" style="display:none"></form>
+<table><tr><th>id</th><th>strain</th><th>날짜</th><th>국가</th><th>clade</th><th>길이</th><th>서열 통계</th><th>Nextclade</th><th>가져온 시각</th><th></th></tr>
+{% for r in rows %}<tr><td>{{ r.id }}</td><td>{{ r.strain }}</td><td>{{ r.date }}</td><td>{{ r.country }}</td>
+<td>{{ r.clade or '-' }}{% if r.clade_differs %} <span style="color:var(--warn)" title="입력한 clade와 Nextclade 판정이 다릅니다: {{ r.nextclade_clade }}">⚠ {{ r.nextclade_clade }}</span>{% endif %}</td>
+<td>{{ '{:,}'.format(r.length or 0) }}</td><td>{% if r.qc_stats %}<span class="qs {{ r.qc_stats }}">{{ {'good': '양호', 'mediocre': '주의', 'bad': '불량', 'error': '오류'}[r.qc_stats] }}</span>{% else %}<span class="mut">-</span>{% endif %}</td>
+<td>{% if r.qc_nextclade %}<span class="qs {{ r.qc_nextclade }}">{{ {'good': '양호', 'mediocre': '주의', 'bad': '불량', 'error': '오류'}[r.qc_nextclade] }}</span>{% else %}<span class="mut">-</span>{% endif %}</td>
+<td class="nw mut">{{ r.updated }}</td><td><button type="button" onclick="del_('{{ r.id }}')">삭제</button></td></tr>
+{% else %}<tr><td colspan="10" class="mut">아직 없습니다. 위에서 파일을 골라 검사한 뒤 가져오세요.</td></tr>{% endfor %}</table>
+<script>
+const W=()=>document.getElementById('w').value,esc=s=>String(s??'').replace(/[&<>]/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;'}[c]));
+function fd(){const m=document.getElementById('fm').files[0],f=document.getElementById('ff').files[0];if(!m||!f){alert('메타데이터 TSV와 FASTA를 모두 고르세요.');return null}
+ const d=new FormData();d.append('metadata',m);d.append('fasta',f);return d}
+function show(r,done){const el=document.getElementById('rep');let h='';
+ if(r.error){el.innerHTML='<div class="msg" style="border-left-color:var(--bad)">'+esc(r.error)+'</div>';return}
+ h+='<div class="msg" style="border-left-color:'+(r.ok?'var(--ok)':'var(--bad)')+'">'+(done?'가져왔습니다: ':(r.ok?'오류 없음: ':'가져올 수 없습니다: '))+'신규 <b>'+(r.new??0)+'</b> · 갱신 <b>'+(r.update??0)+'</b> · 경고 '+(r.warnings||[]).length+' · 오류 '+(r.errors||[]).length+'</div>';
+ if((r.errors||[]).length)h+='<div style="color:var(--bad)"><b>오류 (고쳐야 가져올 수 있음)</b><ul>'+r.errors.slice(0,30).map(x=>'<li>'+esc(x)+'</li>').join('')+'</ul></div>';
+ if((r.warnings||[]).length)h+='<details><summary>경고 '+r.warnings.length+'건 (자동으로 맞췄거나 비워 둔 것)</summary><ul>'+r.warnings.slice(0,200).map(x=>'<li>'+esc(x)+'</li>').join('')+'</ul></details>';
+ el.innerHTML=h}
+async function chk(){const d=fd();if(!d)return;document.getElementById('bi').disabled=true;
+ const r=await (await fetch('/api/private/'+W()+'/check',{method:'POST',body:d})).json();show(r,false);document.getElementById('bi').disabled=!(r.ok&&(r.new||r.update))}
+async function imp(){const d=fd();if(!d)return;if(!confirm('비공개 저장소에 가져옵니다 (같은 id가 있으면 갱신).'))return;
+ const r=await (await fetch('/api/private/'+W()+'/import',{method:'POST',body:d})).json();
+ if(r.error){show({error:r.error},false);return}show({ok:true,new:r.new,update:r.update,warnings:r.warnings,errors:[]},true);setTimeout(()=>location.reload(),1500)}
+async function del_(id){if(!confirm(id+' 을(를) 비공개 저장소에서 삭제할까요? (서열 파일도 지워집니다)'))return;
+ await fetch('/api/private/'+W()+'/'+encodeURIComponent(id),{method:'DELETE'});location.reload()}
+function pqc(f){const x=document.getElementById('pf');x.action='/api/private/'+W()+'/qc?force='+f;runJob(x)}
+</script>
+{% endblock %}

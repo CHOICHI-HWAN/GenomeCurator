@@ -24,6 +24,7 @@ _log = log.get("export")
 OPEN_TERMS_URL = "https://pathoplexus.org/about/terms-of-use/open-data"
 
 NEXTSTRAIN_COLUMNS = [
+    "accession",      # = the id; the workflow's private-data merge script (combine_data_sources.py) still matches rows on a column of this name
     "PPX_accession", "PPX_accession__url", "PPX_accession_version", "PPX_accession_version__url",
     "INSDC_accession", "INSDC_accession_version", "INSDC_accession_version__url",
     "strain", "date", "region", "country", "division", "location", "length", "host", "date_released", "date_updated", "sra_accession",
@@ -179,7 +180,7 @@ def nextstrain_row(r: dict) -> dict:
     ppx_base = ppx.split(".")[0] if ppx else ""
     gid = _id(r)
     row = {
-        "PPX_accession": ppx_base, "PPX_accession__url": f"https://pathoplexus.org/seq/{ppx_base}" if ppx_base else "",
+        "accession": ppx_base, "PPX_accession": ppx_base, "PPX_accession__url": f"https://pathoplexus.org/seq/{ppx_base}" if ppx_base else "",
         "PPX_accession_version": ppx, "PPX_accession_version__url": f"https://pathoplexus.org/seq/{ppx}" if ppx else "",
         "INSDC_accession": r["accession"], "INSDC_accession_version": gid, "INSDC_accession_version__url": f"https://www.ncbi.nlm.nih.gov/nuccore/{gid}",
         "strain": r.get("strain") or gid, "date": date, "region": region_of(country), "country": country, "division": division, "location": location,
@@ -242,7 +243,7 @@ def table(watch_id: int, profile: str = "nextstrain", **filters) -> tuple[list[s
     return cols, out, by_id, w
 
 
-def preview(watch_id: int, profile: str = "nextstrain", **filters) -> dict:
+def preview(watch_id: int, profile: str = "nextstrain", include_private: bool = False, **filters) -> dict:
     """Counts and warnings, without writing anything."""
     if profile not in PROFILES:
         raise ValueError(f"알 수 없는 형식입니다: {profile} (가능: {', '.join(PROFILES)})")
@@ -268,7 +269,45 @@ def preview(watch_id: int, profile: str = "nextstrain", **filters) -> dict:
             m = sum(1 for r in out if not r[col])
             if m:
                 warn.append(f"{label}이(가) 비었거나 형식이 맞지 않는 {m:,}건 (Nextstrain에서는 빈 값으로 처리됩니다).")
-    return {"virus": w["name"], "profile": profile, "genomes": len(rows), "selected": n, "left_out_no_id": no_id, "left_out_duplicate": dup, "warnings": warn}
+    n_priv = 0
+    if include_private:
+        from . import private as _private
+        n_priv = len(_private.rows_for_export(watch_id))
+        if n_priv:
+            warn.append(f"비공개 유전체 {n_priv:,}건이 별도 파일(metadata-private.tsv, sequences-private.fasta)로 함께 나갑니다. 이 폴더는 외부에 공유하지 마세요.")
+        else:
+            warn.append("비공개 저장소가 비어 있습니다.")
+    return {"virus": w["name"], "profile": profile, "genomes": len(rows), "selected": n, "private": n_priv, "left_out_no_id": no_id, "left_out_duplicate": dup, "warnings": warn}
+
+
+def private_row(rec: dict) -> dict:
+    """A private genome as a row of the same table: what the person supplied, normalised at import, plus what QC computed."""
+    meta, nc = rec["meta"], (rec["qc"].get("nextclade") or {})
+    ns = (nc.get("m") or {}).get("ns") or {}
+    pid = rec["id"]
+    row = {c: meta.get(c, "") for c in NEXTSTRAIN_COLUMNS}
+    country, date = meta.get("country", ""), meta.get("date", "")
+    row.update(accession=pid, PPX_accession=pid, strain=meta.get("strain") or pid, length=meta.get("length", ""),
+               dataUseTerms=meta.get("dataUseTerms") or "PRIVATE", submission_database=meta.get("submission_database") or "private",
+               Pathoplexus_group=meta.get("Pathoplexus_group") or "private",
+               displayName=meta.get("displayName") or f"{(country or 'Unknown').replace(' ', '_')}/{pid}/{date or 'XXXX-XX-XX'}",
+               clade=meta.get("clade") or nc.get("clade") or "", lineage=meta.get("lineage") or nc.get("lineage") or "",
+               outbreak=meta.get("outbreak") or ns.get("outbreak") or "")
+    for k in NS_QC:
+        v = ns.get(k)
+        row[k] = v if v not in (None, "") else meta.get(k, "")
+    for k, v in meta.items():
+        if k not in NEXTSTRAIN_COLUMNS and not k.startswith("_"):
+            row[k] = v
+    return row
+
+
+def private_table(watch_id: int) -> tuple[list[str], list[dict], dict[str, str]]:
+    from . import private as _private
+    recs = _private.rows_for_export(watch_id)
+    rows = [private_row(r) for r in recs]
+    extra = sorted({k for r in rows for k in r} - set(NEXTSTRAIN_COLUMNS))
+    return NEXTSTRAIN_COLUMNS + extra, rows, {r["id"]: r["file_path"] for r in recs}
 
 
 # ------------------------------------------------------------------------------------------------ writing
@@ -304,6 +343,14 @@ def iter_fasta(profile: str, sel: dict[str, dict], width: int = 70):
         yield f">{gid}\n" + "\n".join(s[i:i + width] for i in range(0, len(s), width)) + "\n"
 
 
+def iter_private_fasta(files: dict[str, str], width: int = 70):
+    for pid, fp in files.items():
+        if not (fp and config.data_path(fp).exists()):
+            continue
+        s = _seq(config.data_path(fp))
+        yield f">{pid}\n" + "\n".join(s[i:i + width] for i in range(0, len(s), width)) + "\n"
+
+
 def slug(name: str) -> str:
     return re.sub(r"[^A-Za-z0-9._-]+", "_", name).strip("_") or "virus"
 
@@ -312,10 +359,12 @@ def exports_dir() -> Path:
     return config.DATA_DIR / "exports"
 
 
-def write(watch_id: int, out_dir: Path | None = None, profile: str = "nextstrain", progress=None, nextstrain_dir: Path | None = None, **filters) -> dict:
+def write(watch_id: int, out_dir: Path | None = None, profile: str = "nextstrain", progress=None, nextstrain_dir: Path | None = None, include_private: bool = False, **filters) -> dict:
     """Write metadata.tsv, sequences.fasta, manifest.json and nextstrain-config.yaml. Default folder: data/exports/<virus>/<timestamp>/.
     With nextstrain_dir (the `phylogenetic/` folder of a nextstrain/mpox checkout) the files go to <it>/data/genomecurator/ and the config to
-    <it>/build-configs/genomecurator/config.yaml with paths relative to that folder - the form that also works inside the Docker runtime."""
+    <it>/build-configs/genomecurator/config.yaml with paths relative to that folder - the form that also works inside the Docker runtime.
+    include_private additionally writes the private store as metadata-private.tsv / sequences-private.fasta (never mixed into the public files)
+    and wires them to the workflow's private_metadata / private_sequences."""
     p = progress or (lambda *a: None)
     p(5, "선택한 유전체와 QC 결과를 모으는 중…")
     cols, rows, sel, w = table(watch_id, profile, **filters)
@@ -340,7 +389,27 @@ def write(watch_id: int, out_dir: Path | None = None, profile: str = "nextstrain
             n_seq += 1
             if n_seq % 500 == 0:
                 p(40 + 55 * n_seq / max(1, len(sel)), f"서열 {n_seq:,}/{len(sel):,}")
-    pv = preview(watch_id, profile, **filters)
+    priv = None
+    if include_private:
+        p(96, "비공개 유전체 쓰는 중…")
+        pcols, prows, pfiles = private_table(watch_id)
+        hp_m, hp_f = hashlib.sha256(), hashlib.sha256()
+        with open(out / "metadata-private.tsv", "w", encoding="utf-8", newline="\n") as f:
+            for chunk in iter_metadata(pcols, prows):
+                f.write(chunk)
+                hp_m.update(chunk.encode("utf-8"))
+        n_pseq = 0
+        with open(out / "sequences-private.fasta", "w", encoding="utf-8", newline="\n") as f:
+            for chunk in iter_private_fasta(pfiles):
+                f.write(chunk)
+                hp_f.update(chunk.encode("utf-8"))
+                n_pseq += 1
+        # the folder may sit inside a git checkout (nextstrain/mpox): keep the private files from being committed by accident
+        (out / ".gitignore").write_text("*private*\nPRIVATE_DATA.txt\n", encoding="utf-8")
+        (out / "PRIVATE_DATA.txt").write_text("This folder contains PRIVATE (unpublished) genomes: metadata-private.tsv and sequences-private.fasta.\n"
+                                              "Do not share, publish or commit it. The public files (metadata.tsv, sequences.fasta) contain no private data.\n", encoding="utf-8")
+        priv = {"rows": len(prows), "sequences": n_pseq, "files": {"metadata-private.tsv": {"sha256": hp_m.hexdigest(), "columns": pcols}, "sequences-private.fasta": {"sha256": hp_f.hexdigest()}}}
+    pv = preview(watch_id, profile, include_private=include_private, **filters)
     con = connect()
     try:
         tags = sorted({f"{r[0]}@{r[1]}" for r in con.execute("SELECT DISTINCT dataset, dataset_tag FROM qc_result WHERE watch_id=? AND tool='nextclade'", (watch_id,))})
@@ -353,30 +422,32 @@ def write(watch_id: int, out_dir: Path | None = None, profile: str = "nextstrain
                 "filters": {k: v for k, v in filters.items() if v not in (None, [], "")}, "rows": len(rows), "sequences": n_seq,
                 "id_column": PROFILES[profile]["id"], "warnings": pv["warnings"], "nextclade": {"datasets": tags, "versions": nver},
                 "files": {"metadata.tsv": {"sha256": h_meta.hexdigest(), "columns": cols}, "sequences.fasta": {"sha256": h_fa.hexdigest()}},
-                "data_use": "Open data only: the curated set is defined by INSDC (NCBI) accessions, so Pathoplexus restricted-use records are not included. "
-                            "Cite the original submitters and sources (NCBI, Pathoplexus, BV-BRC); see docs/LICENSES.md."}
+                "contains_private": bool(priv), "private": priv,
+                "data_use": "metadata.tsv / sequences.fasta: open data only - the curated set is defined by INSDC (NCBI) accessions, so Pathoplexus restricted-use records are not included. "
+                            "Cite the original submitters and sources (NCBI, Pathoplexus, BV-BRC); see docs/LICENSES.md."
+                            + (" metadata-private.tsv / sequences-private.fasta hold PRIVATE genomes: do not share or publish them." if priv else "")}
     (out / "manifest.json").write_text(json.dumps(manifest, indent=2, ensure_ascii=False) + "\n", encoding="utf-8")
     if ns:
         cfg_path = ns / "build-configs" / "genomecurator" / "config.yaml"
         cfg_path.parent.mkdir(parents=True, exist_ok=True)
-        cfg = nextstrain_config(out, profile, relative_to=ns)
+        cfg = nextstrain_config(out, profile, relative_to=ns, private=bool(priv))
     else:
         cfg_path = out / "nextstrain-config.yaml"
-        cfg = nextstrain_config(out, profile)
+        cfg = nextstrain_config(out, profile, private=bool(priv))
     cfg_path.write_text(cfg, encoding="utf-8")
     con = connect()
     try:
-        db.audit(con, "export", f"{w['name']}: {len(rows)}행, 서열 {n_seq}건 -> {out} ({profile})")
+        db.audit(con, "export", f"{w['name']}: {len(rows)}행, 서열 {n_seq}건 -> {out} ({profile})" + (f", 비공개 {priv['rows']}건 포함" if priv else ""))
         con.commit()
     finally:
         con.close()
     p(100, "내보내기 완료")
     _log.info("export %r profile=%s rows=%d sequences=%d -> %s", w["name"], profile, len(rows), n_seq, out)
-    return {"dir": str(out), "rows": len(rows), "sequences": n_seq, "warnings": pv["warnings"], "config": str(cfg_path),
-            "files": ["metadata.tsv", "sequences.fasta", "manifest.json"] + ([] if ns else ["nextstrain-config.yaml"])}
+    return {"dir": str(out), "rows": len(rows), "sequences": n_seq, "private": priv["rows"] if priv else 0, "warnings": pv["warnings"], "config": str(cfg_path),
+            "files": ["metadata.tsv", "sequences.fasta", "manifest.json"] + (["metadata-private.tsv", "sequences-private.fasta"] if priv else []) + ([] if ns else ["nextstrain-config.yaml"])}
 
 
-def nextstrain_config(out: Path, profile: str = "nextstrain", relative_to: Path | None = None) -> str:
+def nextstrain_config(out: Path, profile: str = "nextstrain", relative_to: Path | None = None, private: bool = False) -> str:
     """A config *overlay* for the Nextstrain mpox workflow: only `inputs` (local files instead of data.nextstrain.org) and use_remote_files.
     The workflow's Snakefile loads its own defaults/<build>/config.yaml only when no config is given, so pass the build's defaults first."""
     def path(name: str) -> str:
@@ -392,6 +463,9 @@ def nextstrain_config(out: Path, profile: str = "nextstrain", relative_to: Path 
             f"# Inputs replace the default URLs; local paths are used as they are, nothing is downloaded.\n"
             f"{'' if relative_to else '# Absolute paths do not exist inside the Docker runtime: use --nextstrain-dir to write into the checkout, or run with --ambient/--conda.' + chr(10)}"
             f"use_remote_files: false\n"
+            + (f"# PRIVATE genomes: the workflow adds them after its filters (they skip the date / QC filters). Both files carry the `accession` column the\n"
+               f"# workflow's merge script matches on. Keep this config and the *-private.* files out of anything you publish.\n"
+               f"private_metadata: \"{path('metadata-private.tsv')}\"\nprivate_sequences: \"{path('sequences-private.fasta')}\"\n" if private else "") +
             f"inputs:\n  - name: genomecurator\n    metadata: \"{path('metadata.tsv')}\"\n    sequences: \"{path('sequences.fasta')}\"\n"
             + (f"strain_id_field: \"{idc}\"\n" if idc != "PPX_accession" else ""))
 

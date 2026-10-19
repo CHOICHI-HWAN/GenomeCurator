@@ -20,7 +20,8 @@
 5. **적용**: 점검(디스크·링크·샘플 서열) 후 반영. 거절한 것은 같은 내용이면 다시 올라오지 않습니다.
 6. **QC**(서열이 있는 유전체): 서열 통계는 모두, Nextclade는 데이터셋이 있는 바이러스만. 경고만 하며, Nextclade가 부른 clade/lineage는 소스와 다르면 *검토 화면*으로 올라옵니다(자동으로 덮어쓰지 않음).
 7. **감시**: 매일 새벽 스키마 점검으로 소스의 응답 구조가 바뀌었는지 봅니다. 헤더의 신호등(NCBI — Pathoplexus — BV-BRC)과 스키마 탭에 결과가 보입니다.
-8. **다른 프로그램에 넘기기**: *내보내기* 탭·CLI(`export`)·내부 API가 같은 id·순서의 `metadata.tsv` + `sequences.fasta` + `manifest.json`을 만듭니다(Nextstrain mpox 워크플로 형식 지원: `--nextstrain-dir`로 체크아웃에 바로 써 주며, 워크플로의 기본값 config 뒤에 overlay를 붙여 로컬 입력으로 돌립니다). 그 밖의 내보내기: 유전체 표 TSV, Superset 분석(읽기 전용), GitHub Pages용 정적 페이지(배포하기), 백업(zip).
+8. **비공개 유전체**: 공개되지 않은 로컬 유전체는 *비공개* 탭(CLI `private-check`/`private-import`)으로 공개 데이터와 분리된 저장소에 가져오고(dry-run 먼저), QC를 돌립니다. 내보내기에서 *비공개 포함*을 켜면 별도 파일로만 나갑니다.
+9. **다른 프로그램에 넘기기**: *내보내기* 탭·CLI(`export`)·내부 API가 같은 id·순서의 `metadata.tsv` + `sequences.fasta` + `manifest.json`을 만듭니다(Nextstrain mpox 워크플로 형식 지원: `--nextstrain-dir`로 체크아웃에 바로 써 주며, 워크플로의 기본값 config 뒤에 overlay를 붙여 로컬 입력으로 돌립니다). 그 밖의 내보내기: 유전체 표 TSV, Superset 분석(읽기 전용), GitHub Pages용 정적 페이지(배포하기), 백업(zip).
 
 ## 2. 서버 안에서 (작업과 기록)
 

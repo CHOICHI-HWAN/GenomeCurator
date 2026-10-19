@@ -1090,3 +1090,147 @@ def test_export_api(tmp_path, monkeypatch):
         time.sleep(0.05)
     assert j["status"] == "done" and j["result"]["rows"] == 2 and (tmp_path / "exports").exists()
     assert c.get("/api/exports").json()[0]["rows"] == 2
+
+
+def _priv_files(rows, seqs):
+    cols = ["PPX_accession", "strain", "date", "country", "division", "host", "clade"]
+    meta = "\t".join(cols) + "\n" + "".join("\t".join(r.get(c, "") for c in cols) + "\n" for r in rows)
+    return meta, "".join(f">{k}\n{v}\n" for k, v in seqs.items())
+
+
+def test_private_check_rejects_structural_problems_and_normalises(tmp_path, monkeypatch):
+    from genomecurator import private
+    _qc_env(tmp_path, monkeypatch)
+    from genomecurator.db import connect
+    con = connect()
+    con.execute("UPDATE genome SET pathoplexus_accession='PP_PUB1.1' WHERE accession='A1'")
+    con.commit()
+    con.close()
+    ok = _priv_files([{"PPX_accession": "LAB_001", "strain": "s1", "date": "2024-03", "country": "Uganda"}], {"LAB_001": "ACGT" * 30})
+    rep = private.check(1, *ok)
+    assert rep["ok"] and rep["new"] == 1 and rep["rows"][0]["date"] == "2024-03-XX" and rep["rows"][0]["region"] == "Africa" and rep["rows"][0]["length"] == "120"
+    assert any("2024-03-XX" in w for w in rep["warnings"])                       # normalisations are reported, not silent
+    cases = {
+        "duplicate id": (_priv_files([{"PPX_accession": "N1", "strain": "a", "date": "2024"}, {"PPX_accession": "N1", "strain": "b", "date": "2024"}], {"N1": "ACGT"}), "겹칩니다"),
+        "collides with a public accession": (_priv_files([{"PPX_accession": "PP_PUB1", "strain": "a", "date": "2024"}], {"PP_PUB1": "ACGT"}), "공개 데이터"),
+        "public INSDC accession": (_priv_files([{"PPX_accession": "A1", "strain": "a", "date": "2024"}], {"A1": "ACGT"}), "공개 데이터"),
+        "row without a sequence": (_priv_files([{"PPX_accession": "N2", "strain": "a", "date": "2024"}], {}), "서열이 없습니다"),
+        "sequence without a row": (_priv_files([{"PPX_accession": "N3", "strain": "a", "date": "2024"}], {"N3": "ACGT", "ORPHAN": "ACGT"}), "ORPHAN"),
+        "not nucleotides": (_priv_files([{"PPX_accession": "N4", "strain": "a", "date": "2024"}], {"N4": "ACGTEEPP"}), "뉴클레오타이드"),
+        "bad id": (_priv_files([{"PPX_accession": "a b/c", "strain": "a", "date": "2024"}], {"a": "ACGT"}), "허용되지 않는"),
+    }
+    for name, (files, needle) in cases.items():
+        r = private.check(1, *files)
+        assert not r["ok"] and any(needle in e for e in r["errors"]), (name, r["errors"])
+    assert not private.check(1, "strain\tdate\nx\t2024\n", ">x\nACGT\n")["ok"]                 # no id column
+    import pytest
+    with pytest.raises(ValueError):
+        private.import_texts(1, *cases["duplicate id"][0])                                      # errors stop the import: all or nothing
+    assert private.list_rows(1) == []
+
+
+def test_private_store_is_separate_and_exported_only_on_request(tmp_path, monkeypatch):
+    import json
+    from genomecurator import export, private, qc
+    _qc_env(tmp_path, monkeypatch)
+    from genomecurator.db import connect
+    con = connect()
+    con.execute("UPDATE genome SET pathoplexus_accession='PP_A1.1' WHERE accession='A1'")
+    con.execute("UPDATE genome SET pathoplexus_accession='PP_X2.1' WHERE accession='X2'")
+    con.commit()
+    con.close()
+    qc.dataset_update("nextstrain/mpox/all-clades")
+    files = _priv_files([{"PPX_accession": "LAB_001", "strain": "s1", "date": "2024-03-05", "country": "Uganda", "division": "Kampala", "host": "Homo sapiens"},
+                         {"PPX_accession": "LAB_002", "strain": "s2", "date": "2024", "country": "Germany", "clade": "IIb"}],
+                        {"LAB_001": "ACGT" * 50, "LAB_002": "ACGT" * 40 + "N" * 8})
+    assert private.import_texts(1, *files, source_name="batch1.tsv") == {"new": 2, "update": 0, "warnings": private.check(1, *files)["warnings"]}
+    assert private.import_texts(1, *files)["update"] == 2                                        # same ids again: updated, not duplicated
+    # nothing leaks into the public side
+    con = connect()
+    assert con.execute("SELECT COUNT(*) FROM genome WHERE accession LIKE 'LAB_%'").fetchone()[0] == 0
+    con.close()
+    assert [x["PPX_accession"] for x in export.table(1, "nextstrain")[1]] == ["PP_A1", "PP_X2"]
+    qc.run(1)
+    assert all(not k.startswith("private:") for k in qc.per_genome(1)) and qc.summary(1)["by"]["seqstats"]["good"] + qc.summary(1)["by"]["seqstats"].get("bad", 0) == 2
+    r = qc.run_private(1)
+    assert r["stats"] == 2 and r["nextclade"] == 2
+    rows = {x["id"]: x for x in private.list_rows(1)}
+    assert rows["LAB_001"]["qc_nextclade"] == "good" and rows["LAB_001"]["clade"] == "Ib" and not rows["LAB_001"]["clade_differs"]
+    assert rows["LAB_002"]["clade_differs"]                                                      # supplied IIb, Nextclade says Ib
+    # export: public files are private-free; private files only on request, separate, wired to the workflow's keys
+    out = tmp_path / "pub"
+    r1 = export.write(1, out, "nextstrain")
+    assert "private" not in " ".join(r1["files"]) and not (out / "metadata-private.tsv").exists() and "private_metadata" not in (out / "nextstrain-config.yaml").read_text(encoding="utf-8")
+    assert json.loads((out / "manifest.json").read_text(encoding="utf-8"))["contains_private"] is False
+    out2 = tmp_path / "withpriv"
+    r2 = export.write(1, out2, "nextstrain", include_private=True)
+    assert r2["private"] == 2 and "metadata-private.tsv" in r2["files"]
+    assert "LAB_" not in (out2 / "metadata.tsv").read_text(encoding="utf-8") and "LAB_" not in (out2 / "sequences.fasta").read_text(encoding="utf-8")
+    lines = (out2 / "metadata-private.tsv").read_text(encoding="utf-8").splitlines()
+    cols = lines[0].split("\t")
+    assert cols[:len(export.NEXTSTRAIN_COLUMNS)] == export.NEXTSTRAIN_COLUMNS
+    prow = [dict(zip(cols, ln.split("\t"))) for ln in lines[1:]]
+    assert [p["accession"] for p in prow] == [p["PPX_accession"] for p in prow] == ["LAB_001", "LAB_002"]    # the column the workflow's merge script matches on
+    assert prow[0]["date"] == "2024-03-05" and prow[0]["region"] == "Africa" and prow[0]["dataUseTerms"] == "PRIVATE" and prow[0]["QC_rare_mutations"] == "good"
+    assert prow[1]["clade"] == "IIb" and prow[1]["date"] == "2024-XX-XX"                         # the supplied clade stays; the mismatch is shown in the private tab
+    assert [ln[1:] for ln in (out2 / "sequences-private.fasta").read_text(encoding="utf-8").splitlines() if ln.startswith(">")] == ["LAB_001", "LAB_002"]
+    cfg = (out2 / "nextstrain-config.yaml").read_text(encoding="utf-8")
+    assert 'private_metadata: "' in cfg and 'private_sequences: "' in cfg and "use_remote_files: false" in cfg
+    assert "*private*" in (out2 / ".gitignore").read_text(encoding="utf-8") and (out2 / "PRIVATE_DATA.txt").exists()
+    mf = json.loads((out2 / "manifest.json").read_text(encoding="utf-8"))
+    assert mf["contains_private"] and mf["private"]["rows"] == 2 and mf["private"]["files"]["metadata-private.tsv"]["sha256"]
+    assert export.preview(1, "nextstrain", include_private=True)["private"] == 2 and export.preview(1, "nextstrain")["private"] == 0
+    assert private.delete(1, "LAB_001") and [x["id"] for x in private.list_rows(1)] == ["LAB_002"] and not private.delete(1, "LAB_001")
+    import sqlite3
+    c = sqlite3.connect(str(tmp_path / "g.db"))
+    assert c.execute("SELECT COUNT(*) FROM qc_result WHERE accession='private:LAB_001'").fetchone()[0] == 0
+    assert "private_genome" not in __import__("genomecurator.backup", fromlist=["x"]).KEEP_TABLES              # not in a general backup
+
+
+def test_private_api(tmp_path, monkeypatch):
+    import time
+    from fastapi.testclient import TestClient
+    from genomecurator import web
+    _qc_env(tmp_path, monkeypatch)
+    c = TestClient(web.create_app(scheduler=False))
+    mt, fa = _priv_files([{"PPX_accession": "LAB_9", "strain": "s", "date": "2024-01-02", "country": "Brazil"}], {"LAB_9": "ACGT" * 20})
+    bad = _priv_files([{"PPX_accession": "LAB_9", "strain": "s", "date": "2024"}], {})
+    assert c.get("/private").status_code == 200
+    r = c.post("/api/private/1/check", files={"metadata": ("m.tsv", bad[0]), "fasta": ("f.fa", bad[1])}).json()
+    assert r["ok"] is False and r["errors"]
+    r = c.post("/api/private/1/check", files={"metadata": ("m.tsv", mt), "fasta": ("f.fa", fa)}).json()
+    assert r["ok"] and r["new"] == 1
+    assert c.get("/api/private/1").json() == []                                                 # a check stores nothing
+    assert c.post("/api/private/1/import", files={"metadata": ("m.tsv", bad[0]), "fasta": ("f.fa", bad[1])}).status_code == 400
+    assert c.post("/api/private/1/import", files={"metadata": ("m.tsv", mt), "fasta": ("f.fa", fa)}).json()["new"] == 1
+    assert [x["id"] for x in c.get("/api/private/1").json()] == ["LAB_9"] and "LAB_9" in c.get("/private?watch=1").text
+    assert c.post("/api/private/1/check").status_code == 400 and c.post("/api/private/99/check", files={"metadata": ("m", mt), "fasta": ("f", fa)}).status_code == 404
+    jid = c.post("/api/private/1/qc").json()["job"]
+    for _ in range(100):
+        j = c.get(f"/api/job/{jid}").json()
+        if j["done"]:
+            break
+        time.sleep(0.05)
+    assert j["status"] == "done" and j["result"]["stats"] == 1
+    assert c.get("/api/export/1/preview?include_private=1").json()["private"] == 1 and c.get("/api/export/1/preview").json()["private"] == 0
+    assert c.delete("/api/private/1/LAB_9").json() == {"deleted": True}
+
+
+def test_backup_keeps_private_data_out_unless_asked(tmp_path, monkeypatch):
+    import zipfile
+    from genomecurator import backup, config, private
+    src = tmp_path / "src"
+    src.mkdir()
+    _qc_env(src, monkeypatch)
+    private.import_texts(1, *_priv_files([{"PPX_accession": "LAB_B1", "strain": "s", "date": "2024-01-02", "country": "Uganda"}], {"LAB_B1": "ACGT" * 25}))
+    plain = backup.export_backup(tmp_path / "plain.zip")
+    assert plain["contains_private"] is False and "private_genome" not in plain["tables"]
+    assert not [n for n in zipfile.ZipFile(tmp_path / "plain.zip").namelist() if n.startswith("private/")]
+    full = backup.export_backup(tmp_path / "full.zip", with_private=True)
+    assert full["contains_private"] is True and full["tables"]["private_genome"] == 1 and full["private_files"] == 1
+    dst = tmp_path / "dst"
+    dst.mkdir()
+    monkeypatch.setattr(config, "DATA_DIR", dst)
+    monkeypatch.setattr(config, "DB_PATH", dst / "g.db")
+    backup.restore_backup(tmp_path / "full.zip")
+    assert [r["id"] for r in private.list_rows(1)] == ["LAB_B1"] and (dst / "private" / "Mpox" / "LAB_B1.fna").exists()

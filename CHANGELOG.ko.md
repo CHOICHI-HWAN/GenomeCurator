@@ -12,6 +12,9 @@ Virus Genome Metadata Curator(패키지 `genomecurator`, 이전 표시 이름 "G
 ## [Unreleased]
 
 ### 추가
+- **최종 분석용 데이터세트를 위한 비공개 저장소**: 공개되지 않은 로컬 유전체를 Nextstrain 형식의 메타데이터 TSV + FASTA에서 가져옵니다(`private-check` 시험 실행 후 `private-import`, 또는 **비공개** 탭). 공개 세트와 **분리된 저장소**라서 유전체 표, 공개 페이지, Superset 뷰, TSV 다운로드, `check`, 일반 백업에 나타나지 않습니다. 구조 문제(id 누락·중복, 공개 accession과 충돌하는 id, 서열 없는 행, 행 없는 서열, 뉴클레오타이드가 아닌 문자)는 가져오기를 멈추는 오류이고, 날짜·대륙·길이는 맞춰서 알려 줍니다. QC(서열 통계, Nextclade)도 돌며(`qc <바이러스> --private`), 직접 입력한 clade가 Nextclade와 다르면 표시합니다.
+- `export --with-private`(또는 내보내기 탭의 *비공개 포함*)는 비공개 유전체를 **별도 파일**(`metadata-private.tsv`, `sequences-private.fasta`)로 내보내 Nextstrain mpox 워크플로 자체의 `private_metadata` / `private_sequences`에 연결합니다. 공개 파일에는 비공개가 섞이지 않고, manifest에 `contains_private`가 적히며, 폴더에 `.gitignore`와 안내 파일이 생깁니다. 또 모든 메타데이터 파일에 id와 같은 `accession` 열을 넣었습니다: 워크플로의 비공개 병합 스크립트(`combine_data_sources.py`)가 아직 그 이름으로 행을 맞추기 때문에, 현재의 PPX 기반 메타데이터에서는 이 열이 없으면 "metadata file missing 'accession'"으로 실패합니다(확인함. 열이 있으면 수정 없는 스크립트가 공개+비공개를 합칩니다).
+- `backup --with-private`는 비공개 저장소도 담습니다(일반 백업은 공유할 수 있도록 일부러 뺍니다).
 - **다른 프로그램에 넘기는 내보내기 탭·CLI·API**: 같은 id·같은 순서의 `metadata.tsv` + `sequences.fasta`, 그리고 `manifest.json`(건수, 경고, 두 파일의 SHA-256, Nextclade 데이터셋 버전, 데이터 이용 안내)과 바로 쓸 수 있는 `nextstrain-config.yaml`. **nextstrain** 형식은 Nextstrain mpox 워크플로가 읽는 열(id는 `PPX_accession` — 워크플로가 포함·제외 목록을 PPX accession으로 바꿔 쓰기 때문이며, 없는 유전체는 빠지고 알려 줍니다; `2023-XX-XX` 날짜, region/country/division/location, host, clade/lineage/outbreak, 기본 필터가 쓰는 Nextclade `QC_*` 열)에 맞추고, `--nextstrain-dir <체크아웃>/phylogenetic`을 주면 파일과 설정 덮어쓰기(overlay)를 nextstrain/mpox 체크아웃 안에 상대 경로로 바로 써 줍니다(Docker 런타임에서도 동작). overlay는 `use_remote_files: false`로 `inputs`만 바꾸므로 빌드의 `defaults/<build>/config.yaml` 뒤에 붙여 씁니다. 그 저장소로 확인한 것: `map_accessions.py`, 기본 쿼리의 `augur filter`, `filter`까지의 Snakemake 규칙이 내보낸 데이터로 실행되었고 전체 DAG 드라이런도 원격 입력 없이 풀립니다, **plain**은 큐레이션된 모든 열을 줍니다. 필터: 최소 길이, 완성도, QC 불량·오류 제외, clade, 서열 유무. `python -m genomecurator export <바이러스>`, `GET /api/export/{virus}/metadata.tsv|sequences.fasta|preview`, `POST /api/export/{virus}/build`, `GET /api/exports`. 공개(Open) 데이터만 나갑니다.
 - `python -m genomecurator qc <바이러스> [--force]`. Nextclade 결과가 Nextstrain 워크플로에서 쓰는 이름의 QC 열도 함께 저장합니다(이전에 만든 결과는 QC를 한 번 다시 실행하면 채워집니다).
 - **QC 탭(서열 QC)**: 저장된 모든 유전체의 서열 통계(길이, N·모호 염기 비율, GC, 기록된 길이와의 일치)와, Nextclade 데이터셋이 있는 바이러스(mpox, 에볼라 종들, 홍역, 뎅기, 웨스트나일, 풍진, VZV, hMPV; `GC_NEXTCLADE_DATASETS`로 추가)는 **Nextclade**(clade, lineage, 자체 품질 점수). 경고만 합니다. 결과는 새 테이블 `qc_result`에 저장되는 파생 데이터입니다.
@@ -36,6 +39,7 @@ Virus Genome Metadata Curator(패키지 `genomecurator`, 이전 표시 이름 "G
 - 동시에 DB 연결이 열릴 때 `view v_genome_analysis already exists` 오류가 날 수 있었습니다. 분석 뷰는 정의가 바뀐 때만 한 트랜잭션으로 다시 만듭니다.
 
 ### 데이터·호환성
+- 새 테이블 `private_genome`(자동 생성, 일반 백업에는 포함되지 않으며 `backup --with-private` 사용). 비공개 유전체의 서열은 `data/private/<바이러스>/`에 있습니다. 스키마 버전은 1 그대로입니다.
 - 새 파생 테이블 `qc_result`(자동 생성, 백업에 포함되지 않으며 QC 탭에서 다시 계산). 스키마 버전은 1 그대로입니다.
 - 새 운영용 테이블 `job`(자동 생성, 백업에는 포함되지 않음). 스키마 버전은 1 그대로입니다.
 

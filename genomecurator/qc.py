@@ -336,6 +336,69 @@ def run(watch_id: int, progress=None, force: bool = False) -> dict:
     return summary
 
 
+def run_private(watch_id: int, progress=None, force: bool = False) -> dict:
+    """The same QC for the private store (accession `private:<id>`): sequence statistics, and Nextclade when the virus has a dataset."""
+    p = progress or (lambda *a: None)
+    con = connect()
+    try:
+        w = con.execute("SELECT * FROM watchlist WHERE id=?", (watch_id,)).fetchone()
+        if not w:
+            raise ValueError("바이러스를 찾을 수 없습니다.")
+        rows = [dict(r) for r in con.execute("SELECT id, file_path, seq_md5 md5, length FROM private_genome WHERE watch_id=?", (watch_id,))]
+        have = {(r[0], r[1]): (r[2], r[3], r[4]) for r in con.execute(
+            "SELECT accession, tool, seq_md5, version, dataset_tag FROM qc_result WHERE watch_id=? AND accession LIKE 'private:%'", (watch_id,))}
+    finally:
+        con.close()
+    todo = [(r, config.data_path(r["file_path"])) for r in rows if r["file_path"] and config.data_path(r["file_path"]).exists()]
+    ds, ver = dataset_for(w["taxon"]), nextclade_version()
+    tag = local_tag(ds) if ds else None
+    use_nc = bool(ds and ver and tag)
+    summary = {"virus": w["name"], "sequences": len(todo), "stats": 0, "nextclade": 0, "skipped": 0, "dataset": ds if use_nc else None, "notes": []}
+    if ds and not use_nc:
+        summary["notes"].append("Nextclade 데이터셋이 없거나 Nextclade가 설치되어 있지 않아 서열 통계만 했습니다 (QC 탭에서 데이터셋 업데이트).")
+    elif not ds:
+        summary["notes"].append("이 바이러스에는 연결된 Nextclade 데이터셋이 없어 서열 통계만 했습니다.")
+    con = connect()
+    try:
+        for i, (r, f) in enumerate(todo):
+            acc = f"private:{r['id']}"
+            if not force and have.get((acc, "seqstats"), (None,))[0] == r["md5"]:
+                summary["skipped"] += 1
+                continue
+            try:
+                res = seqstats(f, r["length"])
+            except Exception as e:
+                res = {"status": "error", "score": None, "metrics": {}, "reasons": [f"서열을 읽지 못했습니다: {e}"]}
+            _store(con, acc, "seqstats", watch_id, res, "builtin", None, None, r["md5"])
+            summary["stats"] += 1
+        con.commit()
+    finally:
+        con.close()
+    if use_nc:
+        pend = [(r, f) for r, f in todo if force or have.get((f"private:{r['id']}", "nextclade"), (None, None, None)) != (r["md5"], ver, tag)]
+        for k in range(0, len(pend), BATCH):
+            chunk = pend[k:k + BATCH]
+            p(40 + 55 * k / max(1, len(pend)), f"Nextclade(비공개) {k:,}/{len(pend):,}")
+            res = _run_nextclade(dataset_dir(ds), [(f"private:{r['id']}".replace(":", "__"), f) for r, f in chunk])
+            con = connect()
+            try:
+                for r, _ in chunk:
+                    x = res.get(f"private:{r['id']}".replace(":", "__")) or {"status": "error", "score": None, "error": "결과에 없음(정렬 실패)", "metrics": {}}
+                    _store(con, f"private:{r['id']}", "nextclade", watch_id, x, ver, ds, tag, r["md5"])
+                    summary["nextclade"] += 1
+                con.commit()
+            finally:
+                con.close()
+    con = connect()
+    try:
+        audit(con, "qc", f"{w['name']} (비공개): 통계 {summary['stats']}건, Nextclade {summary['nextclade']}건")
+        con.commit()
+    finally:
+        con.close()
+    p(98, "비공개 QC 완료")
+    return summary
+
+
 # ------------------------------------------------------------------------------------------------ reading results
 def nextclade_source(watch_id: int, con=None) -> dict[str, dict]:
     """{accession: {clade, lineage}} of the current Nextclade results, for use as one more source in curate.check.
@@ -360,13 +423,13 @@ def summary(watch_id: int | None = None) -> dict:
     """Counts for the QC page: per tool and status, plus the worst genomes."""
     con = connect()
     try:
-        q = "SELECT tool, status, COUNT(*) n FROM qc_result" + (" WHERE watch_id=?" if watch_id else "") + " GROUP BY tool, status"
+        q = "SELECT tool, status, COUNT(*) n FROM qc_result WHERE accession NOT LIKE 'private:%'" + (" AND watch_id=?" if watch_id else "") + " GROUP BY tool, status"
         by = {}
         for r in con.execute(q, (watch_id,) if watch_id else ()):
             by.setdefault(r["tool"], {})[r["status"]] = r["n"]
         w = " AND q.watch_id=?" if watch_id else ""
         worst = [dict(r) for r in con.execute(
-            "SELECT q.accession, q.tool, q.status, q.score, q.metrics_json, q.watch_id FROM qc_result q WHERE q.status IN ('bad','error','mediocre')" + w +
+            "SELECT q.accession, q.tool, q.status, q.score, q.metrics_json, q.watch_id FROM qc_result q WHERE q.status IN ('bad','error','mediocre') AND q.accession NOT LIKE 'private:%'" + w +
             " ORDER BY CASE q.status WHEN 'error' THEN 0 WHEN 'bad' THEN 1 ELSE 2 END, q.score DESC LIMIT 60", (watch_id,) if watch_id else ())]
         for x in worst:
             m = json.loads(x.pop("metrics_json") or "{}")
@@ -386,7 +449,7 @@ def per_genome(watch_id: int) -> dict[str, dict]:
     con = connect()
     try:
         out: dict[str, dict] = {}
-        for r in con.execute("SELECT accession, tool, status, clade, lineage FROM qc_result WHERE watch_id=?", (watch_id,)):
+        for r in con.execute("SELECT accession, tool, status, clade, lineage FROM qc_result WHERE watch_id=? AND accession NOT LIKE 'private:%'", (watch_id,)):
             d = out.setdefault(r["accession"], {"qc": "good"})
             if RANK[r["status"]] > RANK[d["qc"]]:
                 d["qc"] = r["status"]

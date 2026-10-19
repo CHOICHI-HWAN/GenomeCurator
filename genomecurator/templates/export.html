@@ -14,6 +14,7 @@ region/country/division, host, clade/lineage/outbreak, Nextclade QC 열)을 맞�
   <span>완성도: <label><input type="checkbox" class="cp" value="Complete" checked> Complete</label> <label><input type="checkbox" class="cp" value="Near complete" checked> Near complete</label> <label><input type="checkbox" class="cp" value="Partial" checked> Partial</label></span>
   <span>QC 불량 제외: <label><input type="checkbox" id="qb"> bad</label> <label><input type="checkbox" id="qe"> error</label></span>
   <label title="끄면 서열 파일이 없는 유전체도 메타데이터에 넣습니다 (FASTA에는 서열이 있는 것만 들어갑니다)"><input type="checkbox" id="rs" checked> 서열이 있는 것만</label>
+  <label title="비공개 저장소의 유전체를 별도 파일(metadata-private.tsv, sequences-private.fasta)로 함께 내보냅니다. 이 폴더는 외부에 공유하지 마세요." style="color:var(--warn)"><input type="checkbox" id="ip"> 비공개 포함 (별도 파일)</label>
  </div>
  <div id="pv" style="margin:10px 0" class="mut">불러오는 중…</div>
  <div style="display:flex;gap:8px;flex-wrap:wrap">
@@ -50,15 +51,15 @@ const q=()=>{const p=new URLSearchParams({profile:document.getElementById('pf').
  const ml=document.getElementById('ml').value,cl=document.getElementById('cl').value.trim();if(ml)p.set('min_length',ml);if(cl)p.set('clade',cl);
  const cp=[...document.querySelectorAll('.cp:checked')].map(x=>x.value);if(cp.length&&cp.length<3)p.set('completeness',cp.join(','));
  const qn=[];if(document.getElementById('qb').checked)qn.push('bad');if(document.getElementById('qe').checked)qn.push('error');if(qn.length)p.set('qc_not',qn.join(','));
- if(!document.getElementById('rs').checked)p.set('require_sequence','0');return p.toString()};
+ if(!document.getElementById('rs').checked)p.set('require_sequence','0');if(document.getElementById('ip').checked)p.set('include_private','1');return p.toString()};
 async function refresh(){const w=document.getElementById('w').value;if(!w)return;const s=q();
  document.getElementById('dm').href='/api/export/'+w+'/metadata.tsv?'+s;document.getElementById('df').href='/api/export/'+w+'/sequences.fasta?'+s;
  const pv=document.getElementById('pv');pv.textContent='계산 중…';
  try{const r=await (await fetch('/api/export/'+w+'/preview?'+s)).json();
   if(r.error){pv.textContent=r.error;return}
-  pv.innerHTML='전체 유전체 '+r.genomes.toLocaleString()+'건 중 <b>'+r.selected.toLocaleString()+'건</b>이 나갑니다.'+(r.warnings.length?'<ul style="margin:6px 0 0 18px;color:var(--warn)">'+r.warnings.map(x=>'<li>'+x.replace(/[&<>]/g,c=>({"&":"&amp;","<":"&lt;",">":"&gt;"}[c]))+'</li>').join('')+'</ul>':'')}
+  pv.innerHTML='전체 유전체 '+r.genomes.toLocaleString()+'건 중 <b>'+r.selected.toLocaleString()+'건</b>이 나갑니다.'+(r.private?' 비공개 <b>'+r.private.toLocaleString()+'건</b>은 별도 파일로.':'')+(r.warnings.length?'<ul style="margin:6px 0 0 18px;color:var(--warn)">'+r.warnings.map(x=>'<li>'+x.replace(/[&<>]/g,c=>({"&":"&amp;","<":"&lt;",">":"&gt;"}[c]))+'</li>').join('')+'</ul>':'')}
  catch(e){pv.textContent='미리보기 실패: '+e}}
 function build(){const w=document.getElementById('w').value,f=document.getElementById('bf');f.action='/api/export/'+w+'/build?'+q();runJob(f)}
-document.querySelectorAll('#w,#pf,#ml,#cl,.cp,#qb,#qe,#rs').forEach(x=>x.addEventListener('change',refresh));refresh();
+document.querySelectorAll('#w,#pf,#ml,#cl,.cp,#qb,#qe,#rs,#ip').forEach(x=>x.addEventListener('change',refresh));refresh();
 </script>
 {% endblock %}

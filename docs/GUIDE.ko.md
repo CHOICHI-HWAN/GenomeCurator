@@ -255,6 +255,22 @@ FASTA 실제 길이·md5가 기록과 맞는지, 날짜가 미래가 아닌지, 
   * 파일은 체크아웃의 `data/genomecurator/`에, 설정은 `build-configs/genomecurator/config.yaml`에 상대 경로로 써집니다. `--nextstrain-dir` 없이 `--out`을 쓰면 절대 경로라 Docker 런타임(`nextstrain build --docker`)에서는 파일이 보이지 않으니 `--ambient`/`--conda`로 돌리세요.
 * 확인한 것: 위 내보내기로 만든 파일에 Nextstrain mpox 저장소의 `scripts/map_accessions.py`(실제 `exclude.txt`), `augur filter`(기본 쿼리), Snakemake의 `decompress`·`map_accessions`·`filter` 규칙을 실제로 돌렸고, 전체 DAG(19단계)가 원격 입력 없이 풀리는 것까지 봤습니다. 정렬·트리 구축(`align`~`export`)은 서열이 충분해야 의미가 있어 돌려 보지 않았습니다. 워크플로 설정이 바뀌면 열이 달라질 수 있습니다.
 
+### 8. 비공개 유전체와 최종 분석용 데이터세트 (private)
+
+목표: 공개 데이터(위의 큐레이션 세트)와 **로컬 비공개 유전체**를 합친 분석용 데이터세트를 만들어 Nextstrain에서 돌리는 것입니다. 이 도구는 분석을 돌리지 않고 *데이터세트를 준비*합니다.
+
+* **분리 보관**: 비공개 유전체는 `genome` 표가 아니라 별도 저장소(`private_genome` 표 + `data/private/<바이러스>/`)에 둡니다. 큐레이션 세트는 NCBI accession으로 정해지므로 `genome`에 넣으면 다음 *지금 확인*에서 "NCBI에서 사라짐"이 되고, 공개 페이지·Superset·TSV 다운로드·백업에도 섞이기 때문입니다. 분리해 두면 그 어느 것에도 나타나지 않습니다.
+* **가져오기**(**비공개** 탭 또는 CLI): Nextstrain에 준하는 메타데이터 TSV(id 열 `PPX_accession` 또는 `accession`, 그리고 `strain`, `date`, `country`, `division`, `location`, `host`, `clade` …)와 헤더가 그 id인 FASTA. 먼저 **검사(dry-run)**: 구조 오류(id 누락·중복·공개 accession과 충돌·서열 없는 행·행 없는 서열·서열 문자 오류)는 가져오기를 막고, 날짜(`2024-03` → `2024-03-XX`)·대륙(국가에서)·길이(서열에서)는 맞추고 경고로 알립니다. 같은 id를 다시 가져오면 갱신합니다.
+  ```bash
+  python -m genomecurator private-check  "Orthopoxvirus monkeypox" --metadata my.tsv --fasta my.fa
+  python -m genomecurator private-import "Orthopoxvirus monkeypox" --metadata my.tsv --fasta my.fa
+  python -m genomecurator qc "Orthopoxvirus monkeypox" --private        # 서열 통계 + Nextclade
+  ```
+* **QC**: 공개 유전체와 같은 서열 통계·Nextclade. Nextclade가 부른 clade/lineage/outbreak와 QC 열이 비어 있는 칸을 채우고, 직접 입력한 clade가 Nextclade와 다르면 비공개 탭에 ⚠로 표시합니다(덮어쓰지 않음).
+* **내보내기**: `export --with-private`(탭의 *비공개 포함*). 공개 파일(`metadata.tsv`, `sequences.fasta`)에는 **비공개가 섞이지 않고**, 비공개는 **별도 파일**(`metadata-private.tsv`, `sequences-private.fasta`)로 나가 설정 overlay의 `private_metadata` / `private_sequences`에 연결됩니다. 워크플로가 이를 공개 데이터 필터 *뒤에* 붙이므로 비공개 행은 날짜·QC 필터를 받지 않습니다(`source_private` 열로 구분되어 Auspice에서 색을 입힐 수 있습니다). manifest에 `contains_private`, 폴더에 `.gitignore`(`*private*`)와 `PRIVATE_DATA.txt`가 생깁니다. 이 폴더는 공유하지 마세요.
+* **`accession` 열**: 워크플로의 병합 스크립트(`combine_data_sources.py`)가 아직 `accession` 열로 행을 맞춰서, 현재의 PPX 기반 메타데이터에서는 이 열이 없으면 `metadata file missing 'accession'`으로 실패합니다(확인함). 내보내기는 공개·비공개 파일 모두에 id와 같은 `accession` 열을 넣어 이를 피합니다. 수정 없는 스크립트로 공개 7 + 비공개 3행이 병합되는 것까지 확인했습니다.
+* **백업**: 일반 백업(`backup`)에는 비공개가 **들어가지 않습니다**(백업 파일을 공유할 수 있도록). 비공개까지 지키려면 `backup --with-private`를 쓰고, 그 파일은 비공개 데이터와 똑같이 다루세요.
+
 ## 명령어 모음 (Cheat sheet)
 
 | 명령 | 설명 |

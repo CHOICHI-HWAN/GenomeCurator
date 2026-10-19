@@ -6,7 +6,7 @@ from fastapi import FastAPI, Form, Request
 from fastapi.responses import HTMLResponse, JSONResponse, RedirectResponse, Response, StreamingResponse
 from fastapi.templating import Jinja2Templates
 
-from . import __version__, analysis, completeness, export, qc, config, curate, jobs, log
+from . import __version__, analysis, completeness, export, private, qc, config, curate, jobs, log
 from .db import audit_now, connect
 
 _log = log.get("web")
@@ -484,7 +484,7 @@ def create_app(scheduler: bool = True) -> FastAPI:
         if not _export_watch(watch):
             return JSONResponse({"error": "unknown virus"}, 404)
         try:
-            return export.preview(watch, profile, **_xf(request))
+            return export.preview(watch, profile, include_private=request.query_params.get("include_private") in ("1", "true"), **_xf(request))
         except ValueError as e:
             return JSONResponse({"error": str(e)}, 400)
 
@@ -525,7 +525,68 @@ def create_app(scheduler: bool = True) -> FastAPI:
         if profile not in export.PROFILES:
             return JSONResponse({"error": "unknown profile"}, 400)
         flt = _xf(request)
-        return start_job(lambda p: {"redirect": "/export", "result": export.write(watch, None, profile, p, **flt)}, f"내보내기 · {w['name']} ({profile})", "export")
+        inc = request.query_params.get("include_private") in ("1", "true")
+        return start_job(lambda p: {"redirect": "/export", "result": export.write(watch, None, profile, p, include_private=inc, **flt)},
+                         f"내보내기 · {w['name']} ({profile})" + (" + 비공개" if inc else ""), "export")
+
+    # ------------------------------------------------------------------------------------------------ private store
+    @app.get("/private")
+    def private_page(request: Request, watch: int = 0):
+        watches = _rows("SELECT id, name FROM watchlist ORDER BY name")
+        wid = watch or (watches[0]["id"] if watches else 0)
+        return render(request, "private.html", nav="priv", watches=watches, wid=wid, rows=private.list_rows(wid) if wid else [])
+
+    async def _private_files(request: Request):
+        form = await request.form()
+        m, f = form.get("metadata"), form.get("fasta")
+        if m is None or f is None or not hasattr(m, "read"):
+            return None, None, ""
+        return (await m.read()).decode("utf-8", "replace"), (await f.read()).decode("utf-8", "replace"), getattr(m, "filename", "") or ""
+
+    @app.post("/api/private/{watch}/check")
+    async def api_private_check(request: Request, watch: int):
+        """Dry run of an import: multipart fields `metadata` (TSV) and `fasta`. Nothing is stored."""
+        if not _same_origin(request):
+            return JSONResponse({"error": "cross-site request refused"}, 403)
+        mt, fa, _ = await _private_files(request)
+        if mt is None:
+            return JSONResponse({"error": "metadata와 fasta 파일이 필요합니다."}, 400)
+        try:
+            rep = private.check(watch, mt, fa)
+        except ValueError as e:
+            return JSONResponse({"error": str(e)}, 404)
+        return {k: rep[k] for k in ("ok", "n", "new", "update", "id_column", "errors", "warnings")}
+
+    @app.post("/api/private/{watch}/import")
+    async def api_private_import(request: Request, watch: int):
+        if not _same_origin(request):
+            return JSONResponse({"error": "cross-site request refused"}, 403)
+        mt, fa, name = await _private_files(request)
+        if mt is None:
+            return JSONResponse({"error": "metadata와 fasta 파일이 필요합니다."}, 400)
+        try:
+            return private.import_texts(watch, mt, fa, name)
+        except ValueError as e:
+            return JSONResponse({"error": str(e)}, 400)
+
+    @app.get("/api/private/{watch}")
+    def api_private_list(watch: int):
+        return private.list_rows(watch)
+
+    @app.delete("/api/private/{watch}/{pid}")
+    def api_private_delete(request: Request, watch: int, pid: str):
+        if not _same_origin(request):
+            return JSONResponse({"error": "cross-site request refused"}, 403)
+        return {"deleted": private.delete(watch, pid)}
+
+    @app.post("/api/private/{watch}/qc")
+    def api_private_qc(request: Request, watch: int, force: int = 0):
+        if not _same_origin(request):
+            return JSONResponse({"error": "cross-site request refused"}, 403)
+        w = _rows("SELECT name FROM watchlist WHERE id=?", watch)
+        if not w:
+            return JSONResponse({"error": "unknown virus"}, 404)
+        return start_job(lambda p: {"redirect": f"/private?watch={watch}", "result": qc.run_private(watch, p, bool(force))}, f"비공개 QC · {w[0]['name']}", "private")
 
     @app.get("/api/exports")
     def api_exports(virus: str = ""):

@@ -45,6 +45,9 @@ GitHub Actions(`checkout`, `setup-python`, `setup-miniconda`, `setup-qemu`, `set
 | **ICTV** | 사이트 푸터에 CC BY 4.0 표기(VMR은 Zenodo 기록 확인). | 이름 확인용으로 EBI OLS4를 호출할 뿐 데이터를 저장·재배포하지 않음. | 필요 없음(논문에서 쓰면 인용). |
 | **Nextclade 데이터셋** | 데이터셋 파일에 라이선스가 없음. Nextstrain 매뉴얼은 데이터 제공자가 공개했더라도 자유 이용 허가는 아니니 인용하라고 안내(예: mpox). | 저장소에 포함하지 않고 앱이 내려받음. 공개 페이지에는 Nextclade 결과를 싣지 않음. | 논문·발표에서 쓸 때 Nextclade와 데이터셋 저자를 인용(Aksamentov et al., *JOSS* 2021, doi:10.21105/joss.03773). |
 
+### 비공개 데이터 (사용자 소유)
+`비공개` 저장소의 유전체는 이 도구의 공개 경로(공개 페이지 배포, Superset 뷰, TSV 다운로드, 일반 백업)에 들어가지 않도록 `genome` 표와 분리되어 있습니다. 내보내기에서 *비공개 포함*을 켠 폴더와 `backup --with-private`로 만든 백업에만 들어가며, 이 둘은 공유·커밋하면 안 됩니다(내보내기 폴더에는 `.gitignore`와 안내 파일이 자동으로 생깁니다).
+
 ## 3. 공개(GitHub Pages) 전 점검표 / Before publishing
 
 - [x] 코드는 MIT, 저장소에 비밀값 없음 (`data/`, `superset/home/` 제외; 추적 파일·이력에서 토큰·키 패턴 검색 결과 없음).

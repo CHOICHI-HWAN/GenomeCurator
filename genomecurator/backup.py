@@ -18,7 +18,7 @@ KEEP_TABLES = ["watchlist", "genome", "genome_sequence", "field_provenance", "ge
 VERSION = 1
 
 
-def _compact_db(dest: Path) -> dict:
+def _compact_db(dest: Path, with_private: bool = False) -> dict:
     """Write a compact copy of the live database to `dest` and return per-table row counts."""
     if dest.exists():
         dest.unlink()
@@ -27,7 +27,7 @@ def _compact_db(dest: Path) -> dict:
     db.migrate(out)
     out.execute("ATTACH DATABASE ? AS src", (str(config.DB_PATH),))
     counts = {}
-    for t in KEEP_TABLES:
+    for t in KEEP_TABLES + ((["private_genome"]) if with_private else []):
         cols = [r[1] for r in out.execute(f"PRAGMA main.table_info({t})")]
         have = {r[1] for r in out.execute(f"PRAGMA src.table_info({t})")}
         sel = ",".join(c if c in have else "NULL" for c in cols)
@@ -45,20 +45,26 @@ def _compact_db(dest: Path) -> dict:
     return counts
 
 
-def export_backup(dest: str | Path) -> dict:
+def export_backup(dest: str | Path, with_private: bool = False) -> dict:
+    """with_private also stores the private store (table + data/private/ files). A general backup leaves it out on purpose, so a backup file
+    can be shared; a backup that contains private genomes must be treated like the private data itself."""
     dest = Path(dest)
     dest.parent.mkdir(parents=True, exist_ok=True)
     with tempfile.TemporaryDirectory() as tmp:
         compact = Path(tmp) / "genomecurator.db"
-        counts = _compact_db(compact)
+        counts = _compact_db(compact, with_private)
         fasta = sorted((config.DATA_DIR / "genomes").rglob("*.fna")) if (config.DATA_DIR / "genomes").exists() else []
         with zipfile.ZipFile(dest, "w", zipfile.ZIP_DEFLATED, compresslevel=9) as z:
             z.write(compact, "genomecurator.db")
+            priv = sorted((config.DATA_DIR / "private").rglob("*.fna")) if with_private and (config.DATA_DIR / "private").exists() else []
+            for f in priv:
+                z.write(f, "private/" + f.relative_to(config.DATA_DIR / "private").as_posix())
             for f in fasta:
                 z.write(f, "genomes/" + f.relative_to(config.DATA_DIR / "genomes").as_posix())
             from . import DB_SCHEMA_VERSION, __version__
             manifest = {"format": "genomecurator-backup", "version": VERSION, "app_version": __version__, "db_schema_version": DB_SCHEMA_VERSION,
-                        "created": datetime.now().isoformat(timespec="seconds"), "platform": sys.platform, "tables": counts, "fasta_files": len(fasta)}
+                        "created": datetime.now().isoformat(timespec="seconds"), "platform": sys.platform, "tables": counts, "fasta_files": len(fasta),
+                        "contains_private": bool(with_private), "private_files": len(priv)}
             z.writestr("manifest.json", json.dumps(manifest, ensure_ascii=False, indent=2))
     return {**manifest, "path": str(dest), "size_mb": round(dest.stat().st_size / 1e6, 1)}
 
@@ -91,6 +97,14 @@ def restore_backup(src: str | Path, force: bool = False) -> dict:
                     except PermissionError:
                         raise RuntimeError("데이터베이스가 사용 중입니다. 실행 중인 Virus Genome Curator 앱을 종료한 뒤 다시 시도하세요.") from None
                 with z.open(name) as fh, open(config.DB_PATH, "wb") as out:
+                    out.write(fh.read())
+            elif name.startswith("private/") and name.endswith(".fna"):
+                proot = (config.DATA_DIR / "private").resolve()
+                target = (config.DATA_DIR / name).resolve()
+                if proot not in target.parents:
+                    continue
+                target.parent.mkdir(parents=True, exist_ok=True)
+                with z.open(name) as fh, open(target, "wb") as out:
                     out.write(fh.read())
             elif name.startswith("genomes/") and name.endswith(".fna"):
                 target = (config.DATA_DIR / name).resolve()

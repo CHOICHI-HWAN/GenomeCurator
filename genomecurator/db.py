@@ -62,6 +62,10 @@ CREATE TABLE IF NOT EXISTS job(
   id TEXT PRIMARY KEY, kind TEXT, label TEXT, status TEXT,  -- running|done|error|interrupted
   pct REAL DEFAULT 0, msg TEXT, started TEXT, finished TEXT, error TEXT, redirect TEXT, log_json TEXT, result_json TEXT);
 CREATE INDEX IF NOT EXISTS ix_job_started ON job(started);
+-- the private store (private.py): local, unpublished genomes of a virus; never part of `genome` (public page, Superset, backups, checks)
+CREATE TABLE IF NOT EXISTS private_genome(
+  watch_id INTEGER, id TEXT, metadata_json TEXT, file_path TEXT, seq_md5 TEXT, length INTEGER, source_file TEXT, imported TEXT, updated TEXT,
+  PRIMARY KEY(watch_id, id));
 -- sequence QC (qc.py): one row per accession and tool (seqstats, nextclade); derived data, safe to delete and recompute
 CREATE TABLE IF NOT EXISTS qc_result(
   accession TEXT, tool TEXT, watch_id INTEGER, status TEXT,  -- good|mediocre|bad|error
