@@ -15,6 +15,7 @@
   <label><input type="checkbox" id="f_ap"> APOBEC3형만</label>
   <label><input type="checkbox" id="f_syn" checked> 동의 변이 연하게</label>
   <label><input type="checkbox" id="f_ids" checked> id 표시</label>
+  <label title="그 서열의 lineage 정의(lineage-designation)에 들어 있는 SNP를 굵은 테두리로 그립니다"><input type="checkbox" id="f_def" checked> 대표 변이 굵게</label>
   <button type="button" class="p" onclick="draw()">그리기</button>
   <button type="button" onclick="saveSvg()">SVG 저장</button><button type="button" onclick="savePng()">PNG 저장</button>
  </div>
@@ -42,14 +43,15 @@ function render(){const syn=document.getElementById('f_syn').checked,ids=documen
  o+='<text x="6" y="28">서열 '+S.length+'줄 (조건에 맞는 '+D.available+'건 중, 전체 '+D.all_samples+'건) · 색 = 바뀐 염기</text>';
  [['A','#4e9a06'],['C','#3465a4'],['G','#c4a000'],['T','#cc0000']].forEach((b,i)=>{o+='<rect x="'+(6+i*34)+'" y="34" width="10" height="10" fill="'+b[1]+'"/><text x="'+(20+i*34)+'" y="43">'+b[0]+'</text>'});
  o+='<circle cx="156" cy="39" r="3.5" fill="#d6249f"/><text x="164" y="43">APOBEC3형</text>';
+ o+='<rect x="226" y="33" width="5" height="12" fill="#999" stroke="#000"/><text x="236" y="43">'+(D.definitions?'굵게 = lineage 정의 변이':'(lineage 정의 없음: 전파 타임라인에서 정의 받기)')+'</text>';
  o+='<rect x="'+X0+'" y="'+(top-10)+'" width="'+W+'" height="6" fill="#ddd" rx="2"/>';
  const ticks=Math.min(10,Math.max(2,Math.floor(span/20000)));for(let i=0;i<=ticks;i++){const p=Math.round(D.start+span*i/ticks);o+='<text x="'+x(p)+'" y="'+(top-14)+'" text-anchor="middle" fill="#666">'+p.toLocaleString()+'</text>'}
  S.forEach((s,i)=>{const y=top+i*H;if(i%2==0)o+='<rect x="0" y="'+y+'" width="'+tot+'" height="'+H+'" fill="#f6f6f6"/>';
   if(ids)o+='<text x="4" y="'+(y+10)+'" font-family="Menlo,Consolas,monospace">'+esc(s.id)+'</text>';
   o+='<rect x="'+(L+2)+'" y="'+(y+1)+'" width="'+(LIN-4)+'" height="'+(H-2)+'" fill="'+colors[groupKey(s)||'(없음)']+'" rx="2"/><text x="'+(L+6)+'" y="'+(y+10)+'">'+esc(s.lineage||'-')+(s.country?' · '+esc(s.country.slice(0,14)):'')+'</text>';
   o+='<text x="'+(L+LIN+4)+'" y="'+(y+10)+'" fill="#555">'+esc(s.clade||'-')+'</text>';
-  s.snps.forEach(m=>{const [pos,ref,alt,gene,aa,eff,poi,prof]=m,op=(syn&&eff==='synonymous')?0.4:(eff==='intergenic'?0.3:1),xx=x(pos);
-   o+='<rect x="'+(xx-0.7).toFixed(2)+'" y="'+(y+1)+'" width="'+Math.max(1.4,W/span).toFixed(2)+'" height="'+(H-2)+'" fill="'+(BASE[alt]||'#888')+'" opacity="'+op+'"><title>'+esc(s.id+' · '+pos+' '+ref+'>'+alt+(gene?' · '+gene:'')+(aa?' '+aa:'')+' · '+eff+(poi?' · '+prof:''))+'</title></rect>';
+  s.snps.forEach(m=>{const [pos,ref,alt,gene,aa,eff,poi,prof,dfn]=m,bold=dfn&&document.getElementById('f_def').checked,op=(syn&&eff==='synonymous')?0.4:(eff==='intergenic'?0.3:1),xx=x(pos);
+   o+='<rect x="'+(xx-(bold?1.6:0.7)).toFixed(2)+'" y="'+(bold?y:y+1)+'" width="'+(bold?Math.max(3.2,W/span*2):Math.max(1.4,W/span)).toFixed(2)+'" height="'+(bold?H:H-2)+'" fill="'+(BASE[alt]||'#888')+'" opacity="'+(bold?1:op)+'"'+(bold?' stroke="#000" stroke-width="1"':'')+'><title>'+esc(s.id+' · '+pos+' '+ref+'>'+alt+(gene?' · '+gene:'')+(aa?' '+aa:'')+' · '+eff+(poi?' · '+prof:'')+(dfn?' · 대표 변이 ('+dfn+'에서 정의)':''))+'</title></rect>';
    if(poi)o+='<circle cx="'+xx.toFixed(2)+'" cy="'+(y+2.2)+'" r="2.4" fill="#d6249f" stroke="#fff" stroke-width=".5"/>'});
  });
  const gy=top+S.length*H+14;o+='<text x="6" y="'+(gy+14)+'" font-weight="bold">유전자</text>';
@@ -64,7 +66,7 @@ function saveSvg(){const s=document.getElementById('svg');if(s)dl('snipit_{{ run
 function savePng(){const s=document.getElementById('svg');if(!s)return;const w=s.width.baseVal.value,h=s.height.baseVal.value,img=new Image();
  img.onload=()=>{const c=document.createElement('canvas');c.width=w*2;c.height=h*2;const x=c.getContext('2d');x.fillStyle='#fff';x.fillRect(0,0,c.width,c.height);x.scale(2,2);x.drawImage(img,0,0);c.toBlob(b=>dl('snipit_{{ run.name }}.png',b))};
  img.src='data:image/svg+xml;charset=utf-8,'+encodeURIComponent(new XMLSerializer().serializeToString(s))}
-['f_syn','f_ids'].forEach(i=>document.getElementById(i).addEventListener('change',()=>D&&render()));
+['f_syn','f_ids','f_def'].forEach(i=>document.getElementById(i).addEventListener('change',()=>D&&render()));
 draw();
 </script>
 {% endblock %}

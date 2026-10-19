@@ -421,7 +421,7 @@ def _run_meta(run: dict) -> dict[str, dict]:
     if ds.get("include_private"):
         _pc, prow, _f = export.private_table(ds["watch_id"], ds)
         meta.update({r["PPX_accession"]: r for r in prow})
-    return {k: {"clade": v.get("clade") or "", "lineage": v.get("lineage") or "", "country": v.get("country") or "", "date": v.get("date") or ""} for k, v in meta.items()}
+    return {k: {"clade": v.get("clade") or "", "lineage": v.get("lineage") or "", "country": v.get("country") or "", "date": v.get("date") or "", "outbreak": v.get("outbreak") or ""} for k, v in meta.items()}
 
 
 _SNIPIT_CACHE: dict = {}
@@ -472,10 +472,26 @@ def snipit_data(run: dict, lineages=(), clades=(), gene: str = "", start: int = 
         return start <= pos <= end and (not apobec_only or r["profile_of_interest"] not in ("", "other"))
     cnt = Counter((r["pos"], r["alt"]) for i in chosen for r in by[i] if keep(r))
     n = max(1, len(chosen))
+    from . import lineages
+    to_run, have_defs = None, False
+    try:                                                      # lineage-defining SNPs (NC_063383.1 coordinates) -> the run's reference
+        if lineages.status()["ok"] and fa:
+            to_run = lineages.defining_in_run_coordinates(run, fa)
+            have_defs = True
+    except Exception:
+        _log.warning("lineage definitions could not be placed on the reference", exc_info=True)
+    cache: dict = {}
+
+    def defining(lin, ob):
+        if (lin, ob) not in cache:
+            cache[(lin, ob)] = {(to_run.get(pos, -1) if to_run is not None else pos, nuc): by for pos, nuc, by in lineages.defining_snps(ob, lin)} if have_defs and lin and ob else {}
+        return cache[(lin, ob)]
     samples = []
     for i in chosen:
-        snps = [[int(r["pos"]), r["ref"], r["alt"], r["gene"], r["aa_change"], r["effect"], int(r["profile_of_interest"] not in ("", "other")), r["profile_of_interest"]]
+        m_ = meta.get(i, {"clade": "", "lineage": "", "country": "", "date": "", "outbreak": ""})
+        dm = defining(m_["lineage"], m_.get("outbreak", ""))
+        snps = [[int(r["pos"]), r["ref"], r["alt"], r["gene"], r["aa_change"], r["effect"], int(r["profile_of_interest"] not in ("", "other")), r["profile_of_interest"], dm.get((int(r["pos"]), r["alt"]), "")]
                 for r in by[i] if keep(r) and not (hide_common and cnt[(r["pos"], r["alt"])] / n >= hide_common)]
-        samples.append({"id": i, **meta.get(i, {"clade": "", "lineage": "", "country": "", "date": ""}), "n_total": len(by[i]), "snps": snps})
-    return {"reference": refname or ref, "length": len(refseq), "start": start, "end": end, "genes": genes, "samples": samples, "available": len(ids), "all_samples": len(by),
+        samples.append({"id": i, **m_, "n_total": len(by[i]), "snps": snps})
+    return {"reference": refname or ref, "length": len(refseq), "start": start, "end": end, "genes": genes, "samples": samples, "available": len(ids), "all_samples": len(by), "definitions": have_defs,
             "lineages": sorted({m["lineage"] for i, m in meta.items() if i in by and m["lineage"]}), "clades": sorted({m["clade"] for i, m in meta.items() if i in by and m["clade"]})}

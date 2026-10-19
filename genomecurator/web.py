@@ -6,7 +6,7 @@ from fastapi import FastAPI, Form, Request
 from fastapi.responses import FileResponse, HTMLResponse, JSONResponse, RedirectResponse, Response, StreamingResponse
 from fastapi.templating import Jinja2Templates
 
-from . import __version__, analysis, completeness, datasets, exclusions, export, mutprofile, nextstrain, pathoplexus, private, qc, squirrel, config, curate, jobs, log
+from . import __version__, analysis, completeness, datasets, exclusions, export, lineages, mutprofile, nextstrain, pathoplexus, private, qc, squirrel, config, curate, jobs, log
 from .db import audit_now, connect
 
 _log = log.get("web")
@@ -775,6 +775,35 @@ def create_app(scheduler: bool = True) -> FastAPI:
             r = mutprofile.run(ds, cores or None, bool(force), note, p)
             return {"redirect": f"/nextstrain?dataset={dsid}", "result": {"run": r["id"], "name": r["name"], "reused": bool(r.get("reused"))}}
         return start_job(work, f"변이 프로파일 · {ds['name']}", "mutprofile")
+
+    @app.get("/api/lineages/status")
+    def api_lineages_status():
+        return lineages.status()
+
+    @app.post("/api/lineages/clone")
+    def api_lineages_clone(request: Request):
+        """git clone / pull of mpxv-lineages/lineage-designation into data/lineage-designation (a server job)."""
+        if not _same_origin(request):
+            return JSONResponse({"error": "cross-site request refused"}, 403)
+        return start_job(lambda p: {"result": lineages.clone(p)}, "lineage 정의 받기", "lineages")
+
+    @app.get("/analysis/{rid}/spread")
+    def analysis_spread_page(request: Request, rid: int):
+        r = nextstrain.get_run(rid)
+        if not r or r["tool"] != "mutprofile" or r["status"] != "done":
+            return JSONResponse({"error": "finished mutation-profile run not found"}, 404)
+        return render(request, "spread.html", nav="ns", run=r)
+
+    @app.get("/api/analyses/{rid}/spread")
+    def api_analysis_spread(rid: int, view: str = "lineage", bin: str = "auto", outbreak: str = "", min_n: int = 2, lineage: str = "", country: str = ""):
+        """Gantt-like data: lineages (or defining SNPs) x countries x ISO week / month for a mutation-profile run's dataset."""
+        r = nextstrain.get_run(rid)
+        if not r or r["tool"] != "mutprofile" or r["status"] != "done":
+            return JSONResponse({"error": "finished mutation-profile run not found"}, 404)
+        try:
+            return lineages.spread(r, view if view in ("lineage", "mutation") else "lineage", bin, outbreak, max(1, min_n), [x for x in lineage.split(",") if x], [x for x in country.split(",") if x])
+        except (ValueError, RuntimeError) as e:
+            return JSONResponse({"error": str(e)}, 400)
 
     @app.get("/analysis/{rid}/snipit")
     def analysis_snipit_page(request: Request, rid: int):

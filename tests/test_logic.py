@@ -2185,3 +2185,32 @@ def test_snipit_data_filters_groups_and_hides_common(tmp_path, monkeypatch):
     assert all(m[6] for s in mp.snipit_data(run, apobec_only=True)["samples"] for m in s["snps"])
     assert all(m[0] != 10 for s in mp.snipit_data(run, hide_common=1.0)["samples"] for m in s["snps"])  # present in every shown sample -> hidden
     assert all(55 <= m[0] <= 65 for s in mp.snipit_data(run, start=55, end=65)["samples"] for m in s["snps"])
+
+
+def test_lineage_definitions_chain_dates_and_spread(tmp_path, monkeypatch):
+    from genomecurator import lineages
+    base = tmp_path / "ld" / "definitions" / "Ib"
+    (base / "sh2023").mkdir(parents=True)
+    (base / "sh2023.yml").write_text("name: sh2023\ndefining_snps:\n  - pos: 100\n    nucleotide: C\n", encoding="utf-8")
+    (base / "sh2023" / "A.yml").write_text("name: A\nparent: ''\ndesignation_date: '2024-01-01'\ndefining_snps:\n  - pos: 100\n    nucleotide: C\n  - pos: 200\n    nucleotide: G\n", encoding="utf-8")
+    (base / "sh2023" / "A.1.yml").write_text("name: A.1\nparent: A\ndesignation_date: '2024-06-01'\ndefining_snps:\n  - pos: 300\n    nucleotide: T\n", encoding="utf-8")
+    monkeypatch.setenv("GC_LINEAGE_DIR", str(tmp_path / "ld"))
+    lineages._DEF.clear()
+    assert [(p, n, by) for p, n, by in lineages.defining_snps("sh2023", "A.1")] == [(100, "C", "sh2023"), (200, "G", "A"), (300, "T", "A.1")]   # stepwise, a repeated SNP kept once
+    assert lineages.defining_snps("sh2023", "nope") == [(100, "C", "sh2023")] and lineages.status()["ok"]
+    assert lineages.parse_date("2024-11-21")[:3] == ("day", "2024-W47", "2024-11") and lineages.parse_date("2024-12-30")[1] == "2025-W01"      # ISO year differs from the calendar year
+    assert lineages.parse_date("2025-01-XX")[:3] == ("month", None, "2025-01") and lineages.parse_date("2025-XX-XX")[0] == "" and lineages.parse_date("2025-02-31")[0] == ""
+    gs = [{"id": f"g{i}", "lineage": lin, "outbreak": "sh2023", "clade": "Ib", "country": c, "date": d} for i, (lin, c, d) in enumerate(
+        [("A", "Uganda", "2024-02-05"), ("A", "Uganda", "2024-02-06"), ("A", "Kenya", "2024-02-20"), ("A", "Kenya", "2024-02-21"), ("A", "Kenya", "2024-03-XX"), ("A.1", "Uganda", "2024-07-01"), ("A.1", "Uganda", "2024-07-02"), ("A.1", "Uganda", "2024-07-03"), ("A.1", "Germany", "2024-08-XX"), ("A.1", "Germany", "")])]
+    monkeypatch.setattr(lineages, "_genomes", lambda run: [dict(g) for g in gs])
+    monkeypatch.setattr(lineages.mutprofile, "summary", lambda run: {"reference": "R"})
+    d = lineages.spread({}, min_n=1)
+    assert d["bin"] == "week" and d["no_date"] == 1 and d["month_only"] == 2 and [r["label"] for r in d["rows"]] == ["A", "A.1"]
+    a = d["rows"][0]
+    assert (a["first"], a["last"], a["n"]) == ("2024-02-05", "2024-03", 5) and a["own"] == ["100C", "200G"] and a["snps"] == ["100C", "200G"]
+    kenya = next(c for c in a["countries"] if c["country"] == "Kenya")
+    assert kenya["cells"] == {"2024-W08": 2} and kenya["monthly"] == {"2024-03": 1}                    # a month-only date is a faint month band, never a week
+    assert lineages.spread({}, bin_="month", min_n=1)["bin"] == "month" and [r["label"] for r in lineages.spread({}, min_n=5)["rows"]] == ["A"] and lineages.spread({}, min_n=9)["rows"] == []
+    sparse = [{"id": f"s{i}", "lineage": "A", "outbreak": "sh2023", "clade": "", "country": "U", "date": f"2024-{(i % 12) + 1:02d}-{(i % 3) * 9 + 1:02d}"} for i in range(12)]
+    monkeypatch.setattr(lineages, "_genomes", lambda run: sparse)
+    assert lineages.spread({}, min_n=1)["bin"] == "month"                                                # under two genomes per occupied week -> month

@@ -1,0 +1,55 @@
+{% extends "base.html" %}{% block body %}
+<div class="pagehead"><h2>전파 타임라인 <span class="mut" style="font-size:14px;font-weight:400">lineage · 대표 변이 × 나라 × 시간</span></h2><span class="mut">{{ run.name }}</span></div>
+<div class="help">행은 <b>lineage</b>(또는 lineage 정의의 <b>대표 변이</b>), 펼치면 <b>나라</b>별 줄이 나옵니다. 가로축은 수집일의 <b>ISO 주</b>이고, 일 단위 날짜가 적으면 자동으로 <b>월</b> 단위로 바뀝니다(직접 고를 수도 있음).
+막대 안의 진하기는 그 기간의 유전체 수, 가는 선은 <b>처음~마지막 관찰</b>, ◆는 첫 관찰입니다. <b>월까지만 있는 날짜</b>는 주에 넣지 않고 그 달 전체를 <b>옅은 띠</b>로 그립니다.
+<b>대표 변이</b> 보기는 그 변이를 가진 유전체를 lineage 이름과 무관하게 세므로, lineage가 새로 나뉘거나 이름이 바뀌어도 그림이 유지됩니다.
+<b>주의: 첫 관찰은 유입 시점이 아닙니다</b> — 나라마다 시퀀싱 양이 달라 표집 편향이 큽니다(나라별 건수를 함께 보세요).</div>
+<div class="card" style="font-size:13px">
+ <div style="display:flex;gap:14px;flex-wrap:wrap;align-items:end">
+  <label>보기<br><select id="v" onchange="load()"><option value="lineage">lineage별</option><option value="mutation">대표 변이별</option></select></label>
+  <label>outbreak<br><select id="ob" onchange="load()"></select></label>
+  <label>시간 단위<br><select id="bin" onchange="load()"><option value="auto">자동</option><option value="week">ISO 주</option><option value="month">월</option></select></label>
+  <label title="이 수보다 적은 행은 숨김">최소 유전체<br><input id="mn" type="number" min="1" value="3" style="width:60px" onchange="load()"></label>
+  <label><input type="checkbox" id="ex" onchange="draw()"> 모든 행의 나라 펼치기</label>
+  <span id="defs"></span>
+ </div>
+ <div class="mut" id="info" style="margin-top:8px"></div>
+</div>
+<div id="fig" style="overflow:auto;background:#fff;border:1px solid var(--bd);border-radius:6px;margin-top:10px"></div>
+<form id="jf" method="post" style="display:none"></form>
+<script>
+const RID={{ run.id }};
+const esc=s=>String(s??'').replace(/[&<>"]/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c]));
+let D=null,open={},obSet=false;
+const PAL=['#4e79a7','#f28e2b','#e15759','#76b7b2','#59a14f','#edc948','#b07aa1','#ff9da7','#9c755f','#bab0ac'];
+async function defsUi(){const s=await (await fetch('/api/lineages/status')).json();document.getElementById('defs').innerHTML=s.ok?'<span class="mut">정의 lineage-designation @ '+esc(s.commit)+' ('+s.files+'개 파일)</span> <button type="button" onclick="getDefs()">업데이트</button>':'<span style="color:var(--bad)">lineage 정의가 없습니다</span> <button type="button" class="p" onclick="getDefs()">정의 받기</button>'}
+function getDefs(){const f=document.getElementById('jf');f.action='/api/lineages/clone';runJob(f)}
+async function load(){const q=new URLSearchParams({view:document.getElementById('v').value,bin:document.getElementById('bin').value,outbreak:obSet?document.getElementById('ob').value:'',min_n:document.getElementById('mn').value||1});
+ const r=await fetch('/api/analyses/'+RID+'/spread?'+q);D=await r.json();if(D.error){document.getElementById('fig').innerHTML='<div class="card" style="color:var(--bad)">'+esc(D.error)+'</div>';document.getElementById('info').textContent='';return}
+ if(!obSet){obSet=true;document.getElementById('ob').innerHTML=D.outbreaks.map(o=>'<option '+(o===D.outbreak?'selected':'')+'>'+esc(o)+'</option>').join('')}
+ document.getElementById('info').textContent='유전체 '+D.genomes.toLocaleString()+'건 중 날짜가 있는 '+D.dated.toLocaleString()+'건(일 단위 '+D.day_precision.toLocaleString()+' · 월까지만 '+D.month_only.toLocaleString()+') · 날짜 없음 '+D.no_date+'건은 제외 · 시간 단위: '+(D.bin==='week'?'ISO 주':'월')+' · 정의 '+(D.definitions||'없음');
+ draw()}
+function draw(){const P=D.periods,n=P.length;if(!n){document.getElementById('fig').innerHTML='<div class="card mut">그릴 데이터가 없습니다.</div>';return}
+ const LW=380,cw=Math.max(2.5,Math.min(16,1100/n)),RH=15,top=34,all=document.getElementById('ex').checked,mut=D.view==='mutation';
+ const idx={};P.forEach((p,i)=>idx[p]=i);const mIdx={};D.starts.forEach((s,i)=>{const m=s.slice(0,7);(mIdx[m]=mIdx[m]||[]).push(i)});
+ let maxc=1;D.rows.forEach(r=>r.countries.forEach(c=>Object.values(c.cells).forEach(v=>maxc=Math.max(maxc,v))));
+ const rows=[];D.rows.forEach((r,ri)=>{rows.push({r,c:null,ri});if(all||open[r.key])r.countries.forEach(c=>rows.push({r,c,ri}))});
+ const W=LW+n*cw+20,H=top+rows.length*RH+10;let o='<svg xmlns="http://www.w3.org/2000/svg" id="svg" width="'+W+'" height="'+H+'" font-family="Helvetica,Arial,sans-serif" font-size="10.5">';
+ // axis: year starts and month ticks
+ D.starts.forEach((s,i)=>{const m=s.slice(5,7);if(D.bin==='month'||s.slice(8,10)<='07'){if(m==='01'&&(D.bin==='month'||s.slice(8,10)<='07'))o+='<text x="'+(LW+i*cw)+'" y="12" font-weight="bold">'+s.slice(0,4)+'</text><line x1="'+(LW+i*cw)+'" x2="'+(LW+i*cw)+'" y1="16" y2="'+H+'" stroke="#bbb"/>';else if(cw*(D.bin==='week'?4.3:1)>=14||['04','07','10'].includes(m))o+='<text x="'+(LW+i*cw)+'" y="26" fill="#777" font-size="9">'+m+'</text>'}});
+ rows.forEach((x,k)=>{const y=top+k*RH,{r,c}=x,isC=!!c;if(!isC&&x.ri%2==0)o+='<rect x="0" y="'+y+'" width="'+W+'" height="'+RH+'" fill="#f6f6f6"/>';
+  const first=isC?c.first:r.first,last=isC?c.last:r.last,nn=isC?c.n:r.n;
+  let label;if(isC)label='<tspan fill="#555">'+esc(c.country)+'</tspan> <tspan fill="#888">('+esc(first)+' ── '+esc(last)+')</tspan> <tspan fill="#888">n='+nn+'</tspan>';
+  else if(mut)label='<tspan font-weight="bold">'+esc(r.label)+'</tspan> <tspan fill="#2a6">'+esc(r.gene||'')+' '+esc(r.aa||'')+'</tspan> <tspan fill="#888">['+esc(r.by)+'] ('+esc(first)+' ── '+esc(last)+') n='+nn+'</tspan>';
+  else label='<tspan font-weight="bold">'+esc(r.label)+'</tspan> <tspan fill="#888">('+esc(first)+' ── '+esc(last)+') n='+nn+'</tspan>'+(r.own&&r.own.length?' <tspan font-weight="bold" fill="#2a6">'+esc(r.own.join(' '))+'</tspan>':'');
+  o+='<text x="'+(isC?22:4)+'" y="'+(y+11)+'" style="cursor:pointer" onclick="tog(\''+esc(r.key).replace(/'/g,"\\'")+'\')">'+(isC?'':(open[r.key]||all?'▾ ':'▸ '))+label+'<title>'+esc(r.label+(r.snps&&r.snps.length?' · 정의 변이(누적): '+r.snps.join(' '):''))+'</title></text>';
+  const cs=isC?[c]:r.countries,agg={},mon={};cs.forEach(cc=>{Object.entries(cc.cells).forEach(([p,v])=>agg[p]=(agg[p]||0)+v);Object.entries(cc.monthly).forEach(([m,v])=>mon[m]=(mon[m]||0)+v)});
+  const col=PAL[x.ri%PAL.length];let lo=1e9,hi=-1;
+  Object.entries(mon).forEach(([m,v])=>{const ii=mIdx[m];if(!ii)return;lo=Math.min(lo,ii[0]);hi=Math.max(hi,ii[ii.length-1]);o+='<rect x="'+(LW+ii[0]*cw)+'" y="'+(y+3)+'" width="'+(ii.length*cw)+'" height="'+(RH-6)+'" fill="'+col+'" opacity="0.18"><title>'+esc((isC?c.country:r.label)+' · '+m+' (월까지만 있는 날짜 '+v+'건)')+'</title></rect>'});
+  Object.entries(agg).forEach(([p,v])=>{const i=idx[p];if(i==null)return;lo=Math.min(lo,i);hi=Math.max(hi,i);o+='<rect x="'+(LW+i*cw)+'" y="'+(y+2)+'" width="'+cw+'" height="'+(RH-4)+'" fill="'+col+'" opacity="'+(0.35+0.65*Math.min(1,Math.log(1+v)/Math.log(1+(isC?maxc:maxc*3))))+'"><title>'+esc((isC?c.country:r.label)+' · '+p+' · '+v+'건')+'</title></rect>'});
+  if(hi>=0){o+='<line x1="'+(LW+lo*cw)+'" x2="'+(LW+(hi+1)*cw)+'" y1="'+(y+RH/2)+'" y2="'+(y+RH/2)+'" stroke="#333" stroke-width="1"/><path d="M'+(LW+lo*cw)+' '+(y+RH/2-4)+'l4 4l-4 4l-4 -4z" fill="#000"/>'}});
+ o+='</svg>';document.getElementById('fig').innerHTML=o}
+function tog(k){open[k]=!open[k];draw()}
+defsUi();load();
+</script>
+{% endblock %}
