@@ -25,6 +25,7 @@ Virus Genome Metadata Curator(패키지 `genomecurator`, 이전 표시 이름 "G
 - 서버 로그 검색(예: `job=ab12cd34`).
 
 ### 변경
+- 공개 페이지 푸터에 출처별 정책 링크(NCBI 고지, Pathoplexus 이용 약관, BV-BRC)와 Pathoplexus는 공개 데이터만 포함한다는 문구를 넣었습니다. 새 문서: `docs/LICENSES.md`(라이선스·데이터 이용 검토), `docs/WORKFLOW.md`.
 - README를 짧고 실용적으로(기능, 화면, 설치, 실행, 출력) 다시 썼습니다. 영문 `README.md`와 한글 `README.ko.md`로 나누고, 긴 설명은 `docs/GUIDE.ko.md`로 옮겼습니다.
 - 바이러스 추가와 조회가 서버 작업으로 실행되어, 다른 메뉴를 눌러도 사라지지 않습니다(조회는 돌아오면 이어서 보입니다).
 - 자동 확인과 매일 스키마 점검도 로그뿐 아니라 작업으로 기록됩니다.

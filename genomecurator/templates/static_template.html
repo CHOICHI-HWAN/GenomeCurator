@@ -264,7 +264,9 @@ function show(v,preset){document.body.style.overflow='';view=v;document.querySel
  history.replaceState(null,'','#'+v+'?v='+DATA.viruses.indexOf(cur));window.scrollTo(0,0)}
 function render(){show(view)}
 document.querySelectorAll('header a[data-v]').forEach(a=>a.onclick=()=>show(a.dataset.v));
-$('#foot').textContent=`스냅샷 생성: ${DATA.generated} · 메타데이터 출처: NCBI Virus, Pathoplexus, BV-BRC (각 출처의 이용 약관을 따릅니다)`;
+$('#foot').innerHTML=`스냅샷 생성: ${esc(DATA.generated)} · 메타데이터 출처: <a href="https://www.ncbi.nlm.nih.gov/labs/virus/" target="_blank" rel="noopener">NCBI Virus</a>(<a href="https://www.ncbi.nlm.nih.gov/home/about/policies/" target="_blank" rel="noopener">NCBI 정책·면책 고지</a>),
+ <a href="https://pathoplexus.org/" target="_blank" rel="noopener">Pathoplexus</a>(공개 데이터만; <a href="https://pathoplexus.org/about/terms-of-use/data-use-terms" target="_blank" rel="noopener">이용 약관</a>),
+ <a href="https://www.bv-brc.org/" target="_blank" rel="noopener">BV-BRC</a>. 각 출처의 이용 약관을 따르며, 제출자가 따로 권리를 주장한 데이터가 있을 수 있습니다. 이 페이지의 코드는 MIT 라이선스입니다.`;
 (()=>{const m=location.hash.match(/^#(overview|genomes|about)(?:\?v=(\d+))?/);if(m){if(m[2]&&DATA.viruses[+m[2]]){cur=DATA.viruses[+m[2]];vsel.value=m[2]}view=m[1]}show(view)})();
 </script>
 </body></html>

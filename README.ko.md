@@ -114,6 +114,7 @@ data/
 ## 문서
 
 자세한 한국어 가이드: [docs/GUIDE.ko.md](docs/GUIDE.ko.md) (탭별 설명, 정합성 점검 원리, FAQ, 로그 읽는 법, 코드 지도).
+라이선스·데이터 이용 정책 검토: [docs/LICENSES.md](docs/LICENSES.md) · 전체 워크플로: [docs/WORKFLOW.md](docs/WORKFLOW.md).
 함께 보세요: [CHANGELOG.ko.md](CHANGELOG.ko.md) · [docs/SUPERSET.md](docs/SUPERSET.md) · [docs/DEPENDENCIES.md](docs/DEPENDENCIES.md) · [docs/RELEASING.md](docs/RELEASING.md).
 
 ## 기여와 라이선스

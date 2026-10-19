@@ -114,6 +114,7 @@ data/
 ## Documentation
 
 The detailed guide is in Korean: [docs/GUIDE.ko.md](docs/GUIDE.ko.md) (tabs, how integrity checks work, FAQ, reading logs, code map).
+Licences and data-use review: [docs/LICENSES.md](docs/LICENSES.md) · how the whole workflow fits together: [docs/WORKFLOW.md](docs/WORKFLOW.md).
 Also: [CHANGELOG.md](CHANGELOG.md) · [docs/SUPERSET.md](docs/SUPERSET.md) · [docs/DEPENDENCIES.md](docs/DEPENDENCIES.md) · [docs/RELEASING.md](docs/RELEASING.md).
 
 ## Contributing and license
