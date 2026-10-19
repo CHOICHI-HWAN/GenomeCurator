@@ -2093,9 +2093,10 @@ def test_mutprofile_annotation_and_paf():
 
 def test_mutprofile_reference_choice():
     from genomecurator import mutprofile as mp
-    assert mp.reference_choice({"build": "clade-i"}) == "NC_003310.1"                      # clade I runs against the clade I RefSeq reference
+    assert mp.reference_choice({"build": "clade-i"}) == "KJ642613.1"                      # clade I follows the Nextstrain clade-i build's reference
     assert mp.reference_choice({"build": "mpxv"}) == mp.reference_choice({"build": ""}) == "NC_063383.1"
     assert mp.reference_choice({"build": "clade-i", "mutprofile_json": '{"reference": "NC_063383.1"}'}) == "NC_063383.1"
+    assert mp.reference_choice({"build": "clade-i", "mutprofile_json": '{"reference": "NC_003310.1"}'}) == "NC_003310.1"
     assert mp.settings_sha({"build": "clade-i"}) != mp.settings_sha({"build": "mpxv"})   # a different reference is a different analysis
 
 

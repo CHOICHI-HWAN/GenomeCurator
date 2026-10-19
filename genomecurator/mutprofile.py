@@ -91,16 +91,16 @@ def settings_sha(ds: dict) -> str:
 
 
 # ------------------------------------------------------------------------------------------------ reference + annotation
-REFERENCES = {"NC_063383.1": "RefSeq 참조 (clade II 등 기본)", "NC_003310.1": "RefSeq clade I 참조 (Zaire-96-I-16)", "KJ642613.1": "Nextstrain clade-i 빌드가 쓰는 참조"}
+REFERENCES = {"NC_063383.1": "RefSeq 참조 (clade II 등 기본)", "NC_003310.1": "RefSeq clade I 참조 (Zaire-96-I-16)", "KJ642613.1": "Nextstrain clade-i 빌드 기본 참조 (Congo_8; NC_003310.1과는 다른 유전체)"}
 
 
 def reference_choice(ds: dict) -> str:
     """The reference accession used: the setting, or - on 'auto' - NC_063383.1 (RefSeq, what Nextclade / Squirrel / snipit use) except for the clade I build,
-    which is analysed against the clade I RefSeq reference NC_003310.1."""
+    which follows the Nextstrain clade-i build's own reference KJ642613.1 (so positions match the Nextstrain tree). NC_003310.1 (RefSeq clade I) can be chosen instead; it is a different genome."""
     r = effective(ds).get("reference", "auto")
     if r in REFERENCES:
         return r
-    return "NC_003310.1" if (ds.get("build") or "") == "clade-i" else "NC_063383.1"
+    return "KJ642613.1" if (ds.get("build") or "") == "clade-i" else "NC_063383.1"
 
 
 def reference_files(ds: dict) -> tuple[Path, Path | None]:
