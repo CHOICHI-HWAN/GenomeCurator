@@ -347,6 +347,58 @@ def _sites(codon: str) -> float:
     return s
 
 
+def _pois_sf(k: int, mu: float) -> float:
+    """P(X >= k) for X ~ Poisson(mu)."""
+    if k <= 0:
+        return 1.0
+    term = math.exp(-mu)
+    cdf = 0.0
+    for i in range(k):
+        cdf += term
+        term *= mu / (i + 1)
+    return max(0.0, 1.0 - cdf)
+
+
+def independent_by_gene(run: dict) -> dict | None:
+    """Mutation **events** on the tree's branches (each event once, however many genomes inherit it) placed in the genes of the tree's reference, with the ITRs left out. A gene is a
+    hotspot when it has more events than its length predicts at the genome-wide rate (Poisson, Bonferroni over the genes), not merely more mutations summed over genomes - that sum
+    counts one ancestral mutation once per descendant and mostly shows which genes carry the mutations that define big clades."""
+    tree, rootseq, nsrun = _tree(run)
+    if not tree:
+        return None
+    refname, refseq, cds = _tree_reference(nsrun)
+    b = insight._tree_branches(run)
+    if not b or not refseq:
+        return None
+    _root, L, muts = b
+    by = {c["gene"]: c for c in cds}
+    glen = {g: sum(e - s + 1 for s, e in c["exons"]) for g, c in by.items()}
+    cnt: dict[str, Counter] = defaultdict(Counter)
+    sites: dict[str, set] = defaultdict(set)
+    for internal, (ref, pos, alt) in muts:
+        an = mutprofile.annotate(pos, ref, alt, cds, refseq)
+        g = an["gene"] or "(intergenic)"
+        c = cnt[g]
+        c["events"] += 1
+        c["internal" if internal else "terminal"] += 1
+        c["a3"] += insight._apo_branch(ref, alt, pos, rootseq or refseq)
+        c["nonsyn" if an["effect"] in ("nonsynonymous", "stop_gained") else "syn" if an["effect"] == "synonymous" else "inter"] += 1
+        sites[g].add((pos, alt))
+    interior = L - 2 * mutprofile.ITR_BP
+    total = sum(c["events"] for c in cnt.values())
+    rate = total / interior if interior > 0 else 0
+    ng = max(1, len(by))
+    out = {}
+    for g, c in cnt.items():
+        ln = glen.get(g)
+        exp = rate * ln if ln else None
+        p = _pois_sf(c["events"], exp) if exp else None
+        out[g] = {"events": c["events"], "per_kb": round(c["events"] / ln * 1000, 2) if ln else None, "expected": round(exp, 2) if exp is not None else None, "p": p,
+                  "p_bonferroni": min(1.0, p * ng) if p is not None else None, "distinct": len(sites[g]), "a3": c["a3"], "nonsyn": c["nonsyn"], "syn": c["syn"], "internal": c["internal"], "terminal": c["terminal"], "length": ln}
+    return {"genes": out, "total_events": total, "rate_per_kb": round(rate * 1000, 3), "reference": refname,
+            "recurrent_sites": sorted(({"label": f"{r}{p}{a}", "branches": n} for (r, p, a), n in Counter(k for _i, k in muts).items() if n >= 3), key=lambda x: -x["branches"])}
+
+
 def genes(run: dict, hotspot: int = 100, fixed: float = 0.9, max_n: float | None = None) -> dict:
     ref = mutprofile.summary(run).get("reference", "")
     fa, gff = mutprofile.reference_by_name(ref) if ref else (None, None)
@@ -396,7 +448,15 @@ def genes(run: dict, hotspot: int = 100, fixed: float = 0.9, max_n: float | None
                     "events": c["all"], "a3": c["a3"], "a3_share": round(c["a3"] / c["all"], 3) if c["all"] else None, "nonsyn": c["nonsyn"], "syn": c["syn"], "inter": c["inter"],
                     "var_events": c["var_all"], "var_a3": c["var_a3"], "var_nonsyn": c["var_nonsyn"], "distinct": len(d), "distinct_nonsyn": nd, "distinct_syn": sd, "dnds": dnds,
                     "hotspot": c["all"] > hotspot, "var_hotspot": c["var_all"] > hotspot})
-    out.sort(key=lambda x: -x["events"])
+    ind = independent_by_gene(run)
+    if ind:
+        for x in out:
+            v = ind["genes"].get(x["gene"])
+            x["ind"] = v
+            x["hotspot_ind"] = bool(v and v["p_bonferroni"] is not None and v["p_bonferroni"] < 0.05 and v["events"] >= 4 and x["gene"] != "(intergenic)")
+        out.sort(key=lambda x: (-(x["ind"]["events"] if x.get("ind") else 0), -x["events"]))
+    else:
+        out.sort(key=lambda x: -x["events"])
     bycat = defaultdict(lambda: Counter())
     for x in out:
         if x["gene"] != "(intergenic)":
@@ -405,6 +465,7 @@ def genes(run: dict, hotspot: int = 100, fixed: float = 0.9, max_n: float | None
             bycat[x["category"]]["var_events"] += x["var_events"]
             bycat[x["category"]]["genes"] += 1
     return {"reference": refname, "hotspot": hotspot, "fixed_share": fixed, "genes": out[:120], "n_genes": len(out),
+            "independent": ({k: ind[k] for k in ("total_events", "rate_per_kb", "reference", "recurrent_sites")} if ind else None),
             "categories": [{"category": k, **dict(v)} for k, v in sorted(bycat.items(), key=lambda kv: -kv[1]["events"])]}
 
 
