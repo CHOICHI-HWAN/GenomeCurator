@@ -6,6 +6,7 @@
 <div class="bvh"><div class="ico">T</div><div><small>Taxon View</small>
  <div class="crumb">{% for l in data.lineage[:-1] %}{{ l }} › {% endfor %}<b>{{ data.watch }}</b> <em>( {{ data.rows|length }} Genomes )</em></div></div>
  <select style="margin-left:auto" onchange="location.href='/genomes?watch='+this.value">{% for w in watches %}<option value="{{ w.id }}" {{ 'selected' if w.id==watch }}>{{ w.name }} ({{ w.n }})</option>{% endfor %}</select></div>
+<div id="noseq" class="msg" style="display:none;margin:6px 0"></div>
 <div class="mut" style="font-size:12px;margin:2px 0 4px" title="GC_NEAR_COMPLETE_PCT로 기준 비율을 바꿀 수 있습니다">ⓘ {{ data.ref_note }}</div>
 <div class="tabs"><a href="/dashboard?watch={{ watch }}">Overview</a><a class="on">Genomes</a><a href="/">Changes</a><a href="/history">History</a></div>
 <form id="sqf" method="post" action="/genomes/sequences" style="display:none"><input name="ids" id="sqids"><input name="watch" value="{{ watch }}"></form>
@@ -15,10 +16,15 @@
 {% endset %}
 {% include "bvgrid.html" %}
 <script>
-function getSeq(){const DD=JSON.parse(document.getElementById('gdata').textContent),sel=G.selected();
- const pool=sel.length?sel.map(i=>DD.rows[i]):G.filtered().map(i=>DD.rows[i]);const todo=pool.filter(r=>r.has_fasta==='No');
+const fmtEst=todo=>{const bp=todo.reduce((a,r)=>a+(+r.genome_length||0),0),gb=bp/1e9,min=Math.max(1,Math.round(todo.length/100*8/60));return {gb:gb<0.1?(bp/1e6).toFixed(0)+' MB':gb.toFixed(1)+' GB',min}};
+(function(){const DD=JSON.parse(document.getElementById('gdata').textContent),todo=DD.rows.filter(r=>r.has_fasta==='No');if(!todo.length)return;const e=fmtEst(todo);
+ const el=document.getElementById('noseq');el.style.display='';el.innerHTML='서열(FASTA)이 아직 없는 유전체 <b>'+todo.length.toLocaleString()+'건</b> (약 '+e.gb+'). 분석·QC·내보내기에는 서열이 필요합니다. <button type="button" class="p" onclick="getSeq(true)" style="margin-left:8px">모두 받기</button>'
+  +' <span class="mut" style="font-size:12px">NCBI에서 100건씩 받으며 중간에 멈춰도 이어받습니다. 끝나면 QC 탭에서 QC를 실행하세요.</span>'})();
+function getSeq(all){const DD=JSON.parse(document.getElementById('gdata').textContent),sel=all===true?[]:G.selected();
+ const pool=all===true?DD.rows:(sel.length?sel.map(i=>DD.rows[i]):G.filtered().map(i=>DD.rows[i]));const todo=pool.filter(r=>r.has_fasta==='No');
  if(!todo.length){alert('받을 서열이 없습니다. '+(sel.length?'선택한 항목은 이미 모두 FASTA가 있습니다.':'표시된 유전체는 이미 모두 FASTA가 있습니다.'));return}
- if(!confirm('FASTA가 없는 '+todo.length.toLocaleString()+'건의 서열을 NCBI에서 받습니다.'+(sel.length?'':' (선택이 없어 현재 필터에 보이는 전체 대상)')+'\n\n계속할까요?'))return;
+ const e=fmtEst(todo);
+ if(!confirm('FASTA가 없는 '+todo.length.toLocaleString()+'건의 서열을 NCBI에서 받습니다.'+(all===true?' (이 바이러스의 서열 없는 전체)':(sel.length?'':' (선택이 없어 현재 필터에 보이는 전체 대상)'))+'\n\n용량 약 '+e.gb+' · 예상 '+e.min+'분 안팎(네트워크에 따라 다릅니다)\n서버에서 진행되므로 다른 메뉴로 가도 되고, 중간에 멈춰도 이어받습니다.\n\n계속할까요?'))return;
  document.getElementById('sqids').value=todo.map(r=>r.genome_id).join(',');runJob(document.getElementById('sqf'))}
 </script>
 {% endblock %}

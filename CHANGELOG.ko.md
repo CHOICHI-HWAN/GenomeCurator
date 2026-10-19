@@ -32,6 +32,7 @@ Virus Genome Metadata Curator(패키지 `genomecurator`, 이전 표시 이름 "G
 - 서버 로그 검색(예: `job=ab12cd34`).
 
 ### 변경
+- 유전체 표: 서열(FASTA)이 아직 없는 유전체 수와 대략의 용량을 알려 주는 배너와 **모두 받기** 버튼이 생겼고, 확인 창에 용량과 예상 시간이, 작업 진행 중에는 남은 시간이 표시되며, 끝나면 QC 탭으로 안내합니다.
 - **커버리지 하한**: 기준 게놈(가장 긴 RefSeq)의 `GC_MIN_COVERAGE_PCT`(기본 **80**)% 미만 길이의 유전체는 큐레이션할 가치가 없다고 보고, `check`가 제안하지 않으며 이미 가지고 있던 것은 사유와 함께 `removed`로 changeset에 올라 **미리 승인**됩니다(소프트 삭제: 상태 `Removed`, 이력 유지, FASTA 파일은 디스크에 남음). NCBI *Complete* 유전체는 예외이고 `0`이면 규칙이 꺼집니다. Removed 유전체는 유전체 표·대시보드·TSV 다운로드·QC에서 숨겨집니다(공개 페이지는 원래 숨겼습니다).
 - 공개 페이지 푸터에 출처별 정책 링크(NCBI 고지, Pathoplexus 이용 약관, BV-BRC)와 Pathoplexus는 공개 데이터만 포함한다는 문구를 넣었습니다. 새 문서: `docs/LICENSES.md`(라이선스·데이터 이용 검토), `docs/WORKFLOW.md`.
 - README를 짧고 실용적으로(기능, 화면, 설치, 실행, 출력) 다시 썼습니다. 영문 `README.md`와 한글 `README.ko.md`로 나누고, 긴 설명은 `docs/GUIDE.ko.md`로 옮겼습니다.

@@ -696,9 +696,15 @@ def fetch_missing_sequences(watch_id: int, genome_ids: list[str] | None = None, 
         taxon_dir.mkdir(parents=True, exist_ok=True)
         failed: dict[str, str] = {}
         fetched = 0
+        import time
+        t0 = time.monotonic()
         for start in range(0, len(rows), 100):
             batch = rows[start:start + 100]
-            p(5 + 90 * start // len(rows), f"서열 다운로드 중… {start}/{len(rows)}")
+            eta = ""
+            if start:
+                left = (time.monotonic() - t0) / start * (len(rows) - start)
+                eta = f" · 남은 시간 약 {max(1, round(left / 60))}분"
+            p(5 + 90 * start // len(rows), f"서열 다운로드 중… {start:,}/{len(rows):,}{eta}")
             ver = {r["accession"]: _versioned(r["accession"], {"accession_version": r["accession_version"]}) for r in batch}
             try:
                 got = sources.download_ncbi_fasta(list(ver.values()))

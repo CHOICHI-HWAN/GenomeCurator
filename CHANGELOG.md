@@ -32,6 +32,7 @@ re-pinned (the full list with licences is in [docs/DEPENDENCIES.md](docs/DEPENDE
 - Server-log viewer can be searched (e.g. `job=ab12cd34`).
 
 ### Changed
+- Genome table: a banner tells how many genomes still lack a FASTA (and roughly how much that is) with an **Get all** button; the confirmation shows size and estimated time, the job shows the remaining time, and the finished message points to the QC tab.
 - **Coverage floor**: genomes shorter than `GC_MIN_COVERAGE_PCT` (default **80**) % of the reference (the longest RefSeq) are not worth curating - `check` never proposes them, and ones already held are listed in the changeset as `removed` with the reason and **pre-approved** (soft: status `Removed`, history kept, the FASTA file stays on disk). NCBI *Complete* genomes are exempt; `0` turns the rule off. Removed genomes are hidden from the genome table, dashboard, TSV downloads and QC (the public page already hid them).
 - Public page footer now links the sources' policies (NCBI notice, Pathoplexus data-use terms, BV-BRC) and states that only open Pathoplexus data is included. New docs: `docs/LICENSES.md` (licence and data-use review) and `docs/WORKFLOW.md`.
 - README rewritten to be short and practical (features, screenshots, installation, running, output), in English with a Korean twin `README.ko.md`; the long explanations moved to `docs/GUIDE.ko.md`.

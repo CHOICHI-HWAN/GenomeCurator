@@ -824,7 +824,7 @@ def create_app(scheduler: bool = True) -> FastAPI:
 
         def work(p):
             res = curate.fetch_missing_sequences(watch, ids or None, progress=p)
-            msg = f"서열 {res['fetched']}건 다운로드 완료"
+            msg = f"서열 {res['fetched']}건 다운로드 완료 (다음: QC 탭에서 QC 실행)"
             if res["failed"]:
                 first = next(iter(res["failed"].items()))
                 msg += f", {len(res['failed'])}건 실패 (예: {first[0]} - {first[1]})"
