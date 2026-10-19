@@ -70,6 +70,10 @@ CREATE TABLE IF NOT EXISTS private_genome(
 CREATE TABLE IF NOT EXISTS private_version(
   watch_id INTEGER, id TEXT, version INTEGER, metadata_json TEXT, file_path TEXT, seq_md5 TEXT, length INTEGER, source_file TEXT, uploaded TEXT, note TEXT, change_json TEXT,
   PRIMARY KEY(watch_id, id, version));
+-- genomes left out of the final analysis dataset: only a mark, nothing is deleted (exclusions.py)
+CREATE TABLE IF NOT EXISTS dataset_exclusion(
+  scope TEXT, watch_id INTEGER, id TEXT, reason TEXT, excluded_at TEXT,   -- scope: public (id = accession) | private (id = private id)
+  PRIMARY KEY(scope, watch_id, id));
 -- sequence QC (qc.py): one row per accession and tool (seqstats, nextclade); derived data, safe to delete and recompute
 CREATE TABLE IF NOT EXISTS qc_result(
   accession TEXT, tool TEXT, watch_id INTEGER, status TEXT,  -- good|mediocre|bad|error

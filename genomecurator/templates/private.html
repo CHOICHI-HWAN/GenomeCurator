@@ -61,13 +61,15 @@
  <button type="button" onclick="pqc(1)" {% if not rows %}disabled{% endif %} title="이미 한 것도 다시 계산">QC 다시 계산</button>
  <a href="/export"><button type="button">내보내기로 →</button></a></div>
 <form id="pf" method="post" style="display:none"></form>
-<table><tr><th>id</th><th>버전</th><th>strain</th><th>날짜</th><th>국가</th><th>clade</th><th>길이</th><th>서열 통계</th><th>Nextclade</th><th>최근 업로드</th><th></th></tr>
+<table><tr><th>id</th><th>버전</th><th>strain</th><th>날짜</th><th>국가</th><th>clade</th><th>길이</th><th>서열 통계</th><th>Nextclade</th><th>최근 업로드</th><th>데이터셋</th><th></th></tr>
 {% for r in rows %}<tr><td>{{ r.id }}</td><td><a href="#h-{{ r.id }}" title="이력 보기">v{{ r.version }}</a></td><td>{{ r.strain }}</td><td>{{ r.date }}</td><td>{{ r.country }}</td>
 <td>{{ r.clade or '-' }}{% if r.clade_differs %} <span style="color:var(--warn)" title="입력한 clade와 Nextclade 판정이 다릅니다: {{ r.nextclade_clade }}">⚠ {{ r.nextclade_clade }}</span>{% endif %}</td>
 <td>{{ '{:,}'.format(r.length or 0) }}</td><td>{% if r.qc_stats %}<span class="qs {{ r.qc_stats }}">{{ {'good': '양호', 'mediocre': '주의', 'bad': '불량', 'error': '오류'}[r.qc_stats] }}</span>{% else %}<span class="mut">-</span>{% endif %}</td>
 <td>{% if r.qc_nextclade %}<span class="qs {{ r.qc_nextclade }}">{{ {'good': '양호', 'mediocre': '주의', 'bad': '불량', 'error': '오류'}[r.qc_nextclade] }}</span>{% else %}<span class="mut">-</span>{% endif %}</td>
-<td class="nw mut">{{ r.updated }}</td><td><button type="button" onclick="del_('{{ r.id }}')">삭제</button></td></tr>
-{% else %}<tr><td colspan="11" class="mut">아직 없습니다. 위에서 올려 보세요.</td></tr>{% endfor %}</table>
+<td class="nw mut">{{ r.updated }}</td>
+<td class="nw">{% if r.excluded %}<span style="color:var(--warn)" title="{{ r.excl_reason }}">제외됨</span> <button type="button" onclick="excl_('{{ r.id }}',false)">풀기</button>{% else %}<button type="button" onclick="excl_('{{ r.id }}',true)" title="최종 분석 데이터셋에서 빼고 보관합니다">제외</button>{% endif %}</td>
+<td><button type="button" onclick="del_('{{ r.id }}')">삭제</button></td></tr>
+{% else %}<tr><td colspan="12" class="mut">아직 없습니다. 위에서 올려 보세요.</td></tr>{% endfor %}</table>
 
 <h3>버전 이력 ({{ hist|length }}건)</h3>
 <table><tr><th>id</th><th>버전</th><th>시각</th><th>내용</th><th>파일 / 메모</th><th></th></tr>
@@ -175,6 +177,8 @@ async function chk(){const d=fd2();if(!d)return;document.getElementById('bi').di
 async function imp(){const d=fd2();if(!d)return;if(!confirm('비공개 저장소에 올립니다 (바뀐 id는 새 버전으로 기록됩니다).'))return;
  const r=await (await fetch('/api/private/'+W()+'/import',{method:'POST',body:d})).json();
  if(r.error){show({error:r.error},false);return}show(r,true);setTimeout(()=>location.reload(),1500)}
+async function excl_(id,ex){let reason='';if(ex){const r=prompt(id+' 을(를) 최종 분석 데이터셋에서 제외합니다 (삭제하지 않고 보관, 언제든 풀 수 있음).\n사유(선택):','');if(r===null)return;reason=r}
+ const r=await (await fetch('/api/exclusions/'+W(),{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({ids:[id],scope:'private',reason,action:ex?'exclude':'include'})})).json();if(r.error){alert(r.error);return}location.reload()}
 async function del_(id){if(!confirm(id+' 을(를) 비공개 저장소에서 삭제할까요?\n(버전 이력은 남아 있어 나중에 복원할 수 있습니다)'))return;
  await fetch('/api/private/'+W()+'/'+encodeURIComponent(id),{method:'DELETE'});location.reload()}
 async function rest(id,v){if(!confirm(id+' 의 버전 '+v+' 을(를) 새 버전으로 복원할까요?'))return;

@@ -370,12 +370,15 @@ def list_rows(watch_id: int) -> list[dict]:
         qcs: dict[str, dict] = {}
         for q in con.execute("SELECT accession, tool, status, clade, lineage FROM qc_result WHERE watch_id=? AND accession LIKE 'private:%'", (watch_id,)):
             qcs.setdefault(q["accession"], {})[q["tool"]] = dict(q)
+        from . import exclusions
+        exm = exclusions.marked(watch_id, "private")
         for r in con.execute("SELECT id, metadata_json, length, imported, updated, version FROM private_genome WHERE watch_id=? ORDER BY id", (watch_id,)):
             m = json.loads(r["metadata_json"] or "{}")
             q = qcs.get(prefix(r["id"]), {})
             nc, st = q.get("nextclade") or {}, q.get("seqstats") or {}
             out.append({"id": r["id"], "strain": m.get("strain"), "date": m.get("date"), "country": m.get("country"), "clade": m.get("clade") or nc.get("clade") or "",
                         "length": r["length"], "imported": r["imported"], "updated": r["updated"], "version": r["version"] or 1,
+                        "excluded": r["id"] in exm, "excl_reason": (exm.get(r["id"]) or {}).get("reason") or "",
                         "qc_stats": st.get("status", ""), "qc_nextclade": nc.get("status", ""), "nextclade_clade": nc.get("clade") or "",
                         "clade_differs": bool(m.get("clade") and nc.get("clade") and m["clade"] != nc["clade"])})
         return out

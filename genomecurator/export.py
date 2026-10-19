@@ -17,7 +17,7 @@ import re
 from datetime import datetime
 from pathlib import Path
 
-from . import __version__, completeness, config, db, log, qc, reconcile
+from . import __version__, completeness, config, db, exclusions, log, qc, reconcile
 from .db import connect
 
 _log = log.get("export")
@@ -138,16 +138,20 @@ def _load(watch_id: int) -> tuple[dict, list[dict]]:
         ref = completeness.reference_map(con).get(watch_id)
     finally:
         con.close()
+    ex = exclusions.marked(watch_id, "public")
     for r in rows:
+        r["_excluded"] = ex.get(r["accession"])
         r["_qc"] = qcs.get(r["accession"], {})
         r["completeness"], _ = completeness.classify(r.get("genome_status"), r.get("genome_length"), ref and ref[1])
     return dict(w), rows
 
 
 def select(rows: list[dict], require_sequence: bool = True, min_length: int | None = None, completeness_in: list[str] | None = None,
-           qc_not: list[str] | None = None, clade: str | None = None) -> list[dict]:
+           qc_not: list[str] | None = None, clade: str | None = None, skip_excluded: bool = True) -> list[dict]:
     out = []
     for r in rows:
+        if skip_excluded and r.get("_excluded"):
+            continue
         if require_sequence and not (r.get("file_path") and config.data_path(r["file_path"]).exists()):
             continue
         if min_length and (r.get("genome_length") or 0) < min_length:
@@ -269,15 +273,21 @@ def preview(watch_id: int, profile: str = "nextstrain", include_private: bool = 
             m = sum(1 for r in out if not r[col])
             if m:
                 warn.append(f"{label}이(가) 비었거나 형식이 맞지 않는 {m:,}건 (Nextstrain에서는 빈 값으로 처리됩니다).")
+    n_ex = sum(1 for r in rows if r.get("_excluded"))
+    if n_ex and filters.get("skip_excluded", True):
+        warn.append(f"데이터셋에서 제외하도록 표시한 유전체 {n_ex:,}건은 빠집니다 (삭제된 것이 아니라 보관 중이며, 유전체 탭에서 제외를 풀 수 있습니다).")
     n_priv = 0
     if include_private:
         from . import private as _private
-        n_priv = len(_private.rows_for_export(watch_id))
+        ex_priv = exclusions.marked(watch_id, "private")
+        n_priv = sum(1 for r in _private.rows_for_export(watch_id) if r["id"] not in ex_priv)
+        if ex_priv:
+            warn.append(f"제외 표시한 비공개 유전체 {len(ex_priv):,}건은 빠집니다 (보관 중).")
         if n_priv:
             warn.append(f"비공개 유전체 {n_priv:,}건이 별도 파일(metadata-private.tsv, sequences-private.fasta)로 함께 나갑니다. 이 폴더는 외부에 공유하지 마세요.")
         else:
             warn.append("비공개 저장소가 비어 있습니다.")
-    return {"virus": w["name"], "profile": profile, "genomes": len(rows), "selected": n, "private": n_priv, "left_out_no_id": no_id, "left_out_duplicate": dup, "warnings": warn}
+    return {"virus": w["name"], "profile": profile, "genomes": len(rows), "selected": n, "excluded": n_ex, "private": n_priv, "left_out_no_id": no_id, "left_out_duplicate": dup, "warnings": warn}
 
 
 def private_row(rec: dict) -> dict:
@@ -304,7 +314,8 @@ def private_row(rec: dict) -> dict:
 
 def private_table(watch_id: int) -> tuple[list[str], list[dict], dict[str, str]]:
     from . import private as _private
-    recs = _private.rows_for_export(watch_id)
+    ex = exclusions.marked(watch_id, "private")
+    recs = [r for r in _private.rows_for_export(watch_id) if r["id"] not in ex]
     rows = [private_row(r) for r in recs]
     extra = sorted({k for r in rows for k in r} - set(NEXTSTRAIN_COLUMNS))
     return NEXTSTRAIN_COLUMNS + extra, rows, {r["id"]: r["file_path"] for r in recs}
@@ -411,6 +422,25 @@ def write(watch_id: int, out_dir: Path | None = None, profile: str = "nextstrain
         from . import private as _pv
         priv = {"rows": len(prows), "sequences": n_pseq, "versions": {r["id"]: r["version"] for r in _pv.rows_for_export(watch_id)}, "files": {"metadata-private.tsv": {"sha256": hp_m.hexdigest(), "columns": pcols}, "sequences-private.fasta": {"sha256": hp_f.hexdigest()}}}
     pv = preview(watch_id, profile, include_private=include_private, **filters)
+    excl_files = []
+    if filters.get("skip_excluded", True):
+        pub = [r for r in exclusions.listing(watch_id, "public")]
+        if pub:
+            info = {r["accession"]: r for r in _load(watch_id)[1]}
+            with open(out / "excluded.tsv", "w", encoding="utf-8", newline="\n") as f:
+                f.write("accession\tstrain\treason\texcluded_at\n")
+                for e in pub:
+                    g = info.get(e["id"]) or {}
+                    f.write("\t".join(_tsv_cell(x) for x in (e["id"], g.get("strain") or "", e["reason"] or "", e["excluded_at"])) + "\n")
+            excl_files.append("excluded.tsv")
+        if include_private:
+            pr = exclusions.listing(watch_id, "private")
+            if pr:
+                with open(out / "excluded-private.tsv", "w", encoding="utf-8", newline="\n") as f:
+                    f.write("id\treason\texcluded_at\n")
+                    for e in pr:
+                        f.write("\t".join(_tsv_cell(x) for x in (e["id"], e["reason"] or "", e["excluded_at"])) + "\n")
+                excl_files.append("excluded-private.tsv")
     con = connect()
     try:
         tags = sorted({f"{r[0]}@{r[1]}" for r in con.execute("SELECT DISTINCT dataset, dataset_tag FROM qc_result WHERE watch_id=? AND tool='nextclade'", (watch_id,))})
@@ -424,6 +454,8 @@ def write(watch_id: int, out_dir: Path | None = None, profile: str = "nextstrain
                 "id_column": PROFILES[profile]["id"], "warnings": pv["warnings"], "nextclade": {"datasets": tags, "versions": nver},
                 "files": {"metadata.tsv": {"sha256": h_meta.hexdigest(), "columns": cols}, "sequences.fasta": {"sha256": h_fa.hexdigest()}},
                 "contains_private": bool(priv), "private": priv,
+                "excluded": {"public": pv.get("excluded", 0), "files": excl_files,
+                             "note": "marked as left out of the dataset; nothing is deleted - see excluded.tsv for who/why/when"},
                 "data_use": "metadata.tsv / sequences.fasta: open data only - the curated set is defined by INSDC (NCBI) accessions, so Pathoplexus restricted-use records are not included. "
                             "Cite the original submitters and sources (NCBI, Pathoplexus, BV-BRC); see docs/LICENSES.md."
                             + (" metadata-private.tsv / sequences-private.fasta hold PRIVATE genomes: do not share or publish them." if priv else "")}
@@ -445,7 +477,8 @@ def write(watch_id: int, out_dir: Path | None = None, profile: str = "nextstrain
     p(100, "내보내기 완료")
     _log.info("export %r profile=%s rows=%d sequences=%d -> %s", w["name"], profile, len(rows), n_seq, out)
     return {"dir": str(out), "rows": len(rows), "sequences": n_seq, "private": priv["rows"] if priv else 0, "warnings": pv["warnings"], "config": str(cfg_path),
-            "files": ["metadata.tsv", "sequences.fasta", "manifest.json"] + (["metadata-private.tsv", "sequences-private.fasta"] if priv else []) + ([] if ns else ["nextstrain-config.yaml"])}
+            "files": ["metadata.tsv", "sequences.fasta", "manifest.json"] + (["metadata-private.tsv", "sequences-private.fasta"] if priv else []) + excl_files + ([] if ns else ["nextstrain-config.yaml"]),
+            "excluded": pv.get("excluded", 0)}
 
 
 def nextstrain_config(out: Path, profile: str = "nextstrain", relative_to: Path | None = None, private: bool = False) -> str:

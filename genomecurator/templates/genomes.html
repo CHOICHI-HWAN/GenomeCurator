@@ -13,6 +13,8 @@
 {% set toolbar_extra %}
 <span style="width:1px;background:var(--bd);align-self:stretch;margin:0 6px"></span>
 <button class="tbn" onclick="getSeq()" title="선택한(없으면 전체) 유전체 중 FASTA가 없는 것을 NCBI에서 받습니다"><i>🧬</i>Get FASTA</button>
+<button class="tbn" style="color:var(--warn)" onclick="exclSel(true)" title="선택한 유전체를 최종 분석 데이터셋(내보내기)에서 뺍니다. 삭제하지 않고 그대로 보관하며 언제든 풀 수 있습니다"><i>🚫</i>데이터셋에서 제외</button>
+<button class="tbn" onclick="exclSel(false)" title="선택한 유전체의 제외 표시를 풉니다"><i>↩</i>제외 해제</button>
 {% endset %}
 {% include "bvgrid.html" %}
 <script>
@@ -20,6 +22,13 @@ const fmtEst=todo=>{const bp=todo.reduce((a,r)=>a+(+r.genome_length||0),0),gb=bp
 (function(){const DD=JSON.parse(document.getElementById('gdata').textContent),todo=DD.rows.filter(r=>r.has_fasta==='No');if(!todo.length)return;const e=fmtEst(todo);
  const el=document.getElementById('noseq');el.style.display='';el.innerHTML='서열(FASTA)이 아직 없는 유전체 <b>'+todo.length.toLocaleString()+'건</b> (약 '+e.gb+'). 분석·QC·내보내기에는 서열이 필요합니다. <button type="button" class="p" onclick="getSeq(true)" style="margin-left:8px">모두 받기</button>'
   +' <span class="mut" style="font-size:12px">NCBI에서 100건씩 받으며 중간에 멈춰도 이어받습니다. 끝나면 QC 탭에서 QC를 실행하세요.</span>'})();
+async function exclSel(ex){const DD=JSON.parse(document.getElementById('gdata').textContent),sel=G.selected();
+ if(!sel.length){alert((ex?'데이터셋에서 제외할':'제외 표시를 풀')+' 유전체를 표에서 먼저 선택하세요 (체크박스, 행 끌기, Shift+클릭, 또는 필터 후 Select all).');return}
+ const ids=sel.map(i=>DD.rows[i].accession);let reason='';
+ if(ex){const r=prompt(ids.length.toLocaleString()+'건을 최종 분석 데이터셋에서 제외합니다.\n삭제하지 않고 그대로 보관하며 언제든 풀 수 있습니다.\n\n사유(선택, 나중에 excluded.tsv에 기록됩니다):','');if(r===null)return;reason=r}
+ else if(!confirm(ids.length.toLocaleString()+'건의 제외 표시를 풉니다.'))return;
+ const r=await (await fetch('/api/exclusions/{{ watch }}',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({ids,scope:'public',reason,action:ex?'exclude':'include'})})).json();
+ if(r.error){alert(r.error);return}location.reload()}
 function getSeq(all){const DD=JSON.parse(document.getElementById('gdata').textContent),sel=all===true?[]:G.selected();
  const pool=all===true?DD.rows:(sel.length?sel.map(i=>DD.rows[i]):G.filtered().map(i=>DD.rows[i]));const todo=pool.filter(r=>r.has_fasta==='No');
  if(!todo.length){alert('받을 서열이 없습니다. '+(sel.length?'선택한 항목은 이미 모두 FASTA가 있습니다.':'표시된 유전체는 이미 모두 FASTA가 있습니다.'));return}

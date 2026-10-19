@@ -1407,3 +1407,80 @@ def test_private_api_one_template_and_history(tmp_path, monkeypatch):
     r = c.post("/api/private/1/check", files={"metadata": ("b.xlsx", data), "fasta": ("f.fa", ">API_2\n" + "ACGT" * 20 + "\n")}, data={"default_clade": "Ib"}).json()
     assert r["ok"] and r["new"] == 1
     assert "비공개" in c.get("/private?watch=1").text and "API_1" in c.get("/private?watch=1").text
+
+
+def test_exclusion_is_a_mark_not_a_deletion(tmp_path, monkeypatch):
+    import json
+    import pytest
+    from genomecurator import exclusions, export, private, qc
+    _qc_env(tmp_path, monkeypatch)
+    from genomecurator.db import connect
+    con = connect()
+    con.execute("UPDATE genome SET pathoplexus_accession='PP_A1.1' WHERE accession='A1'")
+    con.execute("UPDATE genome SET pathoplexus_accession='PP_X2.1' WHERE accession='X2'")
+    con.commit()
+    con.close()
+    qc.dataset_update("nextstrain/mpox/all-clades")
+    qc.run(1)
+    private.import_texts(1, *_priv_files([{"PPX_accession": "LAB_E1", "strain": "a", "date": "2025", "country": "Uganda"},
+                                          {"PPX_accession": "LAB_E2", "strain": "b", "date": "2025", "country": "Uganda"}], {"LAB_E1": "ACGT" * 40, "LAB_E2": "ACGT" * 41}))
+    assert [x["PPX_accession"] for x in export.table(1, "nextstrain")[1]] == ["PP_A1", "PP_X2"]
+    r = exclusions.add(1, ["X2", "NOPE", "X2"], "public", "bad assembly")
+    assert r == {"excluded": 1, "new": 1, "unknown": ["NOPE"]}                                # unknown ids are reported, never stored
+    assert exclusions.add(1, ["X2"], "public", "still bad")["new"] == 0                       # again: only the reason is updated
+    assert exclusions.marked(1)["X2"]["reason"] == "still bad"
+    with pytest.raises(ValueError):
+        exclusions.add(1, ["X2"], "elsewhere")
+    # nothing was deleted: the genome, its sequence, its QC are all still there
+    con = connect()
+    assert con.execute("SELECT COUNT(*) FROM genome WHERE accession='X2'").fetchone()[0] == 1
+    assert con.execute("SELECT file_path FROM genome_sequence WHERE accession='X2'").fetchone()[0]
+    assert con.execute("SELECT COUNT(*) FROM qc_result WHERE accession='X2'").fetchone()[0] == 2
+    con.close()
+    assert (tmp_path / "genomes" / "X2.fna").exists()
+    # ...but the dataset leaves it out, says so, and the preview warns
+    assert [x["PPX_accession"] for x in export.table(1, "nextstrain")[1]] == ["PP_A1"]
+    assert export.preview(1, "nextstrain")["excluded"] == 1 and any("제외하도록 표시" in w for w in export.preview(1, "nextstrain")["warnings"])
+    out = tmp_path / "ds"
+    res = export.write(1, out, "nextstrain")
+    assert res["rows"] == 1 and "excluded.tsv" in res["files"]
+    lines = (out / "excluded.tsv").read_text(encoding="utf-8").splitlines()
+    assert lines[0] == "accession\tstrain\treason\texcluded_at" and lines[1].split("\t")[:3] == ["X2", "", "still bad"]
+    mf = json.loads((out / "manifest.json").read_text(encoding="utf-8"))
+    assert mf["excluded"]["public"] == 1 and mf["excluded"]["files"] == ["excluded.tsv"]
+    assert "PP_X2" not in (out / "metadata.tsv").read_text(encoding="utf-8") and "PP_X2" not in (out / "sequences.fasta").read_text(encoding="utf-8")
+    # the private store too (and its file only travels with the private export)
+    assert exclusions.add(1, ["LAB_E2"], "private", "contaminated")["excluded"] == 1 and exclusions.add(1, ["PP_A1"], "private")["unknown"] == ["PP_A1"]
+    assert [x["id"] for x in private.list_rows(1) if x["excluded"]] == ["LAB_E2"]
+    assert [r["PPX_accession"] for r in export.private_table(1)[1]] == ["LAB_E1"]
+    out2 = tmp_path / "ds2"
+    r2 = export.write(1, out2, "nextstrain", include_private=True)
+    assert r2["private"] == 1 and "excluded-private.tsv" in r2["files"] and "LAB_E2" not in (out2 / "metadata-private.tsv").read_text(encoding="utf-8")
+    assert not (out / "excluded-private.tsv").exists()
+    assert len(private.list_rows(1)) == 2 and (tmp_path / "private" / "Mpox" / "LAB_E2.fna").exists()      # still stored
+    # lifting the mark brings them back, nothing else changes
+    assert exclusions.remove(1, ["X2"]) == {"included": 1} and exclusions.remove(1, ["X2"]) == {"included": 0}
+    assert [x["PPX_accession"] for x in export.table(1, "nextstrain")[1]] == ["PP_A1", "PP_X2"]
+    assert export.table(1, "nextstrain", skip_excluded=True)[1] and export.write(1, tmp_path / "ds3", "nextstrain")["excluded"] == 0
+    assert not (tmp_path / "ds3" / "excluded.tsv").exists()
+
+
+def test_exclusion_api_and_pages(tmp_path, monkeypatch):
+    from fastapi.testclient import TestClient
+    from genomecurator import private, web
+    _qc_env(tmp_path, monkeypatch)
+    private.import_texts(1, *_priv_files([{"PPX_accession": "LAB_Z1", "strain": "a", "date": "2025", "country": "Uganda"}], {"LAB_Z1": "ACGT" * 40}))
+    c = TestClient(web.create_app(scheduler=False))
+    r = c.post("/api/exclusions/1", json={"ids": ["A1", "ZZ"], "scope": "public", "action": "exclude", "reason": "short read"}).json()
+    assert r["excluded"] == 1 and r["unknown"] == ["ZZ"]
+    assert [x["id"] for x in c.get("/api/exclusions/1").json()] == ["A1"] and c.get("/api/exclusions/1?scope=private").json() == []
+    page = c.get("/genomes?watch=1").text
+    import json, re
+    data = json.loads(re.search(r'<script type="application/json" id="gdata">(.*?)</script>', page, re.S).group(1))
+    assert "exclSel" in page and {r["accession"]: r["excluded"] for r in data["rows"]} == {"A1": "제외", "X2": "포함"}
+    assert {r["accession"]: r["excl_reason"] for r in data["rows"]}["A1"] == "short read" and any(f["k"] == "excluded" for f in data["facets"])
+    assert c.post("/api/exclusions/1", json={"ids": ["LAB_Z1"], "scope": "private", "action": "exclude"}).json()["excluded"] == 1
+    assert "제외됨" in c.get("/private?watch=1").text
+    assert c.post("/api/exclusions/1", json={"ids": ["A1"], "scope": "public", "action": "include"}).json() == {"included": 1}
+    assert c.post("/api/exclusions/99", json={"ids": ["A1"], "scope": "public", "action": "exclude"}).status_code == 400
+    assert c.get("/api/export/1/preview?profile=nextstrain").json()["excluded"] == 0

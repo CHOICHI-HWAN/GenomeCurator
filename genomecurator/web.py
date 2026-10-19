@@ -6,7 +6,7 @@ from fastapi import FastAPI, Form, Request
 from fastapi.responses import HTMLResponse, JSONResponse, RedirectResponse, Response, StreamingResponse
 from fastapi.templating import Jinja2Templates
 
-from . import __version__, analysis, completeness, export, private, qc, config, curate, jobs, log
+from . import __version__, analysis, completeness, exclusions, export, private, qc, config, curate, jobs, log
 from .db import audit_now, connect
 
 _log = log.get("web")
@@ -53,7 +53,7 @@ CS_COLS = [("kind", "종류", True, True), ("decision", "결정", True, True), (
 CS_FACETS = [("kind", "종류"), ("decision", "결정"), ("integrity", "정합성(소스 간 일치)"), ("seq", "서열 검증"), ("completeness", "Completeness"), ("host_name", "Host"),
              ("isolation_country", "Country"), ("collection_year", "Collection Year"), ("has_sra", "SRA")]
 GN_COLS = [("genome_name", "Genome Name", True), ("strain", "Strain", True), ("genbank", "GenBank Accessions", True),
-           ("genome_length", "Size", True), ("completeness", "Completeness", True, True), ("ref_coverage", "Ref Coverage %", False),
+           ("genome_length", "Size", True), ("completeness", "Completeness", True, True), ("excluded", "데이터셋", True, True), ("ref_coverage", "Ref Coverage %", False),
            ("genome_status", "NCBI Status", False, True), ("collection_date", "Collection Date", True),
            ("isolation_country", "Isolation Country", True), ("host_name", "Host Name", True),
            ("clade", "Clade", None), ("lineage", "Lineage", None), ("serotype", "Serotype", None),
@@ -66,7 +66,7 @@ GN_COLS = [("genome_name", "Genome Name", True), ("strain", "Strain", True), ("g
            ("qc", "QC", True, True), ("nc_clade", "Nextclade Clade", None), ("nc_lineage", "Nextclade Lineage", None),
            ("gc_content", "GC %", False), ("release_date", "Release Date", False), ("date_modified", "Modified", False)]
 TAX_FACETS = [("clade", "Clade"), ("lineage", "Lineage"), ("serotype", "Serotype"), ("genotype", "Genotype"), ("subtype", "Subtype")]
-GN_FACETS = [("completeness", "Completeness"), ("genome_status", "NCBI Status"), ("host_name", "Host"), ("isolation_country", "Country"),
+GN_FACETS = [("completeness", "Completeness"), ("excluded", "데이터셋 (제외 표시)"), ("genome_status", "NCBI Status"), ("host_name", "Host"), ("isolation_country", "Country"),
              ("collection_year", "Collection Year"), ("has_sra", "SRA"), ("has_fasta", "FASTA"), ("qc", "QC"), ("genome_quality", "Quality")]
 
 
@@ -475,6 +475,24 @@ def create_app(scheduler: bool = True) -> FastAPI:
         return render(request, "export.html", nav="exp", watches=watches, profiles={k: v["label"] for k, v in export.PROFILES.items()},
                       exports=export.list_exports(), exports_dir=str(export.exports_dir()))
 
+    @app.get("/api/exclusions/{watch}")
+    def api_exclusions(watch: int, scope: str = ""):
+        return exclusions.listing(watch, scope or None)
+
+    @app.post("/api/exclusions/{watch}")
+    async def api_exclusions_set(request: Request, watch: int):
+        """Leave genomes out of the dataset (or put them back): body {ids: [...], scope: public|private, action: exclude|include, reason}. Nothing is deleted."""
+        if not _same_origin(request):
+            return JSONResponse({"error": "cross-site request refused"}, 403)
+        body = await request.json()
+        ids, scope = [str(i) for i in body.get("ids", [])], body.get("scope", "public")
+        try:
+            if body.get("action") == "include":
+                return exclusions.remove(watch, ids, scope)
+            return exclusions.add(watch, ids, scope, str(body.get("reason") or ""))
+        except ValueError as e:
+            return JSONResponse({"error": str(e)}, 400)
+
     @app.get("/api/export/profiles")
     def api_export_profiles():
         return {k: {"label": v["label"], "id_column": v["id"], "columns": v["columns"]} for k, v in export.PROFILES.items()}
@@ -854,8 +872,11 @@ def create_app(scheduler: bool = True) -> FastAPI:
         finally:
             _c.close()
         qcm = qc.per_genome(watch)
+        exm = exclusions.marked(watch, "public")
         for n, r in enumerate(rows):
             q = qcm.get(r["accession"], {})
+            r["excluded"] = "제외" if r["accession"] in exm else "포함"
+            r["excl_reason"] = (exm.get(r["accession"]) or {}).get("reason") or ""
             r["qc"], r["nc_clade"], r["nc_lineage"] = q.get("qc", "미실행"), q.get("nc_clade"), q.get("nc_lineage")
             r.pop("taxon_lineage_ids", None)
             r.pop("taxon_lineage_names", None)

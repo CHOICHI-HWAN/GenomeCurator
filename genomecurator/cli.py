@@ -64,6 +64,13 @@ def _main(argv=None):
         x.add_argument("name", help="the registered virus these genomes belong to")
         x.add_argument("--metadata", required=True, help="TSV with an id column (PPX_accession or accession), strain, date, country, ...")
         x.add_argument("--fasta", required=True, help="FASTA whose ids are those ids")
+    xc = sub.add_parser("exclude", help="leave genomes out of the final analysis dataset (nothing is deleted); --undo puts them back")
+    xc.add_argument("name", help="the registered virus")
+    xc.add_argument("ids", nargs="*", help="accessions (or private ids with --private)")
+    xc.add_argument("--reason", default="", help="why (recorded in excluded.tsv)")
+    xc.add_argument("--private", action="store_true", help="the ids are private-store ids")
+    xc.add_argument("--undo", action="store_true", help="lift the exclusion")
+    xc.add_argument("--list", action="store_true", help="show what is excluded")
     pl = sub.add_parser("private-list", help="list the private genomes of a virus")
     pl.add_argument("name")
     q = sub.add_parser("qc", help="sequence statistics and Nextclade for one virus")
@@ -124,6 +131,23 @@ def _main(argv=None):
                 "SELECT id FROM changeset_item WHERE changeset_id=? AND decision='pending'", (args.changeset,))]
             curate.decide(ids, "approved")
         print(curate.apply(args.changeset))
+    elif args.cmd == "exclude":
+        from . import exclusions
+        con = connect()
+        try:
+            w = con.execute("SELECT id FROM watchlist WHERE name=?", (args.name,)).fetchone()
+        finally:
+            con.close()
+        if not w:
+            raise SystemExit(f"unknown watch: {args.name}")
+        scope = "private" if args.private else "public"
+        if args.list or not args.ids:
+            for e in exclusions.listing(w["id"], None if args.list and not args.private else scope):
+                print("\t".join(str(e[k] or "") for k in ("scope", "id", "excluded_at", "reason")))
+        elif args.undo:
+            print(json.dumps(exclusions.remove(w["id"], args.ids, scope), ensure_ascii=False))
+        else:
+            print(json.dumps(exclusions.add(w["id"], args.ids, scope, args.reason), ensure_ascii=False))
     elif args.cmd in ("private-check", "private-import", "private-list"):
         from . import private
         from pathlib import Path
