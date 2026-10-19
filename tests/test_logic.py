@@ -2091,6 +2091,14 @@ def test_mutprofile_annotation_and_paf():
     assert list(mp.snvs_from_paf(paf)) == [("q1", 16, "A", "G"), ("q1", 39, "C", "T")]      # the N substitution (*nt) is never reported; insertions/deletions move only the right coordinate
 
 
+def test_mutprofile_reference_choice():
+    from genomecurator import mutprofile as mp
+    assert mp.reference_choice({"build": "clade-i"}) == "KJ642613.1"                      # clade I runs against its own reference
+    assert mp.reference_choice({"build": "mpxv"}) == mp.reference_choice({"build": ""}) == "NC_063383.1"
+    assert mp.reference_choice({"build": "clade-i", "mutprofile_json": '{"reference": "NC_063383.1"}'}) == "NC_063383.1"
+    assert mp.settings_sha({"build": "clade-i"}) != mp.settings_sha({"build": "mpxv"})   # a different reference is a different analysis
+
+
 def mp_rev(s):
     return s.translate(str.maketrans("ACGT", "TGCA"))[::-1]
 

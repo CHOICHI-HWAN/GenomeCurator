@@ -46,7 +46,7 @@ def status() -> dict:
 
 # ------------------------------------------------------------------------------------------------ settings
 def defaults_for(ds: dict) -> dict:
-    return {"before": 5, "after": 5, "profiles": "GA>AA,TC>TT"}
+    return {"before": 5, "after": 5, "profiles": "GA>AA,TC>TT", "reference": "auto"}
 
 
 def parse_settings(text) -> dict:
@@ -61,7 +61,7 @@ def parse_settings(text) -> dict:
             raise ValueError(f"설정(JSON)을 읽을 수 없습니다: {e}") from None
     if not isinstance(d, dict):
         raise ValueError("설정은 JSON 객체여야 합니다.")
-    unknown = sorted(set(d) - {"before", "after", "profiles"})
+    unknown = sorted(set(d) - {"before", "after", "profiles", "reference"})
     if unknown:
         raise ValueError(f"알 수 없는 설정: {', '.join(unknown)}")
     out = {}
@@ -70,6 +70,10 @@ def parse_settings(text) -> dict:
             if not str(d[k]).isdigit() or not 0 <= int(d[k]) <= 50:
                 raise ValueError(f"{k}는 0~50의 정수입니다.")
             out[k] = int(d[k])
+    if d.get("reference") not in (None, ""):
+        if d["reference"] != "auto" and d["reference"] not in REFERENCES:
+            raise ValueError("reference는 auto, NC_063383.1, KJ642613.1 중 하나입니다.")
+        out["reference"] = d["reference"]
     prof = str(d.get("profiles") or "").replace(" ", "").upper()
     if prof:
         if not all(re.fullmatch(r"[ACGT]{2,3}>[ACGT]{2,3}", x) for x in prof.split(",")):
@@ -83,20 +87,30 @@ def effective(ds: dict) -> dict:
 
 
 def settings_sha(ds: dict) -> str:
-    return hashlib.sha256(json.dumps(effective(ds), sort_keys=True).encode()).hexdigest()[:16]
+    return hashlib.sha256(json.dumps({**effective(ds), "reference": reference_choice(ds)}, sort_keys=True).encode()).hexdigest()[:16]
 
 
 # ------------------------------------------------------------------------------------------------ reference + annotation
+REFERENCES = {"NC_063383.1": ("", "RefSeq 참조 (clade IIa/IIb 등 기본)"), "KJ642613.1": ("clade-i", "clade I 참조 (Nextstrain·Nextclade가 clade I에 쓰는 것)")}
+
+
+def reference_choice(ds: dict) -> str:
+    """The reference accession used: the setting, or - on 'auto' - NC_063383.1 (RefSeq, what Nextclade / Squirrel / snipit use) except for the clade I build,
+    which Nextstrain and Nextclade run against their own clade I reference."""
+    r = effective(ds).get("reference", "auto")
+    if r in REFERENCES:
+        return r
+    return "KJ642613.1" if (ds.get("build") or "") == "clade-i" else "NC_063383.1"
+
+
 def reference_files(ds: dict) -> tuple[Path, Path | None]:
-    """The reference FASTA and gene annotation of the dataset's Nextstrain build (the same files the Nextstrain run uses)."""
+    """The reference FASTA and gene annotation (the workflow's own files for that reference, so genes match the sequence)."""
     base = nextstrain.workflow_dir() / "defaults"
-    build = ds.get("build") or "clade-i"
-    for d in (base / build, base):
-        fa = d / "reference.fasta"
-        if fa.exists():
-            gff = next((g for g in (d / "genome_annotation.gff3", base / "genome_annotation.gff3") if g.exists()), None)
-            return fa, gff
-    raise RuntimeError("참조 서열을 찾을 수 없습니다. Nextstrain 설정 카드에서 워크플로를 먼저 받아 주세요.")
+    d = base / "clade-i" if reference_choice(ds) == "KJ642613.1" else base
+    fa, gff = d / "reference.fasta", d / "genome_annotation.gff3"
+    if not fa.exists():
+        raise RuntimeError(f"참조 서열({reference_choice(ds)})을 찾을 수 없습니다. Nextstrain 설정 카드에서 워크플로를 먼저 받아 주세요.")
+    return fa, (gff if gff.exists() else None)
 
 
 def read_fasta(path: Path) -> tuple[str, str]:
