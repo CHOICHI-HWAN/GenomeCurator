@@ -1,0 +1,174 @@
+# Functional categories of mpox virus genes (NC_063383 annotation, curated from ViralZone) - Supplementary Table 1 of Lee, Choi et al., Emerg Microbes Infect 2026 (doi 10.1080/22221751.2026.2746255)
+OPG	vaccinia_homolog	function	category
+OPG001	C23L	Chemokine binding	Host-modulation
+OPG002	C22L	TNF receptor	Host-modulation
+OPG003	C19L	Ankyrin	Host-modulation
+OPG005	B22R	TLR signaling	Host-modulation
+OPG015		Ankyrin	Host-modulation
+OPG016			Host-modulation
+OPG019	C11R	Secreted EGF-like	Host-modulation
+OPG021		Zinc finger	Host-modulation
+OPG022		IL-18 binding protein	Host-modulation
+OPG023		Ankyrin	Host-modulation
+OPG025	C9L	Ankyrin	Host-modulation
+OPG027	C7L	IFN inhibitor	Host-modulation
+OPG029	C6L		Host-modulation
+OPG031	D13L	IL-1R agonist	Host-modulation
+OPG034	C1L		Host-modulation
+OPG035	N1L		Host-modulation
+OPG036	N2L	TLR inhibitor	Host-modulation
+OPG037	M1L	Apoptosis inhibitor	Host-modulation
+OPG038	M2L	NFkB inhibitor	Host-modulation
+OPG039	K1L	NFkB inhibitor	Host-modulation
+OPG040	K2L	Superinfection exclusion	Host-modulation
+OPG042	K4L		Unknown
+OPG043	K5L		Unknown
+OPG044	K7R		Unknown
+OPG045	F1L	Caspase-9 inhibitor	Host-modulation
+OPG046	F2L		Unknown
+OPG047	F3L		Unknown
+OPG048	F4L	Acid nuclease enzyme	Genome replication/transcription
+OPG049	F5L		Surface protein
+OPG050	F6L		Unknown
+OPG051	F7L		Unknown
+OPG052	F8L		Unknown
+OPG053	F9L		Surface protein
+OPG054	F10L	Kinase enzyme	Unknown
+OPG055	F11L	Budding	Assembly, budding
+OPG056	F12L	Actin tail budding	Assembly, budding
+OPG057	F13L		Surface protein
+OPG058	F14L		Unknown
+OPG059	F14.5L		Unknown
+OPG060	F15L		Unknown
+OPG061	F16L		Unknown
+OPG062	F17R		Unknown
+OPG063	E1L	Poly A polymerase	Genome replication/transcription
+OPG064	E2L	IEV morphogenesis	Assembly, budding
+OPG065	E3L	IFN resistance	Host-modulation
+OPG066	E4L	RNA polymerase subunit	Genome replication/transcription
+OPG068	E6R		Assembly, budding
+OPG069	E7R		Unknown
+OPG070	E8R		Assembly, budding
+OPG071		DNA polymerase	Genome replication/transcription
+OPG072	E10R	Sulfhydryl oxidase	Surface protein
+OPG073	E11L		Assembly, budding
+OPG074	O1L	Membrane protein	Structural integrity, Host-modulation
+OPG075	O2L		Assembly, budding
+OPG077	I1	DNA binding	Genome replication/transcription
+OPG078	I2L		Surface protein
+OPG079	I3L	ssDNA binding	Genome replication/transcription
+OPG080	I4L	Ribonuclease reduction enzyme	Genome replication/transcription
+OPG081	I2L		Surface protein
+OPG082	I6L	Telomere binding	Genome replication/transcription
+OPG083		Virion core	Assembly, budding
+OPG084	I8R		Genome replication/transcription
+OPG085	G1L	Protease	Assembly, budding
+OPG086	G3L		Surface protein
+OPG087	G2R	Trans-acting factor	Genome replication/transcription
+OPG088	G4L	Sulfhydryl oxidase	Assembly, budding
+OPG089	G5R		Genome replication/transcription
+OPG090	G5.5R	RNA polymerase subunit	Genome replication/transcription
+OPG091	G6R		Unknown
+OPG092	G7L		Assembly, budding
+OPG093	G8R	Trans-acting factor	Genome replication/transcription
+OPG094	G9R		Surface protein
+OPG095	L1R		Surface protein
+OPG096	L2R	Viral membrane-associated protein	Assembly, budding
+OPG097	L3L		Assembly, budding
+OPG098	L4R	Virion core	Assembly, budding
+OPG099	L5R		Surface protein
+OPG100	J1R		Surface protein
+OPG101	J2R	Thymidine kinase	Genome replication/transcription
+OPG102	J3R	2'O Methyl transferase	Genome replication/transcription
+OPG103	J4R	DNA-dependent RNA polymerase	Genome replication/transcription
+OPG104	J5L		Unknown
+OPG105	J6R	RNA polymerase subunit	Genome replication/transcription
+OPG106	H1L	Interferon inhibition	Host-modulation
+OPG107	H2R		Surface protein
+OPG108	H3L		Surface protein
+OPG109	H4L	RNA polymerase subunit	Genome replication/transcription
+OPG110	H5R	Viral Late Transcription Factor 4	Genome replication/transcription
+OPG111	H6R	DNA Topoisomerase	Genome replication/transcription
+OPG112	H7R	Viral membrane-associated protein	Genome replication/transcription
+OPG113	D1R	mRNA-capping enzyme large subunit	Genome replication/transcription
+OPG114	D2L	Virion core	Assembly, budding
+OPG115	D3R	Virion core	Assembly, budding
+OPG116	D4R	DNA polymerase family	Genome replication/transcription
+OPG117	D5R	DNA primase	Genome replication/transcription
+OPG118	D6R	Viral Early Transcription Factor Small Subunit	Genome replication/transcription
+OPG119	D7R	RNA polymerase subunit	Genome replication/transcription
+OPG120	D8L		Surface protein
+OPG121	D9R	mRNA decapping	Genome replication/transcription
+OPG122	D10R	mRNA decapping	Genome replication/transcription
+OPG123	D11L	DNA-dependent ATPase	Genome replication/transcription
+OPG124	D12L	mRNA-capping	Genome replication/transcription
+OPG125	D13L	Intracellular mature virion coat	Surface protein
+OPG126	A1L	Vaccinia Late Transcription Factor 2	Genome replication/transcription
+OPG127	A2L	Late Transcription Factor 3	Genome replication/transcription
+OPG128	A2.5L		Genome replication/transcription
+OPG129	A3L	Virion core	Assembly, budding
+OPG130	A4L	Virion core	Assembly, budding
+OPG131	A5R	DNA polymerase subunit	Genome replication/transcription
+OPG132	A6L	Viral membrane-associated protein	Assembly, budding
+OPG133	A7L	Vaccinia Early Transcription Factor Large subunit	Genome replication/transcription
+OPG134	A8R	Vaccinia Intermediate Transcription Factor 3	Genome replication/transcription
+OPG135	A9L		Surface protein
+OPG136	A10L	Major core	Assembly, budding
+OPG137	A11R	Viral membrane-associated protein	Assembly, budding
+OPG138	A12L	Core cleavage	Assembly, budding
+OPG139	A13L		Surface protein
+OPG140	A14L		Surface protein
+OPG141	A15.5L		Surface protein
+OPG142	A15L		Surface protein
+OPG143	A16L		Surface protein
+OPG144	A17L		Surface protein
+OPG145	A18R	Transcription factor	Genome replication/transcription
+OPG146	A19L		Surface protein
+OPG147	A21L		Surface protein
+OPG148	A20R	DNA polymerase processivity factor	Genome replication/transcription
+OPG149	A22R		Genome replication/transcription
+OPG150	A23R	Vaccinia Intermediate Transcription Factor 3	Genome replication/transcription
+OPG151	A24R	RNA polymerase subunit	Genome replication/transcription
+OPG153	A26L		Surface protein
+OPG154	A27L		Surface protein
+OPG155	A28L		Surface protein
+OPG156	A29L	RNA polymerase subunit	Genome replication/transcription
+OPG157	A30L		Surface protein
+OPG158	A30.5L		Unknown
+OPG159	A31R		Unknown
+OPG160	A32L	DNA packaging	Assembly, budding
+OPG161	A33R		Surface protein
+OPG162	A34R		Surface protein
+OPG163	A35R	MHC inhibitor	Host-modulation
+OPG164	A36R		Surface protein
+OPG165	A37R		Unknown
+OPG166			Unknown
+OPG167	A38L		Surface protein
+OPG170	A41L	Chemokine binding	Host-modulation
+OPG171	A42R		Unknown
+OPG172	A43R		Host-modulation
+OPG173	A43.5R		Unknown
+OPG174	A44L	Steroid metabolism	Host-modulation
+OPG175	A45R	Virion core	Assembly, budding
+OPG176	A46R	Interleukin inhibitor	Host-modulation
+OPG178	A48R	Thymidine kinase	Genome replication/transcription
+OPG180	A50R	DNA ligase	Genome replication/transcription
+OPG181	A51R		Unknown
+OPG185	A56R		Surface protein
+OPG187	B1R	Serine/Threonine Kinase	Assembly, budding
+OPG188	B2R	Poxin	Host-modulation
+OPG189	B4R	Ankyrin	Host-modulation
+OPG190	B5R		Surface protein
+OPG191	B6R		Host-modulation
+OPG192	B7R	Ankyrin	Host-modulation
+OPG193	B8R	Interferon-gamma binding	Host-modulation
+OPG195			Host-modulation
+OPG197	B11R		Host-modulation
+OPG198	B12R		Host-modulation
+OPG199	K2L	Interleukin inhibitor	Host-modulation
+OPG200	B15R	TLR inhibitor	Host-modulation
+OPG204	B19R	IFN receptor	Host-modulation
+OPG205	B20R	Ankyrin	Host-modulation
+OPG208	K2L	Apoptosis inhibitor	Host-modulation
+OPG209	C14L		Host-modulation
+OPG210		T cell suppressor	Host-modulation

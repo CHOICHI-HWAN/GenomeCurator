@@ -6,7 +6,7 @@ from fastapi import FastAPI, Form, Request
 from fastapi.responses import FileResponse, HTMLResponse, JSONResponse, RedirectResponse, Response, StreamingResponse
 from fastapi.templating import Jinja2Templates
 
-from . import __version__, analysis, completeness, datasets, exclusions, export, insight, lineages, mutprofile, nextstrain, pathoplexus, private, qc, squirrel, config, curate, jobs, log
+from . import __version__, analysis, completeness, datasets, exclusions, export, insight, lineages, mutprofile, nextstrain, outbreak, pathoplexus, private, qc, squirrel, config, curate, jobs, log
 from .db import audit_now, connect
 
 _log = log.get("web")
@@ -822,6 +822,21 @@ def create_app(scheduler: bool = True) -> FastAPI:
             return insight.insight(r, window_days=max(1, window_days), min_carriers=max(2, min_carriers), skip_apobec=bool(skip_apobec))
         except (ValueError, RuntimeError) as e:
             return JSONResponse({"error": str(e)}, 400)
+
+    @app.get("/analysis/{rid}/outbreak")
+    def analysis_outbreak_page(request: Request, rid: int):
+        r = nextstrain.get_run(rid)
+        if not r or r["tool"] != "mutprofile" or r["status"] != "done":
+            return JSONResponse({"error": "finished mutation-profile run not found"}, 404)
+        return render(request, "outbreak.html", nav="ns", run=r)
+
+    @app.get("/api/analyses/{rid}/outbreak")
+    def api_analysis_outbreak(rid: int, min_size: int = 5, hotspot: int = 100, fixed: float = 0.9):
+        """Genomic subclusters from the tree, cluster-size distribution, APOBEC3 accumulation, per-genome mutation types, gene burden / hotspots / exploratory dN/dS."""
+        r = nextstrain.get_run(rid)
+        if not r or r["tool"] != "mutprofile" or r["status"] != "done":
+            return JSONResponse({"error": "finished mutation-profile run not found"}, 404)
+        return outbreak.analysis(r, max(2, min_size), max(1, hotspot), min(1.0, max(0.5, fixed)))
 
     @app.get("/analysis/{rid}/snipit")
     def analysis_snipit_page(request: Request, rid: int):

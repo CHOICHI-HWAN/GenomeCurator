@@ -1,0 +1,74 @@
+{% extends "base.html" %}{% block body %}
+<div class="pagehead"><h2>유행 분석 <span class="mut" style="font-size:14px;font-weight:400">서브클러스터 · 크기 분포 · APOBEC3 누적 · 유전자 hotspot</span></h2><span class="mut">{{ run.name }}</span></div>
+<div class="help"><a href="https://doi.org/10.1080/22221751.2026.2746255" target="_blank" rel="noopener">Lee, Choi 외, <i>Emerg Microbes Infect</i> 2026</a>(한국 mpox 유행 분석)의 접근을 임의의 데이터셋에 적용합니다: 트리 토폴로지로 <b>유전체 서브클러스터</b>(5건 이상의 단계통군)를 나누고 가지 정의 변이를 보이며, 클러스터 크기의 <b>과분산</b>(포아송 대 음이항), <b>APOBEC3형 변이의 시간 누적</b>, 유전체별 변이 유형, <b>유전자별 변이 부담·hotspot·탐색용 dN/dS</b>를 계산합니다. 역학 정보(접촉 유형 등)와 저빈도 변이(Snippy/LoFreq)는 이 앱에 없어 제외했습니다.</div>
+<div class="card" style="font-size:13px"><div style="display:flex;gap:14px;flex-wrap:wrap;align-items:end">
+ <label title="이 크기 이상의 단계통군을 서브클러스터로">서브클러스터 최소 크기<br><input id="ms" type="number" min="2" value="5" style="width:70px"></label>
+ <label title="유전자의 변이 수(유전체 합)가 이 값을 넘으면 hotspot (ITR 제외)">hotspot 기준<br><input id="hs" type="number" min="1" value="100" style="width:70px"></label>
+ <label title="이 비율 이상의 유전체가 가진 위치(참조와 데이터셋 전체의 차이)는 '새로 생긴 변이' 계산에서 뺍니다">고정 변이 기준<br><select id="fx"><option value="0.9">90% 이상 제외</option><option value="0.5">50% 이상 제외</option><option value="1">제외하지 않음</option></select></label>
+ <button type="button" class="p" onclick="load()">다시 계산</button></div><div class="mut" id="info" style="margin-top:6px"></div></div>
+<div id="root"><div class="card mut">계산하는 중…</div></div>
+<script>
+const RID={{ run.id }};
+const esc=s=>String(s??'').replace(/[&<>"]/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c]));
+const pc=x=>x==null?'-':(x*100).toFixed(1)+'%',pv=p=>p==null?'-':(p<0.001?'p < 0.001':'p = '+p.toFixed(3));
+const PAL=['#4e79a7','#f28e2b','#e15759','#76b7b2','#59a14f','#edc948','#b07aa1','#ff9da7','#9c755f','#bab0ac'];
+const BC={A:'#4e9a06',C:'#3465a4',G:'#c4a000',T:'#cc0000'};
+let D=null;
+async function load(){document.getElementById('root').innerHTML='<div class="card mut">계산하는 중…</div>';
+ const q=new URLSearchParams({min_size:document.getElementById('ms').value,hotspot:document.getElementById('hs').value,fixed:document.getElementById('fx').value});
+ D=await (await fetch('/api/analyses/'+RID+'/outbreak?'+q)).json();render()}
+function sec(t,sub){return '<h3 style="margin-top:22px">'+t+(sub?' <span class="mut" style="font-size:12.5px;font-weight:400">'+sub+'</span>':'')+'</h3>'}
+function fail(x){return '<div class="card mut">'+esc(x.reason||'계산할 수 없습니다')+'</div>'}
+function render(){let h='';const C=D.clusters,A=D.accumulation,S=D.spectrum,G=D.genes;
+ // 1 clusters
+ h+=sec('1. 유전체 서브클러스터','트리 토폴로지, 가지 정의 변이 1개 이상 · 참조 '+esc(C.reference||''));
+ if(!C.available)h+=fail(C);else{
+  h+='<div class="mut">트리의 유전체 '+C.tips.toLocaleString()+'건 중 서브클러스터 '+C.clusters.length+'개에 들어간 것 '+(C.tips-C.unassigned).toLocaleString()+'건, 어느 곳에도 속하지 않은 것 '+C.unassigned.toLocaleString()+'건(가장 안쪽 단계통군만 서브클러스터로 정하며, 포함 관계의 후보는 총 '+C.n_nested+'개). 변이 라벨: <b style="color:#d6249f">분홍</b> = APOBEC3형, <b>*</b> = 같은 변이가 다른 가지에도 있음(homoplasy, 행렬에서 제외).</div>';
+  h+='<table><tr><th>클러스터</th><th>유전체</th><th>첫 ~ 마지막</th><th>나라</th><th>lineage</th><th>가지 정의 변이 (유전자 · 아미노산)</th></tr>'+C.clusters.map(c=>'<tr><td><b>'+c.id+'</b></td><td>'+c.n+'</td><td class="nw">'+esc(c.first)+' ~ '+esc(c.last)+'</td><td style="font-size:12px">'+esc(Object.entries(c.countries).map(x=>x[0]+'×'+x[1]).join(', '))+'</td><td style="font-size:12px">'+esc(Object.entries(c.lineages).map(x=>x[0]+'×'+x[1]).join(' '))+'</td><td style="font-size:12px">'+c.mutations.map(m=>'<span style="'+(m.apobec?'color:#d6249f;':'')+'font-weight:'+(m.homoplasy?400:700)+'" title="'+esc(m.effect)+'">'+esc(m.label)+(m.homoplasy?'*':'')+(m.gene?' ('+esc(m.gene)+' '+esc(m.aa)+')':'')+'</span>').join(' · ')+'</td></tr>').join('')+'</table>';
+  // matrix
+  const cols=C.columns,cw=22,lw=60,top=96,H=top+(C.matrix.length+1)*16+6;let o='<svg xmlns="http://www.w3.org/2000/svg" width="'+(lw+cols.length*cw+10)+'" height="'+H+'" font-family="Helvetica,Arial,sans-serif" font-size="10">';
+  cols.forEach((c,i)=>{o+='<text transform="translate('+(lw+i*cw+cw/2+3)+' '+(top-4)+') rotate(-70)" fill="'+(c.apobec?'#d6249f':'#333')+'" font-size="9.5">'+esc(c.label)+(c.gene?' '+esc(c.gene):'')+'</text>'});
+  o+='<text x="4" y="'+(top+12)+'" font-weight="bold">REF</text>';cols.forEach((c,i)=>{o+='<rect x="'+(lw+i*cw)+'" y="'+(top)+'" width="'+(cw-2)+'" height="14" fill="'+(BC[c.label[0]]||'#999')+'" opacity=".55"/><text x="'+(lw+i*cw+cw/2-1)+'" y="'+(top+11)+'" text-anchor="middle" fill="#fff" font-weight="bold">'+esc(c.label[0])+'</text>'});
+  C.matrix.forEach((r,k)=>{const y=top+(k+1)*16;o+='<text x="4" y="'+(y+12)+'" font-weight="bold">'+r.id+'</text>';cols.forEach((c,i)=>{const a=r.cells[c.label];if(a)o+='<rect x="'+(lw+i*cw)+'" y="'+y+'" width="'+(cw-2)+'" height="14" fill="'+(BC[a]||'#999')+'"/><text x="'+(lw+i*cw+cw/2-1)+'" y="'+(y+11)+'" text-anchor="middle" fill="#fff" font-weight="bold">'+a+'</text>'; else o+='<rect x="'+(lw+i*cw)+'" y="'+y+'" width="'+(cw-2)+'" height="14" fill="#f0f0f0"/>'})});
+  h+='<div class="mut" style="margin:12px 0 4px">클러스터 × 변이 (참조 대비 바뀐 염기; 위쪽 REF는 트리 참조의 염기, 조상 가지의 변이도 포함)</div><div style="overflow:auto;background:#fff;border:1px solid var(--bd);border-radius:6px;padding:6px">'+o+'</svg></div>';
+  // bubbles
+  const mo=C.months,bw=16;let b='<svg xmlns="http://www.w3.org/2000/svg" width="'+(70+mo.length*bw+10)+'" height="'+(34+C.clusters.length*20)+'" font-family="Helvetica,Arial,sans-serif" font-size="10">';
+  let mx=1;C.clusters.forEach(c=>Object.values(c.months).forEach(v=>mx=Math.max(mx,v)));
+  mo.forEach((m,i)=>{if(m.endsWith('01')||m.endsWith('07')||i==0)b+='<text x="'+(70+i*bw)+'" y="12" fill="#666">'+m+'</text>'});
+  C.clusters.forEach((c,k)=>{const y=30+k*20;b+='<text x="4" y="'+(y+4)+'" font-weight="bold">'+c.id+' <tspan fill="#888" font-weight="normal">n='+c.n+'</tspan></text>';mo.forEach((m,i)=>{const v=c.months[m];if(v)b+='<circle cx="'+(70+i*bw+bw/2)+'" cy="'+y+'" r="'+(2+8*Math.sqrt(v/mx)).toFixed(1)+'" fill="'+PAL[k%PAL.length]+'" opacity=".75"><title>'+c.id+' · '+m+' · '+v+'건</title></circle>'})});
+  h+='<div class="mut" style="margin:12px 0 4px">클러스터의 시간 분포 (월별 유전체 수, 원 크기)</div><div style="overflow:auto;background:#fff;border:1px solid var(--bd);border-radius:6px;padding:6px">'+b+'</svg></div>';
+  const d=C.size_distribution;
+  h+=d?'<div class="card" style="margin-top:12px"><b>클러스터 크기 분포</b> (크기 '+C.clusters.map(c=>c.n).join(', ')+')<table style="margin-top:6px"><tr><th>평균</th><th>분산</th><th>VMR</th><th>Pearson 분산 통계</th><th>음이항 θ (SE)</th><th>AIC 포아송 / 음이항</th><th>BIC 포아송 / 음이항</th></tr><tr><td>'+d.mean+'</td><td>'+d.variance+'</td><td><b>'+d.vmr+'</b></td><td>'+d.pearson+'</td><td>'+d.theta+' ('+(d.theta_se??'-')+')</td><td>'+d.aic_poisson+' / <b>'+d.aic_nb+'</b></td><td>'+d.bic_poisson+' / <b>'+d.bic_nb+'</b></td></tr></table><div style="margin-top:6px">'+(d.overdispersed?'<b>과분산</b>(VMR > 1)이고 '+(d.nb_better?'<b>음이항 모형이 더 잘 맞습니다</b>':'포아송과 큰 차이가 없습니다')+' — 클러스터 크기가 고르지 않고 소수의 큰 클러스터가 있다는 뜻입니다.':'과분산이 뚜렷하지 않습니다.')+' <span class="mut">클러스터 크기의 이질성일 뿐 개인 단위 슈퍼전파의 증거는 아닙니다(논문과 같은 해석). θ의 SE는 근사값입니다.</span></div></div>':'<div class="mut">서브클러스터가 3개 미만이라 분포를 맞출 수 없습니다.</div>'}
+ // 2 accumulation
+ h+=sec('2. APOBEC3형 변이의 시간 누적','NC_063383.1 대비, 유전체당 · 일 단위 수집일이 있는 것');
+ if(A.available===false)h+=fail(A);else{
+  const W=900,Ht=260,m={l:46,r:10,t:10,b:30},pts=A.points;if(!pts.length)h+=fail({reason:'일 단위 날짜가 있는 유전체가 없습니다.'});else{
+  const t0=Math.min(...pts.map(p=>p.t)),t1=Math.max(...pts.map(p=>p.t)),ys=pts.map(p=>p.apobec_var),ya=pts.map(p=>p.apobec_all),yM=Math.max(...ya)+2,x=t=>m.l+(t-t0)/(t1-t0||1)*(W-m.l-m.r),y=v=>Ht-m.b-v/yM*(Ht-m.t-m.b);
+  let s='<svg xmlns="http://www.w3.org/2000/svg" width="'+W+'" height="'+Ht+'" font-family="Helvetica,Arial,sans-serif" font-size="10">';
+  for(let v=0;v<=yM;v+=Math.ceil(yM/6/10)*10)s+='<line x1="'+m.l+'" x2="'+(W-m.r)+'" y1="'+y(v)+'" y2="'+y(v)+'" stroke="#eee"/><text x="'+(m.l-4)+'" y="'+(y(v)+3)+'" text-anchor="end" fill="#666">'+v+'</text>';
+  A.by_year.forEach(r=>{const xx=x(r.year+0.5);s+='<line x1="'+x(r.year)+'" x2="'+x(r.year)+'" y1="'+m.t+'" y2="'+(Ht-m.b)+'" stroke="#ddd" stroke-dasharray="3"/><text x="'+(x(r.year)+3)+'" y="'+(Ht-m.b+14)+'" fill="#666">'+r.year+'</text>'});
+  pts.forEach(p=>{s+='<circle cx="'+x(p.t).toFixed(1)+'" cy="'+y(p.apobec_all)+'" r="2" fill="#d6249f" opacity=".35"><title>'+esc(p.id+' · '+p.date+' · '+p.lineage+' · 전체 '+p.apobec_all+' / 새로 생긴 '+p.apobec_var)+'</title></circle><circle cx="'+x(p.t).toFixed(1)+'" cy="'+y(p.apobec_var)+'" r="2" fill="#4e79a7" opacity=".45"/>'});
+  s+='</svg>';
+  const row=(k,T)=>T?'<tr><td>'+k+'</td><td>'+T.n+'</td><td>'+T.slope_per_year+'건 / 년</td><td>'+T.rho+'</td><td>'+pv(T.p)+'</td></tr>':'';
+  h+='<div style="overflow:auto;background:#fff;border:1px solid var(--bd);border-radius:6px"><div style="font-size:11px;padding:4px 8px"><span style="color:#d6249f">●</span> 전체 APOBEC3형(참조 대비) &nbsp; <span style="color:#4e79a7">●</span> 새로 생긴 것(고정 변이 제외)</div>'+s+'</div>';
+  h+='<table style="margin-top:8px"><tr><th>기준</th><th>유전체</th><th>추세(선형)</th><th>Spearman ρ</th><th>유의성</th></tr>'+row('전체',A.trend_all)+row('새로 생긴 것(고정 '+pc(A.fixed_share)+' 이상 제외)',A.trend_variable)+'</table>';
+  h+='<table style="margin-top:8px"><tr><th>연도</th><th>유전체</th><th>전체 중앙값 (사분위)</th><th>새로 생긴 것 중앙값 (사분위)</th></tr>'+A.by_year.map(r=>'<tr><td>'+r.year+'</td><td>'+r.n+'</td><td>'+r.all_median+' ('+r.all_q1+'–'+r.all_q3+')</td><td>'+r.var_median+' ('+r.var_q1+'–'+r.var_q3+')</td></tr>').join('')+'</table><div class="mut" style="margin-top:4px">APOBEC3형 = G→A(뒤가 A) 또는 C→T(앞이 T) · 양 끝 ITR 제외 · 유전체 안에서의 누적이 아니라 수집 시기별 보유 개수의 변화입니다(표집 편향 주의).</div>'}}
+ // 3 spectrum
+ h+=sec('3. 유전체별 변이 유형','수집일 순서 · 참조 대비 '+(D.spectrum.fixed_share<1?'(고정 변이 '+pc(D.spectrum.fixed_share)+' 이상 제외)':'(전부)'));
+ const rows=S.rows;if(rows.length){const bw2=Math.max(1.2,Math.min(6,1000/rows.length)),Ht=220,mx2=Math.max(...rows.map(r=>r.a3_nonsyn+r.a3_syn+r.other_nonsyn+r.other_syn+r.a3_inter+r.other_inter))+1;
+  const cl=[['a3_nonsyn','#8b1a1a','APOBEC3 비동의'],['a3_syn','#e39a8c','APOBEC3 동의'],['other_nonsyn','#2f6b3a','그 외 비동의'],['other_syn','#a8d5a2','그 외 동의']];
+  let s='<svg xmlns="http://www.w3.org/2000/svg" width="'+(50+rows.length*bw2+10)+'" height="'+(Ht+30)+'" font-family="Helvetica,Arial,sans-serif" font-size="10">';
+  rows.forEach((r,i)=>{let y=Ht;const xx=50+i*bw2;cl.forEach(c=>{const v=r[c[0]],hh=v/mx2*(Ht-10);y-=hh;s+='<rect x="'+xx.toFixed(1)+'" y="'+y.toFixed(1)+'" width="'+(bw2*0.85).toFixed(1)+'" height="'+hh.toFixed(1)+'" fill="'+c[1]+'"><title>'+esc(r.id+' · '+r.date+' · '+r.lineage+' · '+c[2]+' '+v)+'</title></rect>'})});
+  for(let v=0;v<=mx2;v+=Math.max(1,Math.ceil(mx2/5)))s+='<text x="44" y="'+(Ht-v/mx2*(Ht-10)+3)+'" text-anchor="end" fill="#666">'+v+'</text>';
+  s+='<text x="50" y="'+(Ht+16)+'" fill="#666">'+esc(rows[0].date)+'</text><text x="'+(50+rows.length*bw2)+'" y="'+(Ht+16)+'" text-anchor="end" fill="#666">'+esc(rows[rows.length-1].date)+'</text></svg>';
+  h+='<div style="overflow:auto;background:#fff;border:1px solid var(--bd);border-radius:6px"><div style="font-size:11px;padding:4px 8px">'+cl.map(c=>'<span style="color:'+c[1]+'">■</span> '+c[2]).join(' &nbsp; ')+' &nbsp; <span class="mut">(유전자 사이 변이는 그리지 않음)</span></div>'+s+'</div>'}
+ // 4 genes
+ h+=sec('4. 유전자별 변이 부담 · hotspot','변이 수 = 유전체마다 센 합 · ITR 제외 · 참조 '+esc(G.reference));
+ if(G.available===false)h+=fail(G);else{
+  h+='<div class="mut">기능 범주는 논문 보충표 1(NC_063383 주석, ViralZone)에서 옮겨 온 것입니다. hotspot = 변이 수 > '+G.hotspot+'. <b>dN/dS는 탐색용</b>입니다: 이 데이터셋의 서로 다른 변이(공유된 것은 한 번만)를 참조 서열의 코돈 자리 수(Nei–Gojobori)로 나눠 Jukes–Cantor로 보정했으며 선택압의 검정이 아닙니다(논문의 KaKs 쌍별 추정과 방식이 다릅니다). 변이가 아주 적은 유전자는 값이 불안정합니다.</div>';
+  h+='<table style="margin:8px 0"><tr><th>기능 범주</th><th>유전자 수</th><th>변이 수</th><th>APOBEC3형</th><th>새로 생긴 변이 수</th></tr>'+G.categories.map(c=>'<tr><td>'+esc(c.category)+'</td><td>'+c.genes+'</td><td>'+c.events.toLocaleString()+'</td><td>'+pc(c.events?c.a3/c.events:null)+'</td><td>'+c.var_events.toLocaleString()+'</td></tr>').join('')+'</table>';
+  h+='<table><tr><th>유전자</th><th>기능</th><th>범주</th><th>변이 수</th><th>새로 생긴 변이</th><th>APOBEC3형</th><th>비동의 / 동의</th><th>서로 다른 변이 (비동의/동의)</th><th>dN/dS (탐색)</th><th></th></tr>'+G.genes.slice(0,60).map(g=>'<tr><td><b>'+esc(g.gene)+'</b> <span class="mut">'+esc(g.homolog)+'</span></td><td style="font-size:12px">'+esc(g.function)+'</td><td style="font-size:12px">'+esc(g.category)+'</td><td>'+g.events.toLocaleString()+'</td><td>'+g.var_events.toLocaleString()+'</td><td>'+pc(g.a3_share)+'</td><td>'+g.nonsyn+' / '+g.syn+'</td><td>'+g.distinct+' ('+g.distinct_nonsyn+'/'+g.distinct_syn+')</td><td>'+(g.dnds&&g.dnds.ratio!=null?'<b style="color:'+(g.dnds.ratio>=1?'var(--bad)':'inherit')+'">'+g.dnds.ratio+'</b>':'<span class="mut">-</span>')+'</td><td>'+(g.hotspot?'<b style="color:var(--bad)">hotspot</b>':'')+(g.var_hotspot&&!g.hotspot?'':'')+'</td></tr>').join('')+'</table><div class="mut" style="margin-top:4px">'+G.n_genes+'개 유전자 중 변이 수 상위 60개</div>'}
+ document.getElementById('root').innerHTML=h;document.getElementById('info').textContent='참조: '+(C.reference||G.reference||'')+' · 고정 변이 기준 '+pc(D.spectrum.fixed_share)}
+load();
+</script>
+{% endblock %}

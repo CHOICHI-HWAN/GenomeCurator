@@ -2249,3 +2249,32 @@ def test_insight_apobec_sites_branches_emerging_and_signatures(tmp_path, monkeyp
     assert (20, "T") in byk and byk[(20, "T")]["n"] == 2 and byk[(20, "T")]["countries"] == ["X", "Y"] and (30, "A") not in byk       # a single carrier is not listed
     assert byk[(20, "T")]["recent"] and e["definitions"] is False
     assert any(set(c["mutations"]) >= {"G10A", "G20T"} for c in e["clusters"]) is False                    # different carrier sets do not form a cluster
+
+
+def test_outbreak_statistics_clusters_and_categories(monkeypatch):
+    from genomecurator import lineages, outbreak
+    d = outbreak.size_distribution([53, 42, 7, 10, 6, 11, 3])                 # sizes like the paper's seven domestic subclusters
+    assert abs(d["vmr"] - 21.2) < 0.3 and d["vmr"] == d["pearson"] and d["nb_better"] and d["overdispersed"]
+    assert d["aic_nb"] < d["aic_poisson"] - 50 and 1.0 < d["theta"] < 1.6 and outbreak.size_distribution([5, 5, 5, 5])["theta"] > 100 and outbreak.size_distribution([1, 2]) is None
+    t = outbreak.trend([2022, 2023, 2024, 2025, 2026], [10, 20, 30, 41, 50])
+    assert abs(t["slope_per_year"] - 10.1) < 0.01 and t["rho"] == 1.0
+    cat = outbreak.categories()
+    assert cat["OPG056"]["category"] == "Assembly, budding" and cat["OPG153"]["category"] == "Surface protein" and cat["OPG001"]["category"] == "Host-modulation"
+    assert outbreak._sites("ATG") == 0 and abs(outbreak._sites("TTT") - 1 / 3) < 1e-9 and outbreak._sites("TAA") == 0
+    # a small tree: root -> X (G10A; 6 tips: Y has 5 of them with a second branch mutation T20C) and Z (2 tips)
+    def tip(n): return {"name": n}
+    ytips = [tip(f"y{i}") for i in range(5)]
+    tree = {"name": "root", "children": [
+        {"name": "X", "branch_attrs": {"mutations": {"nuc": ["G10A"]}}, "children": [{"name": "Y", "branch_attrs": {"mutations": {"nuc": ["T20C", "G30A"]}}, "children": ytips}, tip("x1")]},
+        {"name": "Z", "branch_attrs": {"mutations": {"nuc": ["G10A"]}}, "children": [tip("z1"), tip("z2")]}]}
+    ref = "A" * 9 + "G" + "A" * 9 + "T" + "A" * 9 + "G" + "A" * 20
+    monkeypatch.setattr(outbreak, "_tree", lambda run: (tree, ref, {"name": "t", "build": ""}))
+    monkeypatch.setattr(outbreak, "_tree_reference", lambda ns: ("R", ref, []))
+    gs = [{"id": i, "lineage": "A", "outbreak": "o", "clade": "Ib", "country": "U" if i.startswith("y") else "K", "date": f"2024-0{1 + n % 3}-05"} for n, i in enumerate(["y0", "y1", "y2", "y3", "y4", "x1", "z1", "z2"])]
+    monkeypatch.setattr(lineages, "_genomes", lambda run: gs)
+    c = outbreak.clusters({"dataset_id": 1}, min_size=5)
+    assert [x["n"] for x in c["clusters"]] == [5] and c["unassigned"] == 3 and c["clusters"][0]["countries"] == {"U": 5}
+    labs = {m["label"]: m for m in c["clusters"][0]["mutations"]}
+    assert set(labs) == {"T20C", "G30A"} and c["clusters"][0]["first"] == "2024-01-05"
+    assert not labs["T20C"]["homoplasy"] and [x["label"] for x in c["columns"]] == ["T20C", "G30A"]
+    assert c["matrix"][0]["cells"] == {"T20C": "C", "G30A": "A"} and "G10A" in c["clusters"][0]["path"]   # the parent branch's mutation is part of the cluster's path
