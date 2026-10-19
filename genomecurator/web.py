@@ -776,6 +776,26 @@ def create_app(scheduler: bool = True) -> FastAPI:
             return {"redirect": f"/nextstrain?dataset={dsid}", "result": {"run": r["id"], "name": r["name"], "reused": bool(r.get("reused"))}}
         return start_job(work, f"변이 프로파일 · {ds['name']}", "mutprofile")
 
+    @app.get("/analysis/{rid}/snipit")
+    def analysis_snipit_page(request: Request, rid: int):
+        r = nextstrain.get_run(rid)
+        if not r or r["tool"] != "mutprofile" or r["status"] != "done":
+            return JSONResponse({"error": "finished mutation-profile run not found"}, 404)
+        return render(request, "snipit.html", nav="ns", run=r)
+
+    @app.get("/api/analyses/{rid}/snipit")
+    def api_analysis_snipit(rid: int, lineage: str = "", clade: str = "", gene: str = "", start: int = 0, end: int = 0, apobec: int = 0, hide_common: float = 0.0,
+                            per_group: int = 8, max_samples: int = 60, group_by: str = "lineage", sort: str = "group"):
+        """Data for the snipit-style picture of a mutation-profile run (reference = the run's reference)."""
+        r = nextstrain.get_run(rid)
+        if not r or r["tool"] != "mutprofile" or r["status"] != "done":
+            return JSONResponse({"error": "finished mutation-profile run not found"}, 404)
+        try:
+            return mutprofile.snipit_data(r, [x for x in lineage.split(",") if x], [x for x in clade.split(",") if x], gene, start, end, bool(apobec), hide_common,
+                                          per_group, min(max_samples, 300), group_by if group_by in ("lineage", "clade") else "lineage", sort)
+        except ValueError as e:
+            return JSONResponse({"error": str(e)}, 400)
+
     @app.get("/api/analyses/{rid}/files/{path:path}")
     def api_analysis_file(rid: int, path: str):
         """A file a run left (e.g. Squirrel's HTML report, tree, alignment), only from inside that run's folder."""

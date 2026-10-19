@@ -106,7 +106,10 @@ def reference_choice(ds: dict) -> str:
 def reference_files(ds: dict) -> tuple[Path, Path | None]:
     """The reference FASTA and its gene annotation (GFF3). NC_063383.1 and KJ642613.1 come with the Nextstrain workflow; NC_003310.1 is fetched once from NCBI
     (GenBank record, public) and kept under data/reference/ - the sequence and the genes come from the same record, so they always agree."""
-    acc = reference_choice(ds)
+    return reference_by_name(reference_choice(ds))
+
+
+def reference_by_name(acc: str) -> tuple[Path, Path | None]:
     if acc == "NC_003310.1":
         return fetch_genbank_reference(acc)
     base = nextstrain.workflow_dir() / "defaults"
@@ -405,3 +408,74 @@ def summary(run: dict) -> dict:
         return json.loads((Path(run["run_dir"] or "") / "mutprofile" / "summary.json").read_text(encoding="utf-8"))
     except Exception:
         return {}
+
+
+# ------------------------------------------------------------------------------------------------ snipit-style picture
+def _run_meta(run: dict) -> dict[str, dict]:
+    """id -> {clade, lineage, country, date} of the run's dataset members as they are stored now (public and private)."""
+    ds = datasets.get(run["dataset_id"])
+    if not ds:
+        return {}
+    _c, rows, _sel, _w = export.table(ds["watch_id"], "nextstrain", ds)
+    meta = {r["PPX_accession"]: r for r in rows}
+    if ds.get("include_private"):
+        _pc, prow, _f = export.private_table(ds["watch_id"], ds)
+        meta.update({r["PPX_accession"]: r for r in prow})
+    return {k: {"clade": v.get("clade") or "", "lineage": v.get("lineage") or "", "country": v.get("country") or "", "date": v.get("date") or ""} for k, v in meta.items()}
+
+
+_SNIPIT_CACHE: dict = {}
+
+
+def _load_mutations(run: dict) -> list[dict]:
+    f = Path(run["run_dir"] or "") / "mutprofile" / "mutations.tsv"
+    key = (str(f), f.stat().st_mtime if f.exists() else 0)
+    if key not in _SNIPIT_CACHE:
+        _SNIPIT_CACHE.clear()
+        _SNIPIT_CACHE[key] = list(csv.DictReader(open(f, encoding="utf-8"), delimiter="\t")) if f.exists() else []
+    return _SNIPIT_CACHE[key]
+
+
+def snipit_data(run: dict, lineages=(), clades=(), gene: str = "", start: int = 0, end: int = 0, apobec_only: bool = False, hide_common: float = 0.0,
+                per_group: int = 8, max_samples: int = 60, group_by: str = "lineage", sort: str = "group") -> dict:
+    """What the snipit-style picture needs: the reference (length, genes), the chosen samples with their SNPs (position, alt, gene, amino-acid change, effect,
+    whether it is of the profile of interest, e.g. APOBEC3-type) and lineage / clade per sample. Samples are filtered by lineage / clade, grouped and capped
+    (at most `per_group` per lineage or clade, `max_samples` in all, the ones with most SNPs first); SNPs by region / gene / profile; with `hide_common` a SNP present
+    in at least that share of the shown samples is left out (they describe the reference, not the differences between samples)."""
+    sm = summary(run)
+    ref = sm.get("reference") or ""
+    fa, gff = reference_by_name(ref) if ref else (None, None)
+    refname, refseq = read_fasta(fa) if fa else ("", "")
+    cds = load_cds(gff)
+    genes = [{"gene": c["gene"], "product": c["product"], "strand": c["strand"], "start": min(a for a, _ in c["exons"]), "end": max(b for _, b in c["exons"])} for c in cds]
+    if gene:
+        g = next((x for x in genes if x["gene"] == gene), None)
+        if not g:
+            raise ValueError(f"유전자 {gene}을(를) 참조 주석에서 찾을 수 없습니다.")
+        start, end = max(1, g["start"] - 200), g["end"] + 200
+    start, end = start or 1, end or len(refseq)
+    meta = _run_meta(run)
+    by: dict[str, list] = defaultdict(list)
+    for r in _load_mutations(run):
+        by[r["sample"]].append(r)
+    lset, cset = set(lineages), set(clades)
+    ids = [i for i in by if (not lset or meta.get(i, {}).get("lineage") in lset) and (not cset or meta.get(i, {}).get("clade") in cset)]
+    key = (lambda i: meta.get(i, {}).get("clade") or "") if group_by == "clade" else (lambda i: meta.get(i, {}).get("lineage") or "")
+    groups: dict[str, list] = defaultdict(list)
+    for i in sorted(ids, key=lambda i: (-len(by[i]), i)):
+        if per_group <= 0 or len(groups[key(i)]) < per_group:
+            groups[key(i)].append(i)
+    chosen = [i for g in sorted(groups) for i in groups[g]][:max_samples] if sort == "group" else sorted((i for g in groups.values() for i in g), key=lambda i: -len(by[i]))[:max_samples]
+
+    def keep(r):
+        pos = int(r["pos"])
+        return start <= pos <= end and (not apobec_only or r["profile_of_interest"] not in ("", "other"))
+    cnt = Counter((r["pos"], r["alt"]) for i in chosen for r in by[i] if keep(r))
+    n = max(1, len(chosen))
+    samples = []
+    for i in chosen:
+        snps = [[int(r["pos"]), r["ref"], r["alt"], r["gene"], r["aa_change"], r["effect"], int(r["profile_of_interest"] not in ("", "other")), r["profile_of_interest"]]
+                for r in by[i] if keep(r) and not (hide_common and cnt[(r["pos"], r["alt"])] / n >= hide_common)]
+        samples.append({"id": i, **meta.get(i, {"clade": "", "lineage": "", "country": "", "date": ""}), "n_total": len(by[i]), "snps": snps})
+    return {"reference": refname or ref, "length": len(refseq), "start": start, "end": end, "genes": genes, "samples": samples, "available": len(ids), "all_samples": len(by),
+            "lineages": sorted({m["lineage"] for i, m in meta.items() if i in by and m["lineage"]}), "clades": sorted({m["clade"] for i, m in meta.items() if i in by and m["clade"]})}

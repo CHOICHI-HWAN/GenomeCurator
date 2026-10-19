@@ -2163,3 +2163,25 @@ def test_pathoplexus_prepare_package_never_uploads(tmp_path, monkeypatch):
     cl = TestClient(web.create_app(scheduler=False))
     assert cl.get("/pathoplexus").status_code == 200 and cl.get("/api/pathoplexus/1/candidates").json()["rows"]
     assert cl.get("/api/pathoplexus/packages").json()[0]["id"] == p["id"]
+
+
+def test_snipit_data_filters_groups_and_hides_common(tmp_path, monkeypatch):
+    from genomecurator import mutprofile as mp
+    rd = tmp_path / "run"
+    (rd / "mutprofile").mkdir(parents=True)
+    hdr = "sample\tpos\tref\talt\tgene\tproduct\tstrand\taa_change\teffect\tref_codon\talt_codon\tcodon_pos\tcodon_base\tmotif_ref\tobserved_profile\tprofile_of_interest\n"
+    def row(s, pos, alt, poi): return f"{s}\t{pos}\tG\t{alt}\tG1\tp\t+\tK2R\tnonsynonymous\t\t\t\t\t\t\t{poi}\n"
+    (rd / "mutprofile" / "mutations.tsv").write_text(hdr + row("a", 10, "A", "GA>AA") + row("a", 50, "T", "other") + row("b", 10, "A", "GA>AA") + row("c", 10, "A", "GA>AA") + row("c", 60, "C", "other") + row("c", 70, "C", "other"), encoding="utf-8")
+    (rd / "mutprofile" / "summary.json").write_text('{"reference": "R"}', encoding="utf-8")
+    ref = tmp_path / "r.fasta"
+    ref.write_text(">R\n" + "ACGT" * 50 + "\n", encoding="utf-8")
+    monkeypatch.setattr(mp, "reference_by_name", lambda acc: (ref, None))
+    monkeypatch.setattr(mp, "_run_meta", lambda run: {"a": {"clade": "Ib", "lineage": "A.1", "country": "", "date": ""}, "b": {"clade": "Ib", "lineage": "A.1", "country": "", "date": ""}, "c": {"clade": "Ib", "lineage": "A.2", "country": "", "date": ""}})
+    run = {"run_dir": str(rd)}
+    d = mp.snipit_data(run)
+    assert d["reference"] == "R" and d["length"] == 200 and [s["id"] for s in d["samples"]] == ["a", "b", "c"] and d["lineages"] == ["A.1", "A.2"]
+    assert [s["id"] for s in mp.snipit_data(run, per_group=1)["samples"]] == ["a", "c"]               # one per lineage, the one with most SNPs first
+    assert [s["id"] for s in mp.snipit_data(run, lineages=["A.2"])["samples"]] == ["c"]
+    assert all(m[6] for s in mp.snipit_data(run, apobec_only=True)["samples"] for m in s["snps"])
+    assert all(m[0] != 10 for s in mp.snipit_data(run, hide_common=1.0)["samples"] for m in s["snps"])  # present in every shown sample -> hidden
+    assert all(55 <= m[0] <= 65 for s in mp.snipit_data(run, start=55, end=65)["samples"] for m in s["snps"])

@@ -1,0 +1,70 @@
+{% extends "base.html" %}{% block body %}
+<div class="pagehead"><h2>변이 그림 <span class="mut" style="font-size:14px;font-weight:400">snipit 스타일</span></h2><span class="mut" id="sub">{{ run.name }}</span></div>
+<div class="help">참조 서열 위에 서열마다 한 줄씩, SNP를 세로 눈금으로 그립니다(색 = 바뀐 염기). 참조는 <b>이 분석에 설정된 참조 서열</b>이고(위쪽에 표시), 아래 트랙은 그 참조의 유전자입니다.
+왼쪽에는 <b>lineage / clade</b>, 눈금 위의 <b style="color:#d6249f">●</b>는 <b>APOBEC3형 변이</b>(분석 때 정한 프로파일, 기본 GA&gt;AA / TC&gt;TT)입니다. 동의 변이는 연하게, 비동의는 진하게 그립니다. 눈금에 마우스를 올리면 유전자와 아미노산 변화가 나옵니다.</div>
+<div class="card" style="font-size:13px">
+ <div style="display:flex;gap:12px;flex-wrap:wrap;align-items:end">
+  <label>lineage<br><select id="f_lin" multiple size="4" style="min-width:120px"></select></label>
+  <label>clade<br><select id="f_cl" multiple size="4" style="min-width:80px"></select></label>
+  <label>유전자로 확대<br><select id="f_gene"><option value="">(전체)</option></select></label>
+  <label>구간<br><input id="f_s" type="number" min="1" style="width:84px" placeholder="시작"> <input id="f_e" type="number" min="1" style="width:84px" placeholder="끝"></label>
+  <label>묶는 기준<br><select id="f_gb"><option value="lineage">lineage</option><option value="clade">clade</option></select></label>
+  <label title="그룹마다 SNP가 많은 서열부터 이만큼">그룹당<br><input id="f_pg" type="number" min="0" value="6" style="width:56px"></label>
+  <label>최대 줄 수<br><input id="f_mx" type="number" min="1" max="300" value="60" style="width:62px"></label>
+  <label title="보이는 서열의 이 비율 이상이 가진 SNP는 감춥니다(참조와의 공통 차이). 0이면 모두 표시">공통 SNP 숨김<br><select id="f_hc"><option value="0">끔</option><option value="1">모두가 가진 것</option><option value="0.9">90% 이상</option><option value="0.5">50% 이상</option></select></label>
+  <label><input type="checkbox" id="f_ap"> APOBEC3형만</label>
+  <label><input type="checkbox" id="f_syn" checked> 동의 변이 연하게</label>
+  <label><input type="checkbox" id="f_ids" checked> id 표시</label>
+  <button type="button" class="p" onclick="draw()">그리기</button>
+  <button type="button" onclick="saveSvg()">SVG 저장</button><button type="button" onclick="savePng()">PNG 저장</button>
+ </div>
+ <div class="mut" id="info" style="margin-top:8px"></div>
+</div>
+<div id="fig" style="overflow:auto;background:#fff;border:1px solid var(--bd);border-radius:6px;margin-top:10px"></div>
+<script>
+const RID={{ run.id }};
+const esc=s=>String(s??'').replace(/[&<>"]/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c]));
+const BASE={A:'#4e9a06',C:'#3465a4',G:'#c4a000',T:'#cc0000'};
+const PAL=['#8dd3c7','#bebada','#fb8072','#80b1d3','#fdb462','#b3de69','#fccde5','#bc80bd','#ccebc5','#ffed6f','#a6cee3','#fb9a99','#cab2d6','#e6ab02'];
+let D=null,first=true;
+function q(){const sel=id=>[...document.getElementById(id).selectedOptions].map(o=>o.value).join(',');
+ return new URLSearchParams({lineage:sel('f_lin'),clade:sel('f_cl'),gene:document.getElementById('f_gene').value,start:document.getElementById('f_s').value||0,end:document.getElementById('f_e').value||0,
+  apobec:document.getElementById('f_ap').checked?1:0,hide_common:document.getElementById('f_hc').value,per_group:document.getElementById('f_pg').value||0,max_samples:document.getElementById('f_mx').value||60,group_by:document.getElementById('f_gb').value})}
+async function draw(){const r=await fetch('/api/analyses/'+RID+'/snipit?'+q());D=await r.json();if(D.error){document.getElementById('info').textContent=D.error;return}
+ if(first){first=false;document.getElementById('f_lin').innerHTML=D.lineages.map(x=>'<option>'+esc(x)+'</option>').join('');document.getElementById('f_cl').innerHTML=D.clades.map(x=>'<option>'+esc(x)+'</option>').join('');
+  document.getElementById('f_gene').innerHTML+=D.genes.map(g=>'<option value="'+esc(g.gene)+'">'+esc(g.gene)+(g.product?' · '+esc(g.product.slice(0,30)):'')+'</option>').join('')}
+ render()}
+function render(){const syn=document.getElementById('f_syn').checked,ids=document.getElementById('f_ids').checked,S=D.samples,H=13,L=ids?(Math.max(60,...S.map(s=>s.id.length))*6.4+8):4,LIN=150,CL=44,X0=L+LIN+CL+10,W=1100,top=64,GT=48,
+  span=D.end-D.start+1,x=p=>X0+(p-D.start)/span*W,h=top+S.length*H+14+GT,tot=X0+W+20;
+ const groupKey=s=>document.getElementById('f_gb').value==='clade'?s.clade:s.lineage,colors={};let ci=0;S.forEach(s=>{const k=groupKey(s)||'(없음)';if(!(k in colors))colors[k]=PAL[ci++%PAL.length]});
+ let o='<svg xmlns="http://www.w3.org/2000/svg" id="svg" width="'+tot+'" height="'+h+'" font-family="Helvetica,Arial,sans-serif" font-size="10">';
+ o+='<text x="6" y="14" font-size="12" font-weight="bold">참조 '+esc(D.reference)+' · '+D.length.toLocaleString()+' bp · 구간 '+D.start.toLocaleString()+'–'+D.end.toLocaleString()+'</text>';
+ o+='<text x="6" y="28">서열 '+S.length+'줄 (조건에 맞는 '+D.available+'건 중, 전체 '+D.all_samples+'건) · 색 = 바뀐 염기</text>';
+ [['A','#4e9a06'],['C','#3465a4'],['G','#c4a000'],['T','#cc0000']].forEach((b,i)=>{o+='<rect x="'+(6+i*34)+'" y="34" width="10" height="10" fill="'+b[1]+'"/><text x="'+(20+i*34)+'" y="43">'+b[0]+'</text>'});
+ o+='<circle cx="156" cy="39" r="3.5" fill="#d6249f"/><text x="164" y="43">APOBEC3형</text>';
+ o+='<rect x="'+X0+'" y="'+(top-10)+'" width="'+W+'" height="6" fill="#ddd" rx="2"/>';
+ const ticks=Math.min(10,Math.max(2,Math.floor(span/20000)));for(let i=0;i<=ticks;i++){const p=Math.round(D.start+span*i/ticks);o+='<text x="'+x(p)+'" y="'+(top-14)+'" text-anchor="middle" fill="#666">'+p.toLocaleString()+'</text>'}
+ S.forEach((s,i)=>{const y=top+i*H;if(i%2==0)o+='<rect x="0" y="'+y+'" width="'+tot+'" height="'+H+'" fill="#f6f6f6"/>';
+  if(ids)o+='<text x="4" y="'+(y+10)+'" font-family="Menlo,Consolas,monospace">'+esc(s.id)+'</text>';
+  o+='<rect x="'+(L+2)+'" y="'+(y+1)+'" width="'+(LIN-4)+'" height="'+(H-2)+'" fill="'+colors[groupKey(s)||'(없음)']+'" rx="2"/><text x="'+(L+6)+'" y="'+(y+10)+'">'+esc(s.lineage||'-')+(s.country?' · '+esc(s.country.slice(0,14)):'')+'</text>';
+  o+='<text x="'+(L+LIN+4)+'" y="'+(y+10)+'" fill="#555">'+esc(s.clade||'-')+'</text>';
+  s.snps.forEach(m=>{const [pos,ref,alt,gene,aa,eff,poi,prof]=m,op=(syn&&eff==='synonymous')?0.4:(eff==='intergenic'?0.3:1),xx=x(pos);
+   o+='<rect x="'+(xx-0.7).toFixed(2)+'" y="'+(y+1)+'" width="'+Math.max(1.4,W/span).toFixed(2)+'" height="'+(H-2)+'" fill="'+(BASE[alt]||'#888')+'" opacity="'+op+'"><title>'+esc(s.id+' · '+pos+' '+ref+'>'+alt+(gene?' · '+gene:'')+(aa?' '+aa:'')+' · '+eff+(poi?' · '+prof:''))+'</title></rect>';
+   if(poi)o+='<circle cx="'+xx.toFixed(2)+'" cy="'+(y+2.2)+'" r="2.4" fill="#d6249f" stroke="#fff" stroke-width=".5"/>'});
+ });
+ const gy=top+S.length*H+14;o+='<text x="6" y="'+(gy+14)+'" font-weight="bold">유전자</text>';
+ D.genes.filter(g=>g.end>=D.start&&g.start<=D.end).forEach((g,i)=>{const a=Math.max(x(g.start),X0),b=Math.min(x(g.end),X0+W),yy=gy+(g.strand==='-'?20:4),wd=b-a;
+  o+='<path d="M'+a+' '+yy+'h'+Math.max(wd-4,1)+'l4 7l-4 7h-'+Math.max(wd-4,1)+'z" transform="'+(g.strand==='-'?'translate('+(a+b)+' 0) scale(-1 1) translate(-'+(2*a)+' 0)':'')+'" fill="'+(i%2?'#9db9d6':'#6f95c0')+'"><title>'+esc(g.gene+' '+g.product+' '+g.start+'-'+g.end+' ('+g.strand+')')+'</title></path>';
+  if(wd>38)o+='<text x="'+(a+wd/2)+'" y="'+(yy+10)+'" text-anchor="middle" font-size="8.5" fill="#fff" pointer-events="none">'+esc(g.gene)+'</text>'});
+ o+='</svg>';document.getElementById('fig').innerHTML=o;
+ const nS=S.reduce((a,s)=>a+s.snps.length,0),ap=S.reduce((a,s)=>a+s.snps.filter(m=>m[6]).length,0);
+ document.getElementById('info').textContent='표시된 SNP '+nS.toLocaleString()+'건 중 APOBEC3형 '+ap.toLocaleString()+'건 · 줄이 너무 많으면 lineage를 고르거나 그룹당·최대 줄 수를 줄이세요';}
+function dl(name,blob){const a=document.createElement('a');a.href=URL.createObjectURL(blob);a.download=name;a.click();setTimeout(()=>URL.revokeObjectURL(a.href),2000)}
+function saveSvg(){const s=document.getElementById('svg');if(s)dl('snipit_{{ run.name }}.svg',new Blob([new XMLSerializer().serializeToString(s)],{type:'image/svg+xml'}))}
+function savePng(){const s=document.getElementById('svg');if(!s)return;const w=s.width.baseVal.value,h=s.height.baseVal.value,img=new Image();
+ img.onload=()=>{const c=document.createElement('canvas');c.width=w*2;c.height=h*2;const x=c.getContext('2d');x.fillStyle='#fff';x.fillRect(0,0,c.width,c.height);x.scale(2,2);x.drawImage(img,0,0);c.toBlob(b=>dl('snipit_{{ run.name }}.png',b))};
+ img.src='data:image/svg+xml;charset=utf-8,'+encodeURIComponent(new XMLSerializer().serializeToString(s))}
+['f_syn','f_ids'].forEach(i=>document.getElementById(i).addEventListener('change',()=>D&&render()));
+draw();
+</script>
+{% endblock %}
