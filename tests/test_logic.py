@@ -863,7 +863,7 @@ def _qc_env(tmp_path, monkeypatch, n_N=0):
     monkeypatch.setattr(config, "DB_PATH", tmp_path / "g.db")
     bindir = tmp_path / "bin"
     bindir.mkdir()
-    nc = bindir / "nextclade"
+    nc = bindir / ("nextclade.py" if os.name == "nt" else "nextclade")
     nc.write_text("""#!/usr/bin/env python3
 import sys, json, os
 a = sys.argv[1:]
@@ -884,6 +884,9 @@ elif a[0] == "run":
             f.write(f"{i}\\t{n}\\t{'IIb' if n.startswith('X') else 'Ib'}\\tA.4\\t{5 * i}\\t{'bad' if n.startswith('X') else 'good'}\\t0.99\\t\\n")
 """)
     nc.chmod(nc.stat().st_mode | stat.S_IEXEC)
+    if os.name == "nt":      # Windows runs no #! scripts: a .cmd wrapper that shutil.which finds through PATHEXT
+        import sys
+        (bindir / "nextclade.cmd").write_text(f'@"{sys.executable}" "{nc}" %*\r\n')
     monkeypatch.setenv("PATH", f"{bindir}{os.pathsep}{os.environ['PATH']}")
     con = db.connect()
     con.execute("INSERT INTO watchlist(id,name,taxon,taxon_id) VALUES(1,'Mpox','Orthopoxvirus monkeypox',3431483)")
