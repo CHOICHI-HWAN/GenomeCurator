@@ -12,6 +12,7 @@ re-pinned (the full list with licences is in [docs/DEPENDENCIES.md](docs/DEPENDE
 ## [Unreleased]
 
 ### Added
+- **Batch suggestions for selected rows**: in the review screen, select rows (checkboxes, **drag the mouse over rows**, **Shift+click** for a range, or filter by integrity and *Select all*) and press *Apply suggestions to selection*. A dialog shows the confidence breakdown and lets you take *medium and above* (recommended) or *everything, including low*. The whole-changeset button is now labelled *Auto-pick (all)*.
 - **Analysis tab**: start and stop Apache Superset from the app (it stays a separate program in its own conda env), see whether it is installed/running, open it. `serve --superset` starts it together with the app; a Superset started by the app goes down with it.
 - `Dockerfile` (multi-arch: linux/amd64 and linux/arm64, built from `environment.yml`), a `docker` workflow that builds both architectures and publishes to GHCR on version tags, and an ARM job in CI.
 - **Jobs tab**: every long task (adding or looking up a virus, check, apply, FASTA download, sequence verification, schema check, publish, and the scheduler's own runs) is a server job with a durable record: running / done / error / interrupted, progress, a timestamped log, the error with where it happened, and a link to that job's lines in the server log. The tab shows a live count of running jobs or unseen failures, and a toast appears when a job ends while you are on another page.

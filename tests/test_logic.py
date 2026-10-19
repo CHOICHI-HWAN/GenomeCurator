@@ -804,3 +804,31 @@ def test_analysis_page_and_superset_start_reports_not_installed(tmp_path, monkey
     assert j["status"] == "error" and "설치" in j["error"]              # the reason is shown, nothing is launched
     monkeypatch.setattr(analysis, "listening", lambda: True)
     assert analysis.start() == f"http://127.0.0.1:{analysis.port()}/"    # already running: nothing to start
+
+
+def test_resolve_auto_for_selected_items_only(tmp_path, monkeypatch):
+    from genomecurator import resolve as R
+    con, _ = _resolve_fixture(tmp_path, monkeypatch)
+    item = con.execute("SELECT id FROM changeset_item WHERE accession='A1'").fetchone()[0]
+    all_ = R.preview_auto(con, 1, "low")
+    assert all_["accessions"] == 1
+    assert R.preview_auto(con, 1, "low", [item + 1000])["items"] == 0          # a row that is not selected / does not exist: nothing
+    assert R.preview_auto(con, 1, "low", [])["items"] == 0                      # nothing selected: nothing (never "everything")
+    assert R.preview_auto(con, 1, "low", [item])["fields"] == all_["fields"]
+    res = R.apply_auto(con, 1, "low", [item])
+    con.commit()
+    assert res["applied"] == all_["fields"] and set(R.load_choices(con, 1)["A1"])
+
+
+def test_resolve_auto_api_takes_selected_items(tmp_path, monkeypatch):
+    from fastapi.testclient import TestClient
+    from genomecurator import web
+    con, _ = _resolve_fixture(tmp_path, monkeypatch)
+    item = con.execute("SELECT id FROM changeset_item WHERE accession='A1'").fetchone()[0]
+    con.close()
+    c = TestClient(web.create_app(scheduler=False))
+    assert c.post("/api/changeset/1/resolve_auto/preview", json={"items": [item + 1000], "minimum": "low"}).json()["items"] == 0
+    pv = c.post("/api/changeset/1/resolve_auto/preview", json={"items": [item], "minimum": "low"}).json()
+    assert pv["items"] == 1 and pv["fields"] >= 1
+    assert c.post("/changeset/1/resolve_auto", json={"items": [item + 1000], "minimum": "low"}).json()["applied"] == 0
+    assert c.post("/changeset/1/resolve_auto", json={"items": [item], "minimum": "low"}).json()["applied"] == pv["fields"]

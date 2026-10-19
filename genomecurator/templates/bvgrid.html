@@ -23,7 +23,7 @@
 .gt{width:100%;border:0;font-size:12.5px;white-space:nowrap}.gt th{position:sticky;top:0;background:var(--th);cursor:pointer;user-select:none;border-bottom:2px solid var(--bd);border-right:1px solid var(--bd);padding:5px 8px;font-size:12px;z-index:1}
 .gt th.s::after{content:" ▲";font-size:9px}.gt th.s.d::after{content:" ▼";font-size:9px}
 .gt td{padding:3px 8px;border-bottom:1px solid var(--bd);max-width:260px;overflow:hidden;text-overflow:ellipsis}
-.gt tbody tr{cursor:pointer}.gt tbody tr:hover{background:var(--hover)}.gt tr.cur{background:var(--chip)}
+.gt tbody tr{cursor:pointer;user-select:none}.gt tbody tr.dsel{background:var(--chip)}.gt tbody tr:hover{background:var(--hover)}.gt tr.cur{background:var(--chip)}
 .gt td.nm{color:var(--acc);font-weight:500}.Complete{color:var(--ok)}
 #rp{width:var(--rpw,320px);min-width:200px;flex:none;border-left:1px solid var(--bd);background:var(--stripe);font-size:12.5px;max-height:72vh;overflow:auto}
 #rz{flex:none;width:7px;cursor:col-resize;background:var(--bd);position:relative;touch-action:none}#rz::after{content:'';position:absolute;left:2px;top:50%;height:36px;width:3px;margin-top:-18px;border-left:1px solid var(--mut);border-right:1px solid var(--mut);opacity:.6}#rz:hover,#rz.drag{background:var(--bvg)}#rz:hover::after,#rz.drag::after{border-color:#fff;opacity:1}
@@ -163,9 +163,24 @@ document.addEventListener('click',e=>{const t=e.target;
  const th=t.closest('th[data-s]');if(th){const k=th.dataset.s;st.dir=st.sort===k?-st.dir:1;st.sort=k;draw();return}
  if(t.id==='gall'){view.forEach(r=>t.checked?st.sel.add(r.id):st.sel.delete(r.id));table();rp();return}
  const tr=t.closest('#gb tr');if(tr){const id=+tr.dataset.id,r=rows.find(x=>x.id===id);
+  if(e.shiftKey&&st.last!=null&&st.last!==id){const ids=[...document.querySelectorAll('#gb tr')].map(x=>+x.dataset.id),a=ids.indexOf(st.last),b=ids.indexOf(id);
+   if(a>=0&&b>=0){const on=!st.sel.has(id);ids.slice(Math.min(a,b),Math.max(a,b)+1).forEach(i=>on?st.sel.add(i):st.sel.delete(i));window.getSelection&&getSelection().removeAllRanges();table();rp();return}}
+  st.last=id;
   if(t.tagName==='INPUT'){t.checked?st.sel.add(id):st.sel.delete(id)}else{st.cur=r}
   document.querySelectorAll('#gb tr').forEach(x=>x.classList.toggle('cur',st.cur&&+x.dataset.id===st.cur.id));rp();return}
  if(!t.closest('#cm')&&!t.closest('.tbn'))$('cm').classList.remove('open')});
+// drag over rows to select (or, starting on a selected row, to deselect) many at once
+let dg=null,swallow=false;
+$('gb').addEventListener('mousedown',e=>{if(e.button!==0||e.shiftKey||e.target.closest('a,button,input'))return;const tr=e.target.closest('tr');if(!tr)return;
+ dg={rows:[...document.querySelectorAll('#gb tr')],start:tr,base:new Set(st.sel),on:!st.sel.has(+tr.dataset.id),moved:false}});
+document.addEventListener('mouseover',e=>{if(!dg)return;const tr=e.target.closest&&e.target.closest('#gb tr');if(!tr)return;
+ if(tr!==dg.start)dg.moved=true;if(!dg.moved)return;
+ const a=dg.rows.indexOf(dg.start),b=dg.rows.indexOf(tr),lo=Math.min(a,b),hi=Math.max(a,b);
+ dg.rows.forEach((r,i)=>{const id=+r.dataset.id,inr=i>=lo&&i<=hi,v=inr?dg.on:dg.base.has(id);v?st.sel.add(id):st.sel.delete(id);
+  r.classList.toggle('dsel',inr);const c=r.querySelector('input');if(c)c.checked=v})});
+document.addEventListener('mouseup',()=>{if(!dg)return;const d=dg;dg=null;if(!d.moved)return;swallow=true;setTimeout(()=>swallow=false,0);
+ d.rows.forEach(r=>r.classList.remove('dsel'));st.last=+d.start.dataset.id;table();rp()});
+document.addEventListener('click',e=>{if(swallow){e.stopImmediatePropagation();e.preventDefault()}},true);
 $('gq').addEventListener('input',e=>{st.q=e.target.value;st.pg=0;draw()});
 $('cm').innerHTML=cols.map(c=>`<label><input type="checkbox" data-c="${c.k}" ${st.vis.has(c.k)?'checked':''}> ${esc(c.label)}</label>`).join('');
 $('cm').addEventListener('change',e=>{const k=e.target.dataset.c;e.target.checked?st.vis.add(k):st.vis.delete(k);table()});

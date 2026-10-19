@@ -22,7 +22,8 @@
 <button class="tbn" style="color:var(--bad)" onclick="dec('rejected')"><i>✖</i>Reject</button>
 <button class="tbn" style="color:var(--warn)" onclick="dec('hold')"><i>⏸</i>Hold</button>
 <button class="tbn" title="선택한 항목의 서열 검증 계획(dry-run)을 만듭니다. 서열은 아직 받지 않습니다" onclick="sq()"><i>🧬</i>Verify seq</button>
-<button class="tbn" style="color:var(--acc)" title="소스 간 차이가 있는 항목마다 추천값을 골라 둡니다 (신뢰도 보통 이상). 낮은 것은 직접 확인하도록 남깁니다" onclick="autoResolve()"><i>💡</i>Auto-pick</button>
+<button class="tbn" style="color:var(--acc)" title="표에서 선택한 항목(체크박스, 행을 끌어서, Shift+클릭)의 소스 간 차이를 추천값으로 한 번에 고릅니다" onclick="pickSel()"><i>💡</i>선택 항목에 추천 적용</button>
+<button class="tbn" style="color:var(--acc)" title="이 changeset 전체의 소스 간 차이를 추천값으로 고릅니다 (신뢰도 보통 이상). 낮은 것은 직접 확인하도록 남깁니다" onclick="autoResolve()"><i>💡</i>Auto-pick (전체)</button>
 <button class="tbn" style="color:var(--bad)" onclick="delCs()"><i>🗑</i>Delete</button>
 <button class="tbn" {% if cs.status != 'READY' %}disabled style="opacity:.4"{% endif %} onclick="aa()"><i>⬆</i>Apply</button>
 <label style="font-size:11px;color:var(--mut);align-self:center;margin-left:4px;cursor:pointer" title="끄면 서열 없이 메타데이터만 먼저 반영합니다 (신규 항목). 서열은 유전체 화면의 Get FASTA로 나중에 받습니다."><input type="checkbox" id="fsq" checked style="vertical-align:-2px"> 서열(FASTA)도 받기</label>
@@ -92,6 +93,24 @@ async function autoResolve(){const p=await (await fetch('/api/changeset/{{ cs.id
   '\n\n신뢰도 "보통" 이상 '+p.fields+'개 필드를 추천값으로 선택합니다 (값이 실제로 바뀌는 것 '+p.will_change+'개).\n신뢰도 "낮음" '+p.counts.low+'개는 직접 확인하도록 남깁니다.\n\n선택은 항목마다 되돌릴 수 있고 다음 확인에서도 유지됩니다. 진행할까요?'))return;
  const r=await (await fetch('/changeset/{{ cs.id }}/resolve_auto?minimum=medium',{method:'POST'})).json();
  if(r.error){alert(r.error);return}alert(r.applied+'개 필드를 추천값으로 선택했습니다 (값이 바뀐 것 '+r.will_change+'개).');location.reload()}
+async function pickSel(){const s=ids();if(!s.length){alert('먼저 항목을 선택하세요. 체크박스를 누르거나, 행 위에서 마우스를 끌어서(드래그), 또는 Shift+클릭으로 여러 건을 고를 수 있습니다. 필터(정합성: 불일치)와 Select all을 함께 쓰면 불일치 항목만 한 번에 고를 수 있습니다.');return}
+ const post=(u,b)=>fetch(u,{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(b)}).then(r=>r.json());
+ const p=await post('/api/changeset/{{ cs.id }}/resolve_auto/preview',{items:s.map(Number),minimum:'low'});
+ if(p.error){alert(p.error);return}
+ if(!p.items){alert('선택한 '+s.length+'건에는 아직 고르지 않은 소스 간 차이가 없습니다 (이미 골랐거나 차이가 없는 항목).');return}
+ const q=await post('/api/changeset/{{ cs.id }}/resolve_auto/preview',{items:s.map(Number),minimum:'medium'});
+ let d=document.getElementById('pickdlg');if(!d){d=document.createElement('div');d.id='pickdlg';d.style.cssText='position:fixed;inset:0;background:rgba(10,15,20,.55);display:flex;align-items:center;justify-content:center;z-index:100';document.body.appendChild(d)}
+ d.innerHTML=`<div style="width:min(520px,94vw);background:var(--card);border:1px solid var(--bd);border-top:5px solid var(--acc);border-radius:6px;padding:18px 22px">
+  <b style="font-size:16px">선택한 ${s.length.toLocaleString()}건에 추천값 적용</b>
+  <p style="margin:10px 0 4px">소스 간 차이가 남은 항목 <b>${p.items.toLocaleString()}건</b>, 필드 ${(p.counts.high+p.counts.medium+p.counts.low).toLocaleString()}개:
+   신뢰도 높음 <b style="color:var(--ok)">${p.counts.high}</b> · 보통 <b style="color:var(--warn)">${p.counts.medium}</b> · 낮음 <b style="color:var(--bad)">${p.counts.low}</b></p>
+  <label style="display:block;margin:10px 0 4px"><input type="radio" name="pm" value="medium" checked> <b>보통 이상만</b> (권장) — ${q.fields}개 필드, 값이 실제로 바뀌는 것 ${q.will_change}개. 낮음 ${p.counts.low}개는 직접 확인하도록 남깁니다.</label>
+  <label style="display:block;margin:4px 0"><input type="radio" name="pm" value="low"> <b>낮음까지 모두</b> — ${p.fields}개 필드, 값이 바뀌는 것 ${p.will_change}개. 근거가 약한 추천(우선순위로 제안)도 선택합니다.</label>
+  <div class="mut" style="font-size:12px;margin:8px 0">선택은 항목마다 되돌릴 수 있고 다음 확인에서도 유지됩니다.</div>
+  <div style="display:flex;gap:8px;justify-content:flex-end"><button type="button" onclick="document.getElementById('pickdlg').remove()">취소</button><button class="p" type="button" id="pickok">적용</button></div></div>`;
+ document.getElementById('pickok').onclick=async()=>{const m=d.querySelector('input[name=pm]:checked').value;document.getElementById('pickok').disabled=true;
+  const r=await post('/changeset/{{ cs.id }}/resolve_auto',{items:s.map(Number),minimum:m});d.remove();
+  if(r.error){alert(r.error);return}alert(r.applied+'개 필드를 추천값으로 선택했습니다 (값이 바뀐 것 '+r.will_change+'개).');location.reload()}}
 function sq(){const s=ids();if(!s.length){alert('서열을 검증할 항목을 먼저 선택하세요.');return}
  if(s.length>2000){alert('한 번에 최대 2000건까지 검증할 수 있습니다. 불일치 항목만 골라 보세요(정합성 필터).');return}
  if(!confirm(s.length+'건의 서열 검증 계획(dry-run)을 만듭니다.\n링크와 길이만 확인하고 서열은 받지 않습니다. 계획을 확인한 뒤 실행할 수 있습니다.'))return;

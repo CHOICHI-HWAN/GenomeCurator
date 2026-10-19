@@ -250,8 +250,9 @@ def item_view(con, changeset_id: int, item_id: int) -> dict:
     return {"accession": acc, "item": item_id, "fields": fields, "sources": {s: LABEL[s] for s in per_src}, "have_sources": sorted(per_src)}
 
 
-def preview_auto(con, changeset_id: int, minimum: str = "medium") -> dict:
-    """What 'apply the suggestions' would do for the whole changeset: counts by confidence and the items to apply (not yet chosen only)."""
+def preview_auto(con, changeset_id: int, minimum: str = "medium", item_ids: list[int] | None = None) -> dict:
+    """What 'apply the suggestions' would do for the whole changeset, or only for item_ids (the rows the person selected):
+    counts by confidence and the items to apply (not yet chosen only)."""
     cs = con.execute("SELECT watch_id FROM changeset WHERE id=?", (changeset_id,)).fetchone()
     if not cs:
         raise ValueError("changeset을 찾을 수 없습니다.")
@@ -261,7 +262,10 @@ def preview_auto(con, changeset_id: int, minimum: str = "medium") -> dict:
     per_acc: dict[str, list[dict]] = {}
     counts = {"high": 0, "medium": 0, "low": 0}
     items = 0
-    for it in con.execute("SELECT accession, new_record_json, provenance_json FROM changeset_item WHERE changeset_id=? AND kind IN ('new','changed') AND decision!='applied'", (changeset_id,)):
+    only = {int(i) for i in item_ids} if item_ids is not None else None
+    for it in con.execute("SELECT id, accession, new_record_json, provenance_json FROM changeset_item WHERE changeset_id=? AND kind IN ('new','changed') AND decision!='applied'", (changeset_id,)):
+        if only is not None and it["id"] not in only:
+            continue
         acc = it["accession"]
         per_src = _source_records(con, wid, acc)
         if len(per_src) < 2:
@@ -281,8 +285,8 @@ def preview_auto(con, changeset_id: int, minimum: str = "medium") -> dict:
             "fields": sum(len(v) for v in per_acc.values()), "will_change": sum(1 for v in per_acc.values() for c in v if not c["same"])}
 
 
-def apply_auto(con, changeset_id: int, minimum: str = "medium") -> dict:
-    pv = preview_auto(con, changeset_id, minimum)
+def apply_auto(con, changeset_id: int, minimum: str = "medium", item_ids: list[int] | None = None) -> dict:
+    pv = preview_auto(con, changeset_id, minimum, item_ids)
     done = 0
     for acc, chs in pv["per_acc"].items():
         save(con, pv["watch_id"], acc, [{k: c[k] for k in ("field", "source", "value")} for c in chs], auto=True)

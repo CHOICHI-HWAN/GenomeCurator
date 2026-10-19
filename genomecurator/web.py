@@ -369,6 +369,22 @@ def create_app(scheduler: bool = True) -> FastAPI:
         finally:
             con.close()
 
+    @app.post("/api/changeset/{cid}/resolve_auto/preview")
+    async def resolve_auto_preview_selected(request: Request, cid: int):
+        """Preview for the selected rows only: body {"items": [item ids], "minimum": "medium"|"low"}."""
+        from . import resolve
+        body = await request.json()
+        con = connect()
+        try:
+            m = body.get("minimum")
+            pv = resolve.preview_auto(con, cid, m if m in resolve.CONF_RANK else "medium", [int(i) for i in body.get("items", [])])
+            pv.pop("per_acc", None)
+            return pv
+        except (ValueError, TypeError) as e:
+            return JSONResponse({"error": str(e)}, 404)
+        finally:
+            con.close()
+
     @app.get("/api/changeset/{cid}/resolve_auto")
     def resolve_auto_preview(cid: int, minimum: str = "medium"):
         from . import resolve
@@ -388,11 +404,18 @@ def create_app(scheduler: bool = True) -> FastAPI:
         if not _same_origin(request):
             return JSONResponse({"error": "cross-site request refused"}, 403)
         from . import resolve
+        try:
+            body = await request.json()                  # optional: {"items": [item ids], "minimum": ...} for the selected rows only
+        except Exception:
+            body = {}
+        if body.get("minimum") in resolve.CONF_RANK:
+            minimum = body["minimum"]
+        items = [int(i) for i in body["items"]] if isinstance(body.get("items"), list) else None
         con = connect()
         try:
             # no explicit BEGIN: the preview opens another connection (seqcheck.verdicts) and that must happen before this one writes,
             # otherwise SQLite refuses the write ("database is locked": the read snapshot of an open transaction is already stale)
-            res = resolve.apply_auto(con, cid, minimum if minimum in resolve.CONF_RANK else "medium")
+            res = resolve.apply_auto(con, cid, minimum if minimum in resolve.CONF_RANK else "medium", items)
             con.commit()
             _log.info("resolve_auto changeset %s: %s", cid, res)
             return res
