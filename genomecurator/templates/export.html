@@ -5,7 +5,7 @@ region/country/division, host, clade/lineage/outbreak, Nextclade QC 열)을 맞�
 
 <div class="card">
  <div style="display:flex;gap:12px;flex-wrap:wrap;align-items:end">
-  <label>바이러스<br><select id="w">{% for w in watches %}<option value="{{ w.id }}">{{ w.name }} (서열 {{ '{:,}'.format(w.ns) }})</option>{% endfor %}</select></label>
+  <label>바이러스<br><select id="w">{% set best = (watches|sort(attribute='ns')|last) if watches else none %}{% for w in watches %}<option value="{{ w.id }}" {{ 'selected' if best and w.id == best.id }}>{{ w.name }} (서열 {{ '{:,}'.format(w.ns) }})</option>{% endfor %}</select></label>
   <label>형식<br><select id="pf">{% for k, v in profiles.items() %}<option value="{{ k }}">{{ v }}</option>{% endfor %}</select></label>
   <label>최소 길이(bp)<br><input id="ml" type="number" min="0" placeholder="예: 100000" style="width:130px"></label>
   <label>clade<br><input id="cl" placeholder="예: Ib" style="width:90px"></label>
