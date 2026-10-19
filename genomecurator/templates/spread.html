@@ -13,14 +13,21 @@
   <label><input type="checkbox" id="ex" onchange="draw()"> 모든 행의 나라 펼치기</label>
   <span id="defs"></span>
  </div>
+ <div style="display:flex;gap:10px;flex-wrap:wrap;align-items:center;margin-top:10px">
+  <b>재생</b> <button type="button" id="pl" class="p" onclick="play()">▶</button><button type="button" onclick="stepTo(0)" title="처음으로">⏮</button>
+  <input type="range" id="sl" min="0" max="0" value="0" style="width:380px" oninput="stepTo(+this.value,true)"><span id="cur" class="mut" style="min-width:90px"></span>
+  <label>속도<select id="sp"><option value="600">느리게</option><option value="250" selected>보통</option><option value="90">빠르게</option></select></label>
+  <label><input type="checkbox" id="fl" checked> 현재 시점까지만 그리기</label>
+ </div>
  <div class="mut" id="info" style="margin-top:8px"></div>
 </div>
+<div id="ctry" style="margin-top:10px"></div>
 <div id="fig" style="overflow:auto;background:#fff;border:1px solid var(--bd);border-radius:6px;margin-top:10px"></div>
 <form id="jf" method="post" style="display:none"></form>
 <script>
 const RID={{ run.id }};
 const esc=s=>String(s??'').replace(/[&<>"]/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c]));
-let D=null,open={},obSet=false;
+let D=null,open={},obSet=false,CUR=-1,timer=null;
 const PAL=['#4e79a7','#f28e2b','#e15759','#76b7b2','#59a14f','#edc948','#b07aa1','#ff9da7','#9c755f','#bab0ac'];
 async function defsUi(){const s=await (await fetch('/api/lineages/status')).json();document.getElementById('defs').innerHTML=s.ok?'<span class="mut">정의 lineage-designation @ '+esc(s.commit)+' ('+s.files+'개 파일)</span> <button type="button" onclick="getDefs()">업데이트</button>':'<span style="color:var(--bad)">lineage 정의가 없습니다</span> <button type="button" class="p" onclick="getDefs()">정의 받기</button>'}
 function getDefs(){const f=document.getElementById('jf');f.action='/api/lineages/clone';runJob(f)}
@@ -28,9 +35,9 @@ async function load(){const q=new URLSearchParams({view:document.getElementById(
  const r=await fetch('/api/analyses/'+RID+'/spread?'+q);D=await r.json();if(D.error){document.getElementById('fig').innerHTML='<div class="card" style="color:var(--bad)">'+esc(D.error)+'</div>';document.getElementById('info').textContent='';return}
  if(!obSet){obSet=true;document.getElementById('ob').innerHTML=D.outbreaks.map(o=>'<option '+(o===D.outbreak?'selected':'')+'>'+esc(o)+'</option>').join('')}
  document.getElementById('info').textContent='유전체 '+D.genomes.toLocaleString()+'건 중 날짜가 있는 '+D.dated.toLocaleString()+'건(일 단위 '+D.day_precision.toLocaleString()+' · 월까지만 '+D.month_only.toLocaleString()+') · 날짜 없음 '+D.no_date+'건은 제외 · 시간 단위: '+(D.bin==='week'?'ISO 주':'월')+' · 정의 '+(D.definitions||'없음');
- draw()}
+ const sl=document.getElementById('sl');sl.max=Math.max(0,D.periods.length-1);CUR=D.periods.length-1;sl.value=CUR;stop();draw()}
 function draw(){const P=D.periods,n=P.length;if(!n){document.getElementById('fig').innerHTML='<div class="card mut">그릴 데이터가 없습니다.</div>';return}
- const LW=380,cw=Math.max(2.5,Math.min(16,1100/n)),RH=15,top=34,all=document.getElementById('ex').checked,mut=D.view==='mutation';
+ const lim=document.getElementById('fl').checked&&CUR>=0?CUR:n-1,LW=380,cw=Math.max(2.5,Math.min(16,1100/n)),RH=15,top=34,all=document.getElementById('ex').checked,mut=D.view==='mutation';
  const idx={};P.forEach((p,i)=>idx[p]=i);const mIdx={};D.starts.forEach((s,i)=>{const m=s.slice(0,7);(mIdx[m]=mIdx[m]||[]).push(i)});
  let maxc=1;D.rows.forEach(r=>r.countries.forEach(c=>Object.values(c.cells).forEach(v=>maxc=Math.max(maxc,v))));
  const rows=[];D.rows.forEach((r,ri)=>{rows.push({r,c:null,ri});if(all||open[r.key])r.countries.forEach(c=>rows.push({r,c,ri}))});
@@ -45,10 +52,19 @@ function draw(){const P=D.periods,n=P.length;if(!n){document.getElementById('fig
   o+='<text x="'+(isC?22:4)+'" y="'+(y+11)+'" style="cursor:pointer" onclick="tog(\''+esc(r.key).replace(/'/g,"\\'")+'\')">'+(isC?'':(open[r.key]||all?'▾ ':'▸ '))+label+'<title>'+esc(r.label+(r.snps&&r.snps.length?' · 정의 변이(누적): '+r.snps.join(' '):''))+'</title></text>';
   const cs=isC?[c]:r.countries,agg={},mon={};cs.forEach(cc=>{Object.entries(cc.cells).forEach(([p,v])=>agg[p]=(agg[p]||0)+v);Object.entries(cc.monthly).forEach(([m,v])=>mon[m]=(mon[m]||0)+v)});
   const col=PAL[x.ri%PAL.length];let lo=1e9,hi=-1;
-  Object.entries(mon).forEach(([m,v])=>{const ii=mIdx[m];if(!ii)return;lo=Math.min(lo,ii[0]);hi=Math.max(hi,ii[ii.length-1]);o+='<rect x="'+(LW+ii[0]*cw)+'" y="'+(y+3)+'" width="'+(ii.length*cw)+'" height="'+(RH-6)+'" fill="'+col+'" opacity="0.18"><title>'+esc((isC?c.country:r.label)+' · '+m+' (월까지만 있는 날짜 '+v+'건)')+'</title></rect>'});
-  Object.entries(agg).forEach(([p,v])=>{const i=idx[p];if(i==null)return;lo=Math.min(lo,i);hi=Math.max(hi,i);o+='<rect x="'+(LW+i*cw)+'" y="'+(y+2)+'" width="'+cw+'" height="'+(RH-4)+'" fill="'+col+'" opacity="'+(0.35+0.65*Math.min(1,Math.log(1+v)/Math.log(1+(isC?maxc:maxc*3))))+'"><title>'+esc((isC?c.country:r.label)+' · '+p+' · '+v+'건')+'</title></rect>'});
+  Object.entries(mon).forEach(([m,v])=>{const ii=mIdx[m];if(!ii||ii[0]>lim)return;lo=Math.min(lo,ii[0]);hi=Math.max(hi,ii[ii.length-1]);o+='<rect x="'+(LW+ii[0]*cw)+'" y="'+(y+3)+'" width="'+(ii.length*cw)+'" height="'+(RH-6)+'" fill="'+col+'" opacity="0.18"><title>'+esc((isC?c.country:r.label)+' · '+m+' (월까지만 있는 날짜 '+v+'건)')+'</title></rect>'});
+  Object.entries(agg).forEach(([p,v])=>{const i=idx[p];if(i==null||i>lim)return;lo=Math.min(lo,i);hi=Math.max(hi,i);o+='<rect x="'+(LW+i*cw)+'" y="'+(y+2)+'" width="'+cw+'" height="'+(RH-4)+'" fill="'+col+'" opacity="'+(0.35+0.65*Math.min(1,Math.log(1+v)/Math.log(1+(isC?maxc:maxc*3))))+'"><title>'+esc((isC?c.country:r.label)+' · '+p+' · '+v+'건')+'</title></rect>'});
   if(hi>=0){o+='<line x1="'+(LW+lo*cw)+'" x2="'+(LW+(hi+1)*cw)+'" y1="'+(y+RH/2)+'" y2="'+(y+RH/2)+'" stroke="#333" stroke-width="1"/><path d="M'+(LW+lo*cw)+' '+(y+RH/2-4)+'l4 4l-4 4l-4 -4z" fill="#000"/>'}});
- o+='</svg>';document.getElementById('fig').innerHTML=o}
+ if(lim<n-1)o+='<line x1="'+(LW+(lim+1)*cw)+'" x2="'+(LW+(lim+1)*cw)+'" y1="16" y2="'+H+'" stroke="#d6249f" stroke-width="2"/>';
+ o+='</svg>';document.getElementById('fig').innerHTML=o;panel()}
+function panel(){const lim=CUR<0?D.periods.length-1:CUR,cs={};document.getElementById('cur').textContent=(D.periods[lim]||'')+' ('+(D.starts[lim]||'')+')';
+ D.rows.forEach((r,ri)=>r.countries.forEach(c=>{let v=0;Object.entries(c.cells).forEach(([p,x])=>{const i=D.periods.indexOf(p);if(i>=0&&i<=lim)v+=x});Object.entries(c.monthly).forEach(([m,x])=>{if(m<=D.starts[lim].slice(0,7))v+=x});if(v){const o=cs[c.country]=cs[c.country]||{n:0,by:{}};o.n+=v;o.by[ri]=(o.by[ri]||0)+v}}));
+ const list=Object.entries(cs).sort((a,b)=>b[1].n-a[1].n),mx=list.length?list[0][1].n:1;
+ document.getElementById('ctry').innerHTML=list.length?'<div style="display:flex;flex-wrap:wrap;gap:6px 18px;font-size:12px">'+list.slice(0,24).map(([c,o])=>'<div style="width:210px"><div style="display:flex;justify-content:space-between"><span>'+esc(c)+'</span><b>'+o.n+'</b></div><div style="display:flex;height:8px;background:#eee;width:'+Math.max(4,o.n/mx*100)+'%">'+Object.entries(o.by).map(([ri,x])=>'<span title="'+esc(D.rows[ri].label)+' '+x+'" style="background:'+PAL[ri%PAL.length]+';width:'+(x/o.n*100)+'%"></span>').join('')+'</div></div>').join('')+'</div>':'<span class="mut">이 시점까지 관찰된 나라가 없습니다.</span>'}
+function stepTo(i,fromSlider){CUR=i;if(!fromSlider)document.getElementById('sl').value=i;draw()}
+function stop(){if(timer){clearInterval(timer);timer=null}document.getElementById('pl').textContent='▶'}
+function play(){if(timer){stop();return}if(CUR>=D.periods.length-1)stepTo(0);document.getElementById('pl').textContent='⏸';
+ timer=setInterval(()=>{if(CUR>=D.periods.length-1){stop();return}stepTo(CUR+1)},+document.getElementById('sp').value)}
 function tog(k){open[k]=!open[k];draw()}
 defsUi();load();
 </script>

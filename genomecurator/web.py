@@ -6,7 +6,7 @@ from fastapi import FastAPI, Form, Request
 from fastapi.responses import FileResponse, HTMLResponse, JSONResponse, RedirectResponse, Response, StreamingResponse
 from fastapi.templating import Jinja2Templates
 
-from . import __version__, analysis, completeness, datasets, exclusions, export, lineages, mutprofile, nextstrain, pathoplexus, private, qc, squirrel, config, curate, jobs, log
+from . import __version__, analysis, completeness, datasets, exclusions, export, insight, lineages, mutprofile, nextstrain, pathoplexus, private, qc, squirrel, config, curate, jobs, log
 from .db import audit_now, connect
 
 _log = log.get("web")
@@ -802,6 +802,24 @@ def create_app(scheduler: bool = True) -> FastAPI:
             return JSONResponse({"error": "finished mutation-profile run not found"}, 404)
         try:
             return lineages.spread(r, view if view in ("lineage", "mutation") else "lineage", bin, outbreak, max(1, min_n), [x for x in lineage.split(",") if x], [x for x in country.split(",") if x])
+        except (ValueError, RuntimeError) as e:
+            return JSONResponse({"error": str(e)}, 400)
+
+    @app.get("/analysis/{rid}/insight")
+    def analysis_insight_page(request: Request, rid: int):
+        r = nextstrain.get_run(rid)
+        if not r or r["tool"] != "mutprofile" or r["status"] != "done":
+            return JSONResponse({"error": "finished mutation-profile run not found"}, 404)
+        return render(request, "insight.html", nav="ns", run=r)
+
+    @app.get("/api/analyses/{rid}/insight")
+    def api_analysis_insight(rid: int, window_days: int = 120, min_carriers: int = 3, skip_apobec: int = 0):
+        """APOBEC3 transmission check, new (non-defining) mutations and clusters, per-lineage signatures of a mutation-profile run."""
+        r = nextstrain.get_run(rid)
+        if not r or r["tool"] != "mutprofile" or r["status"] != "done":
+            return JSONResponse({"error": "finished mutation-profile run not found"}, 404)
+        try:
+            return insight.insight(r, window_days=max(1, window_days), min_carriers=max(2, min_carriers), skip_apobec=bool(skip_apobec))
         except (ValueError, RuntimeError) as e:
             return JSONResponse({"error": str(e)}, 400)
 

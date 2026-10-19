@@ -2214,3 +2214,38 @@ def test_lineage_definitions_chain_dates_and_spread(tmp_path, monkeypatch):
     sparse = [{"id": f"s{i}", "lineage": "A", "outbreak": "sh2023", "clade": "", "country": "U", "date": f"2024-{(i % 12) + 1:02d}-{(i % 3) * 9 + 1:02d}"} for i in range(12)]
     monkeypatch.setattr(lineages, "_genomes", lambda run: sparse)
     assert lineages.spread({}, min_n=1)["bin"] == "month"                                                # under two genomes per occupied week -> month
+
+
+def test_insight_apobec_sites_branches_emerging_and_signatures(tmp_path, monkeypatch):
+    import json
+    from genomecurator import insight, lineages, mutprofile, nextstrain
+    t = insight.chi2_2x2(50, 50, 10, 90)
+    assert t["chi2"] > 35 and t["p"] < 0.001 and t["odds_ratio"] == 9.0 and insight.chi2_2x2(0, 5, 0, 5)["chi2"] is None
+    assert insight._apo_branch("G", "A", 3, "CCGAT") and not insight._apo_branch("G", "A", 3, "CCGTT") and insight._apo_branch("C", "T", 4, "CCTCT") and not insight._apo_branch("C", "T", 4, "CCACT")
+    hdr = "sample\tpos\tref\talt\tgene\tproduct\tstrand\taa_change\teffect\tref_codon\talt_codon\tcodon_pos\tcodon_base\tmotif_ref\tobserved_profile\tprofile_of_interest\n"
+    rows = []
+    def add(s, pos, alt, apo): rows.append(f"{s}\t{pos}\tG\t{alt}\tG1\tp\t+\tK2R\tnonsynonymous\t\t\t\t\t\t\t{'GA>AA' if apo else 'other'}\n")
+    for s in "abcd":
+        add(s, 10, "A", True)                                    # carried by all four -> fixed (> 50 % of genomes would be 'fixed' only above 50 carriers; here a shared site)
+    for s in "ab":
+        add(s, 20, "T", False)
+    add("a", 30, "A", True); add("b", 31, "C", False); add("c", 32, "T", True)
+    rd = tmp_path / "run"
+    (rd / "mutprofile").mkdir(parents=True)
+    (rd / "mutprofile" / "mutations.tsv").write_text(hdr + "".join(rows), encoding="utf-8")
+    run = {"run_dir": str(rd), "dataset_id": 1}
+    monkeypatch.setattr(mutprofile, "summary", lambda r: {"reference": ""})
+    a = insight.apobec_by_sites(run)
+    assert a["private"]["sites"] == 3 and a["private"]["apobec_sites"] == 2 and a["shared"]["sites"] == 2 and a["shared"]["apobec_sites"] == 1
+    assert [c["carriers"] for c in a["classes"]] == ["1", "2-3", "4-10", "11-50", ">50"] and a["classes"][1]["sites"] == 1 and a["classes"][2]["sites"] == 1
+    monkeypatch.setattr(nextstrain, "list_runs", lambda *a, **k: [])
+    assert insight.apobec_by_branches(run) is None                                                       # no tree -> no branch test
+    # emerging: a mutation carried by 3 recent genomes, not a defining one, is listed and 'recent'
+    gs = [{"id": s, "lineage": "A", "outbreak": "sh2023", "clade": "Ib", "country": c, "date": d} for s, c, d in [("a", "X", "2026-01-01"), ("b", "Y", "2026-02-01"), ("c", "Y", "2026-03-01"), ("d", "Z", "2020-01-01")]]
+    monkeypatch.setattr(lineages, "_genomes", lambda r: gs)
+    monkeypatch.setattr(lineages, "status", lambda: {"ok": False, "commit": ""})
+    e = insight.emerging(run, window_days=100, min_carriers=2, max_share=1.0)
+    byk = {(m["pos"], m["alt"]): m for m in e["mutations"]}
+    assert (20, "T") in byk and byk[(20, "T")]["n"] == 2 and byk[(20, "T")]["countries"] == ["X", "Y"] and (30, "A") not in byk       # a single carrier is not listed
+    assert byk[(20, "T")]["recent"] and e["definitions"] is False
+    assert any(set(c["mutations"]) >= {"G10A", "G20T"} for c in e["clusters"]) is False                    # different carrier sets do not form a cluster
