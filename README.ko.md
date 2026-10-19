@@ -22,7 +22,8 @@
 7. **유전체 완성도 등급**: Complete / Near complete(가장 긴 RefSeq 게놈의 90% 이상, 조절 가능) / Partial.
 8. **작업 탭.** 오래 걸리는 작업은 서버에서 돌고 상태·진행률·로그·오류가 남으며, 다른 메뉴로 가거나 서버를 재시작해도 기록이 유지됩니다.
 9. **서열 QC.** 모든 유전체의 서열 통계(길이, N·모호 염기, GC)와, Nextclade 데이터셋이 있는 바이러스(mpox, 에볼라 종들, 홍역, 뎅기 등)는 [Nextclade](https://github.com/nextstrain/nextclade)의 clade/lineage와 품질 점수. 소스와 다른 clade는 덮어쓰지 않고 검토 화면으로 보내며, 데이터셋은 버튼으로 업데이트합니다.
-10. **Apache Superset 분석**(선택, 읽기 전용)과 GitHub Pages용 **읽기 전용 정적 페이지**.
+10. **다른 프로그램으로 내보내기.** 탭·CLI·내부 API에서 정렬된 `metadata.tsv` + `sequences.fasta`(체크섬이 든 manifest 포함)를 만들며, [Nextstrain mpox](https://github.com/nextstrain/mpox) 워크플로의 입력 열에 맞춘 형식이 있습니다.
+11. **Apache Superset 분석**(선택, 읽기 전용)과 GitHub Pages용 **읽기 전용 정적 페이지**.
 
 ## 화면
 
@@ -86,6 +87,7 @@ python -m genomecurator serve --open                        # 웹 화면 http://
 | `dry-run <번호>` / `apply <번호>` | 적용 전 점검 / 승인된 항목 적용 |
 | `reconcile <이름>` | 소스 간 일치 보고서 |
 | `verify` | 로컬 데이터 무결성 검사 |
+| `export <바이러스> [--profile nextstrain\|plain] [--out 폴더]` | 다른 프로그램용 `metadata.tsv`, `sequences.fasta`, `manifest.json` 만들기 |
 | QC 탭 | 바이러스별 서열 통계·Nextclade, 데이터셋 업데이트, *QC 실행 + 확인* |
 | `schema-check [--daily]` | 소스·로컬 스키마 점검 |
 | `backup [zip]` / `restore <zip>` | 큐레이션 결과와 FASTA의 이식 가능한 백업 |

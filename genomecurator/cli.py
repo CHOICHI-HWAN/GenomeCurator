@@ -46,6 +46,18 @@ def _main(argv=None):
     vf.add_argument("--no-files", action="store_true", help="skip reading FASTA files")
     bk = sub.add_parser("backup", help="write a portable backup (curated data + FASTA) to a .zip")
     bk.add_argument("path", nargs="?", default="genomecurator-backup.zip")
+    ex = sub.add_parser("export", help="write metadata.tsv + sequences.fasta (+ manifest) for other programs, e.g. the Nextstrain mpox workflow")
+    ex.add_argument("name", help="the registered virus")
+    ex.add_argument("--profile", default="nextstrain", help="nextstrain (default) or plain")
+    ex.add_argument("--out", help="folder to write (default: <data>/exports/<virus>/<timestamp>)")
+    ex.add_argument("--min-length", type=int)
+    ex.add_argument("--completeness", help="comma list, e.g. 'Complete,Near complete'")
+    ex.add_argument("--exclude-qc", help="comma list of QC statuses to leave out, e.g. 'bad,error'")
+    ex.add_argument("--clade")
+    ex.add_argument("--with-missing-sequences", action="store_true", help="also list genomes that have no sequence file (metadata only)")
+    q = sub.add_parser("qc", help="sequence statistics and Nextclade for one virus")
+    q.add_argument("name")
+    q.add_argument("--force", action="store_true", help="recompute even when nothing changed")
     rs = sub.add_parser("restore", help="restore a backup .zip into the data folder")
     rs.add_argument("path")
     rs.add_argument("--force", action="store_true", help="replace an existing database")
@@ -100,6 +112,25 @@ def _main(argv=None):
                 "SELECT id FROM changeset_item WHERE changeset_id=? AND decision='pending'", (args.changeset,))]
             curate.decide(ids, "approved")
         print(curate.apply(args.changeset))
+    elif args.cmd in ("export", "qc"):
+        from pathlib import Path
+        con = connect()
+        try:
+            w = con.execute("SELECT id FROM watchlist WHERE name=?", (args.name,)).fetchone()
+        finally:
+            con.close()
+        if not w:
+            raise SystemExit(f"unknown watch: {args.name}")
+        pr = lambda pct, msg: print(f"[{round(pct):3d}%] {msg}", file=sys.stderr)
+        if args.cmd == "qc":
+            from . import qc
+            print(json.dumps(qc.run(w["id"], pr, args.force), ensure_ascii=False, indent=2))
+        else:
+            from . import export
+            csv_ = lambda s: [x.strip() for x in s.split(",") if x.strip()] if s else None
+            r = export.write(w["id"], Path(args.out) if args.out else None, args.profile, pr, require_sequence=not args.with_missing_sequences,
+                             min_length=args.min_length, completeness_in=csv_(args.completeness), qc_not=csv_(args.exclude_qc), clade=args.clade)
+            print(json.dumps(r, ensure_ascii=False, indent=2))
     elif args.cmd == "backup":
         from . import backup
         r = backup.export_backup(args.path)

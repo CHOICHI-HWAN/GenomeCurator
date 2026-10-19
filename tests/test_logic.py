@@ -879,9 +879,9 @@ elif a[0] == "run":
     out = a[a.index("--output-tsv") + 1]
     names = [l[1:].strip() for l in open(a[-1]) if l.startswith(">")]
     with open(out, "w") as f:
-        f.write("index\\tseqName\\tclade\\tlineage\\tqc.overallScore\\tqc.overallStatus\\tcoverage\\terrors\\n")
+        f.write("index\\tseqName\\tclade\\tlineage\\tqc.overallScore\\tqc.overallStatus\\tcoverage\\ttotalMissing\\tqc.privateMutations.status\\terrors\\n")
         for i, n in enumerate(names):
-            f.write(f"{i}\\t{n}\\t{'IIb' if n.startswith('X') else 'Ib'}\\tA.4\\t{5 * i}\\t{'bad' if n.startswith('X') else 'good'}\\t0.99\\t\\n")
+            f.write(f"{i}\\t{n}\\t{'IIb' if n.startswith('X') else 'Ib'}\\tA.4\\t{5 * i}\\t{'bad' if n.startswith('X') else 'good'}\\t0.99\\t3\\t{'mediocre' if n.startswith('X') else 'good'}\\t\\n")
 """)
     nc.chmod(nc.stat().st_mode | stat.S_IEXEC)
     if os.name == "nt":      # Windows runs no #! scripts: a .cmd wrapper that shutil.which finds through PATHEXT
@@ -983,3 +983,81 @@ def test_qc_api_and_pages(tmp_path, monkeypatch):
     assert j["status"] == "done" and j["result"]["nextclade"] == 2 and j["kind"] == "qc"
     assert "QC" in c.get("/qc").text and c.get("/genomes?watch=1").status_code == 200
     assert c.post("/api/qc/run?watch=99").status_code == 404
+
+
+def test_export_helpers():
+    from genomecurator import export
+    assert export.std_date("2023") == "2023-XX-XX" and export.std_date("2023-06") == "2023-06-XX" and export.std_date("2023-06-15") == "2023-06-15"
+    assert export.std_date("Mar-2026") == "2026-03-XX" and export.std_date("") == "" and export.std_date("2023-01/2023-03") == "" and export.std_date("garbage") == ""
+    assert [export.region_of(c) for c in ("USA", "Democratic Republic of the Congo", "Germany", "Viet Nam", "Brazil", "New Zealand", "Atlantis", "")] == \
+        ["North America", "Africa", "Europe", "Asia", "South America", "Oceania", "", ""]
+    assert export._geo({"geographic_location": "USA, NY, New York City", "isolation_country": "USA"}) == ("NY", "New York City")
+    assert export._geo({"geographic_location": "Uganda: Kampala", "isolation_country": "Uganda"}) == ("Kampala", "")
+    assert export._geo({"geographic_location": "Germany", "isolation_country": "Germany"}) == ("", "")
+
+
+def test_export_writes_aligned_metadata_and_fasta(tmp_path, monkeypatch):
+    import hashlib
+    import json
+    from genomecurator import export, qc
+    _qc_env(tmp_path, monkeypatch)
+    from genomecurator.db import connect
+    con = connect()
+    con.execute("UPDATE genome SET isolation_country='USA', geographic_location='USA, NY, New York City', collection_date='2023-06', host_name='Homo sapiens', "
+                "submitter='Lab X', accession_version=1, pathoplexus_accession='PP_000TEST.2', release_date='2024-01-02T03:04:05Z' WHERE accession='A1'")
+    con.commit()
+    con.close()
+    qc.dataset_update("nextstrain/mpox/all-clades")
+    qc.run(1)
+    out = tmp_path / "out"
+    r = export.write(1, out, "nextstrain")
+    assert r["rows"] == 2 and r["sequences"] == 2
+    lines = (out / "metadata.tsv").read_text(encoding="utf-8").splitlines()
+    cols = lines[0].split("\t")
+    assert cols == export.NEXTSTRAIN_COLUMNS
+    rows = [dict(zip(cols, ln.split("\t"))) for ln in lines[1:]]
+    ids = [x["INSDC_accession_version"] for x in rows]
+    fa_ids = [ln[1:] for ln in (out / "sequences.fasta").read_text(encoding="utf-8").splitlines() if ln.startswith(">")]
+    assert ids == fa_ids == ["A1.1", "X2"]                                   # same ids, same order
+    a = rows[0]
+    assert (a["date"], a["country"], a["region"], a["division"], a["location"], a["host"], a["date_released"]) == \
+        ("2023-06-XX", "USA", "North America", "NY", "New York City", "Homo sapiens", "2024-01-02")
+    assert (a["PPX_accession"], a["PPX_accession_version"], a["dataUseTerms"], a["institution"], a["clade"], a["QC_rare_mutations"], a["missing_data"]) == \
+        ("PP_000TEST", "PP_000TEST.2", "OPEN", "Lab X", "Ib", "good", "3")
+    assert rows[1]["clade"] == "IIa" and rows[1]["QC_rare_mutations"] == "mediocre"          # the curated clade wins over Nextclade's IIb
+    mf = json.loads((out / "manifest.json").read_text(encoding="utf-8"))
+    assert mf["files"]["metadata.tsv"]["sha256"] == hashlib.sha256((out / "metadata.tsv").read_bytes()).hexdigest()
+    assert mf["files"]["sequences.fasta"]["sha256"] == hashlib.sha256((out / "sequences.fasta").read_bytes()).hexdigest()
+    assert mf["nextclade"]["datasets"] and "strain_id_field: \"INSDC_accession_version\"" in (out / "nextstrain-config.yaml").read_text(encoding="utf-8")
+    seq = "".join(ln for ln in (out / "sequences.fasta").read_text(encoding="utf-8").splitlines()[1:] if not ln.startswith(">"))
+    assert seq.startswith("ACGT" * 10)
+    # filters
+    assert [x["INSDC_accession_version"] for x in export.table(1, "nextstrain", qc_not=["bad"])[1]] == ["A1.1"]         # X2's Nextclade QC is bad
+    assert export.table(1, "nextstrain", min_length=201)[1] == []
+    assert len(export.table(1, "plain")[1]) == 2 and "nextclade_clade" in export.table(1, "plain")[0]
+
+
+def test_export_api(tmp_path, monkeypatch):
+    import time
+    from fastapi.testclient import TestClient
+    from genomecurator import qc, web
+    _qc_env(tmp_path, monkeypatch)
+    qc.dataset_update("nextstrain/mpox/all-clades")
+    qc.run(1)
+    c = TestClient(web.create_app(scheduler=False))
+    assert c.get("/export").status_code == 200 and "nextstrain" in c.get("/api/export/profiles").json()
+    pv = c.get("/api/export/1/preview?profile=nextstrain&qc_not=bad").json()
+    assert pv["selected"] == 1 and pv["genomes"] == 2
+    t = c.get("/api/export/1/metadata.tsv?profile=nextstrain")
+    f = c.get("/api/export/1/sequences.fasta?profile=nextstrain")
+    assert t.status_code == 200 and f.status_code == 200 and "tab-separated" in t.headers["content-type"]
+    assert [ln.split("\t")[5] for ln in t.text.splitlines()[1:]] == [ln[1:] for ln in f.text.splitlines() if ln.startswith(">")]
+    assert c.get("/api/export/1/metadata.tsv?profile=nope").status_code == 400 and c.get("/api/export/99/preview").status_code == 404
+    jid = c.post("/api/export/1/build?profile=nextstrain").json()["job"]
+    for _ in range(100):
+        j = c.get(f"/api/job/{jid}").json()
+        if j["done"]:
+            break
+        time.sleep(0.05)
+    assert j["status"] == "done" and j["result"]["rows"] == 2 and (tmp_path / "exports").exists()
+    assert c.get("/api/exports").json()[0]["rows"] == 2

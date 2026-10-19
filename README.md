@@ -22,7 +22,8 @@ It is for viruses only. Bacteria differ in record structure (multi-contig assemb
 7. **Genome completeness classes**: Complete / Near complete (≥ 90% of the longest RefSeq genome, adjustable) / Partial.
 8. **Jobs tab.** Every long task runs on the server with status, progress, log and error; it survives page changes and restarts.
 9. **Sequence QC.** Sequence statistics (length, N and ambiguity, GC) for every genome, and [Nextclade](https://github.com/nextstrain/nextclade) clade/lineage plus its quality score for viruses that have a Nextclade dataset (mpox, Ebola species, measles, dengue, ...). A clade that differs from the sources goes to the review screen instead of being overwritten; datasets are updated from a button.
-10. **Analysis with Apache Superset** (optional, read-only view of your data) and a **read-only static page** for GitHub Pages.
+10. **Export for other programs.** Aligned `metadata.tsv` + `sequences.fasta` (+ manifest with checksums) from a tab, the CLI or an internal API, with a profile that matches the [Nextstrain mpox](https://github.com/nextstrain/mpox) workflow's input columns.
+11. **Analysis with Apache Superset** (optional, read-only view of your data) and a **read-only static page** for GitHub Pages.
 
 ## Screenshots
 
@@ -86,6 +87,7 @@ Other commands (`python -m genomecurator --help` for all options):
 | `dry-run <id>` / `apply <id>` | Pre-apply checks / apply approved items |
 | `reconcile <name>` | Source-vs-source agreement report |
 | `verify` | Integrity checks on local data |
+| `export <virus> [--profile nextstrain\|plain] [--out DIR]` | Write `metadata.tsv`, `sequences.fasta`, `manifest.json` for other programs |
 | QC tab | Sequence statistics and Nextclade per virus; update Nextclade datasets; *Run QC + check* |
 | `schema-check [--daily]` | Check the sources' and local schema |
 | `backup [zip]` / `restore <zip>` | Portable backup of curated data and FASTA |

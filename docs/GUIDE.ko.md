@@ -235,6 +235,18 @@ FASTA 실제 길이·md5가 기록과 맞는지, 날짜가 미래가 아닌지, 
 * 같은 서열(md5)과 같은 도구·데이터셋 버전이면 다시 계산하지 않습니다. 유전체 화면에는 QC · Nextclade Clade/Lineage 열과 QC 필터가 있습니다.
 * CheckM2는 세균·고세균용이라 쓰지 않습니다. 바이러스 완성도는 Near complete 등급(참조 게놈 대비 길이)으로 봅니다.
 
+### 7. 다른 프로그램에 넘기기 (export)
+
+큐레이션한 유전체를 **내보내기** 탭(또는 `python -m genomecurator export`, 내부 API)으로 넘깁니다. 같은 id·같은 순서의 `metadata.tsv`와 `sequences.fasta`, 그리고 `manifest.json`(건수·경고·SHA-256·Nextclade 데이터셋 버전)과 `nextstrain-config.yaml`이 한 폴더(기본 `data/exports/<바이러스>/<시각>/`)에 만들어집니다.
+
+* **형식 `nextstrain`**: [nextstrain/mpox](https://github.com/nextstrain/mpox)의 `phylogenetic/` 워크플로가 읽는 열에 맞춥니다. id는 `INSDC_accession_version`(FASTA 헤더와 같음, 설정 `strain_id_field`), 날짜는 `YYYY-MM-DD`에 모르는 부분은 `XX`(`2023-XX-XX`), `region`(대륙)·`country`·`division`·`location`은 국가·`geographic_location`에서 만들고, `clade/lineage/outbreak`는 큐레이션 값이 우선이며 없으면 Nextclade 값, `coverage`·`QC_rare_mutations` 등 Nextclade QC 열은 QC 탭의 결과입니다. **QC를 먼저 실행하세요**: 워크플로의 기본 필터가 `QC_rare_mutations`를 보기 때문에 값이 없는 행은 걸러집니다(미리보기에서 경고로 알려 줍니다).
+* **형식 `plain`**: `genome` 표의 모든 열과 QC 열을 이름 그대로 줍니다.
+* **필터**: 최소 길이, 완성도(Complete/Near complete/Partial), QC 불량·오류 제외, clade, 서열이 있는 것만(기본).
+* **공개(Open) 데이터만** 나갑니다. 수집 대상이 NCBI(INSDC) accession으로 정해지므로 Pathoplexus 제한 사용 데이터는 들어 있지 않고, `dataUseTerms`는 `OPEN`으로 적힙니다.
+* **내부 API**: `GET /api/export/{바이러스id}/metadata.tsv`, `.../sequences.fasta`, `.../preview`, `POST .../build`(서버 작업), `GET /api/exports`. 다른 프로그램에서는 `curl`로 바로 받을 수 있습니다.
+* **쓰는 법(mpox)**: QC 탭에서 QC 실행 → 내보내기에서 폴더 만들기 → `git clone https://github.com/nextstrain/mpox` → `cd mpox/phylogenetic && nextstrain build . --configfile <폴더>/nextstrain-config.yaml`.
+* 한계: 열 이름과 형식은 Nextstrain mpox 저장소의 `ingest` 설정과 예제 데이터에서 맞춘 것이며, 워크플로 전체(`nextstrain build`)를 이 도구에서 직접 돌려 확인하지는 않았습니다. 워크플로 설정이 바뀌면 열이 달라질 수 있습니다.
+
 ## 명령어 모음 (Cheat sheet)
 
 | 명령 | 설명 |

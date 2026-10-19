@@ -218,7 +218,14 @@ def parse_nextclade_tsv(path: Path) -> dict[str, dict]:
             reasons = [f"{c.split('.')[1]} {r[c]}" for c in cols if re.fullmatch(r"qc\.\w+\.status", c) and (r.get(c) or "").lower() in ("mediocre", "bad")]
             out[acc] = {"status": "error" if err else (st if st in RANK else "error"), "score": _num(r.get("qc.overallScore")), "reasons": reasons or ([err] if err else []),
                         "clade": calls.get("clade", ""), "lineage": calls.get("lineage", ""), "calls": calls, "error": err,
-                        "metrics": {k: _num(r.get(k)) for k in ("coverage", "totalMissing", "totalSubstitutions", "totalFrameShifts", "alignmentScore")}}
+                        "metrics": {k: _num(r.get(k)) for k in ("coverage", "totalMissing", "totalSubstitutions", "totalFrameShifts", "alignmentScore")},
+                        "ns": {   # the names Nextstrain pathogen workflows (e.g. mpox) use for the same Nextclade columns
+                            "coverage": r.get("coverage"), "missing_data": r.get("totalMissing"), "divergence": r.get("totalSubstitutions"),
+                            "nonACGTN": r.get("totalNonACGTNs"), "private_substitutions": r.get("privateNucMutations.totalPrivateSubstitutions"),
+                            "QC_missing_data": r.get("qc.missingData.status"), "QC_mixed_sites": r.get("qc.mixedSites.status"),
+                            "QC_rare_mutations": r.get("qc.privateMutations.status"), "QC_frame_shifts": r.get("qc.frameShifts.status"),
+                            "QC_stop_codons": r.get("qc.stopCodons.status"), "frame_shifts": r.get("frameShifts"),
+                            "is_reverse_complement": r.get("isReverseComplement"), "outbreak": calls.get("outbreak")}}
     return out
 
 
@@ -242,7 +249,7 @@ def _store(con, acc, tool, watch_id, res, version, dataset, tag, md5):
     con.execute("INSERT OR REPLACE INTO qc_result(accession,tool,watch_id,status,score,clade,lineage,metrics_json,version,dataset,dataset_tag,seq_md5,checked_at)"
                 " VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?)",
                 (acc, tool, watch_id, res["status"], res.get("score"), res.get("clade") or None, res.get("lineage") or None,
-                 json.dumps({"metrics": res.get("metrics", {}), "reasons": res.get("reasons", []), "calls": res.get("calls", {}), "error": res.get("error", "")},
+                 json.dumps({"metrics": res.get("metrics", {}), "reasons": res.get("reasons", []), "calls": res.get("calls", {}), "error": res.get("error", ""), "ns": res.get("ns", {})},
                             ensure_ascii=False), version, dataset, tag, md5, datetime.now().isoformat(timespec="seconds")))
 
 

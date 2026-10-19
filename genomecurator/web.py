@@ -3,10 +3,10 @@ import time
 from pathlib import Path
 
 from fastapi import FastAPI, Form, Request
-from fastapi.responses import HTMLResponse, JSONResponse, RedirectResponse, Response
+from fastapi.responses import HTMLResponse, JSONResponse, RedirectResponse, Response, StreamingResponse
 from fastapi.templating import Jinja2Templates
 
-from . import __version__, analysis, completeness, qc, config, curate, jobs, log
+from . import __version__, analysis, completeness, export, qc, config, curate, jobs, log
 from .db import audit_now, connect
 
 _log = log.get("web")
@@ -457,6 +457,79 @@ def create_app(scheduler: bool = True) -> FastAPI:
             out.append({"title": title, "what": what, "next": j.next_run_time.strftime("%Y-%m-%d %H:%M:%S") if j.next_run_time else None,
                         "last": last[0] if last else None})
         return out
+
+    # ------------------------------------------------------------------------------------------------ export for other programs
+    def _xf(request: Request) -> dict:
+        qp = request.query_params
+        lst = lambda k: [x.strip() for x in qp.get(k, "").split(",") if x.strip()] or None
+        return {"require_sequence": qp.get("require_sequence", "1") not in ("0", "false"), "min_length": int(qp["min_length"]) if qp.get("min_length", "").isdigit() else None,
+                "completeness_in": lst("completeness"), "qc_not": lst("qc_not"), "clade": qp.get("clade") or None}
+
+    def _export_watch(watch: int):
+        w = _rows("SELECT id, name FROM watchlist WHERE id=?", watch)
+        return w[0] if w else None
+
+    @app.get("/export")
+    def export_page(request: Request, watch: int = 0):
+        watches = _rows("SELECT w.id, w.name, (SELECT COUNT(*) FROM genome_sequence s JOIN genome g ON g.genome_id=s.genome_id WHERE g.watch_id=w.id) ns FROM watchlist w ORDER BY w.name")
+        return render(request, "export.html", nav="exp", watches=watches, profiles={k: v["label"] for k, v in export.PROFILES.items()},
+                      exports=export.list_exports(), exports_dir=str(export.exports_dir()))
+
+    @app.get("/api/export/profiles")
+    def api_export_profiles():
+        return {k: {"label": v["label"], "id_column": v["id"], "columns": v["columns"]} for k, v in export.PROFILES.items()}
+
+    @app.get("/api/export/{watch}/preview")
+    def api_export_preview(request: Request, watch: int, profile: str = "nextstrain"):
+        if not _export_watch(watch):
+            return JSONResponse({"error": "unknown virus"}, 404)
+        try:
+            return export.preview(watch, profile, **_xf(request))
+        except ValueError as e:
+            return JSONResponse({"error": str(e)}, 400)
+
+    @app.get("/api/export/{watch}/metadata.tsv")
+    def api_export_metadata(request: Request, watch: int, profile: str = "nextstrain"):
+        """The metadata table as TSV - the same rows, in the same order, as sequences.fasta."""
+        w = _export_watch(watch)
+        if not w:
+            return JSONResponse({"error": "unknown virus"}, 404)
+        try:
+            cols, rows, _, _ = export.table(watch, profile, **_xf(request))
+        except ValueError as e:
+            return JSONResponse({"error": str(e)}, 400)
+        return StreamingResponse(export.iter_metadata(cols, rows), media_type="text/tab-separated-values; charset=utf-8",
+                                 headers={"Content-Disposition": f'attachment; filename="{export.slug(w["name"])}_metadata.tsv"'})
+
+    @app.get("/api/export/{watch}/sequences.fasta")
+    def api_export_fasta(request: Request, watch: int, profile: str = "nextstrain"):
+        """FASTA records whose ids equal the profile's id column in metadata.tsv."""
+        w = _export_watch(watch)
+        if not w:
+            return JSONResponse({"error": "unknown virus"}, 404)
+        try:
+            _, _, sel, _ = export.table(watch, profile, **_xf(request))
+        except ValueError as e:
+            return JSONResponse({"error": str(e)}, 400)
+        return StreamingResponse(export.iter_fasta(profile, sel), media_type="text/plain; charset=utf-8",
+                                 headers={"Content-Disposition": f'attachment; filename="{export.slug(w["name"])}_sequences.fasta"'})
+
+    @app.post("/api/export/{watch}/build")
+    def api_export_build(request: Request, watch: int, profile: str = "nextstrain"):
+        """Write metadata.tsv, sequences.fasta, manifest.json and nextstrain-config.yaml into data/exports/<virus>/<timestamp>/ (a server job)."""
+        if not _same_origin(request):
+            return JSONResponse({"error": "cross-site request refused"}, 403)
+        w = _export_watch(watch)
+        if not w:
+            return JSONResponse({"error": "unknown virus"}, 404)
+        if profile not in export.PROFILES:
+            return JSONResponse({"error": "unknown profile"}, 400)
+        flt = _xf(request)
+        return start_job(lambda p: {"redirect": "/export", "result": export.write(watch, None, profile, p, **flt)}, f"내보내기 · {w['name']} ({profile})", "export")
+
+    @app.get("/api/exports")
+    def api_exports(virus: str = ""):
+        return export.list_exports(virus or None)
 
     # ------------------------------------------------------------------------------------------------ QC (sequence stats, Nextclade)
     @app.get("/qc")

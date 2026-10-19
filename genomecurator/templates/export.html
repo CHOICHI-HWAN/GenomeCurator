@@ -1,0 +1,62 @@
+{% extends "base.html" %}{% block body %}
+<div class="pagehead"><h2>내보내기 (다른 프로그램에 넘기기)</h2><span class="mut">큐레이션한 유전체를 메타데이터 표 + FASTA로 — Nextstrain 같은 외부 워크플로의 입력으로</span></div>
+<div class="help">같은 순서·같은 id의 <code>metadata.tsv</code>와 <code>sequences.fasta</code>를 만듭니다. <b>Nextstrain</b> 형식은 <a href="https://github.com/nextstrain/mpox" target="_blank" rel="noopener">nextstrain/mpox</a> 워크플로가 읽는 열(<code>INSDC_accession_version</code> id, <code>2023-XX-XX</code> 형식 날짜,
+region/country/division, host, clade/lineage/outbreak, Nextclade QC 열)을 맞춥니다. 공개(Open) 데이터만 나갑니다.</div>
+
+<div class="card">
+ <div style="display:flex;gap:12px;flex-wrap:wrap;align-items:end">
+  <label>바이러스<br><select id="w">{% for w in watches %}<option value="{{ w.id }}">{{ w.name }} (서열 {{ '{:,}'.format(w.ns) }})</option>{% endfor %}</select></label>
+  <label>형식<br><select id="pf">{% for k, v in profiles.items() %}<option value="{{ k }}">{{ v }}</option>{% endfor %}</select></label>
+  <label>최소 길이(bp)<br><input id="ml" type="number" min="0" placeholder="예: 100000" style="width:130px"></label>
+  <label>clade<br><input id="cl" placeholder="예: Ib" style="width:90px"></label>
+ </div>
+ <div style="margin-top:8px;display:flex;gap:16px;flex-wrap:wrap;font-size:13px">
+  <span>완성도: <label><input type="checkbox" class="cp" value="Complete" checked> Complete</label> <label><input type="checkbox" class="cp" value="Near complete" checked> Near complete</label> <label><input type="checkbox" class="cp" value="Partial" checked> Partial</label></span>
+  <span>QC 불량 제외: <label><input type="checkbox" id="qb"> bad</label> <label><input type="checkbox" id="qe"> error</label></span>
+  <label title="끄면 서열 파일이 없는 유전체도 메타데이터에 넣습니다 (FASTA에는 서열이 있는 것만 들어갑니다)"><input type="checkbox" id="rs" checked> 서열이 있는 것만</label>
+ </div>
+ <div id="pv" style="margin:10px 0" class="mut">불러오는 중…</div>
+ <div style="display:flex;gap:8px;flex-wrap:wrap">
+  <a id="dm"><button type="button">metadata.tsv 받기</button></a>
+  <a id="df"><button type="button">sequences.fasta 받기</button></a>
+  <button type="button" class="p" onclick="build()">서버 폴더에 만들기 (manifest·설정 포함)</button>
+ </div>
+ <form id="bf" method="post" style="display:none"></form>
+</div>
+
+<h3>만들어 둔 내보내기</h3>
+<table><tr><th>시각</th><th>바이러스</th><th>형식</th><th>행</th><th>서열</th><th>폴더</th></tr>
+{% for e in exports %}<tr><td class="nw">{{ e.generated }}</td><td>{{ e.virus }}</td><td>{{ e.profile }}</td><td>{{ '{:,}'.format(e.rows or 0) }}</td><td>{{ '{:,}'.format(e.sequences or 0) }}</td><td><code>{{ e.dir }}</code></td></tr>
+{% else %}<tr><td colspan="6" class="mut">아직 없습니다. 기본 위치: <code>{{ exports_dir }}</code></td></tr>{% endfor %}</table>
+
+<h3>Nextstrain mpox와 쓰는 법</h3>
+<ol style="line-height:1.7">
+ <li>QC 탭에서 mpox의 <b>QC 실행</b>을 합니다 (Nextclade QC 열이 채워집니다. 없으면 워크플로의 기본 필터가 그 행들을 걸러냅니다).</li>
+ <li>위에서 <b>서버 폴더에 만들기</b> → <code>metadata.tsv</code>, <code>sequences.fasta</code>, <code>manifest.json</code>, <code>nextstrain-config.yaml</code>이 생깁니다.</li>
+ <li><code>git clone https://github.com/nextstrain/mpox</code> 후 <code>cd mpox/phylogenetic && nextstrain build . --configfile &lt;만든 폴더&gt;/nextstrain-config.yaml</code></li>
+</ol>
+<h3>내부 API</h3>
+<pre style="background:var(--stripe);padding:8px 10px;border-radius:4px;overflow:auto">GET  /api/export/profiles
+GET  /api/export/{virus_id}/preview?profile=nextstrain&amp;min_length=100000&amp;completeness=Complete,Near%20complete&amp;qc_not=bad
+GET  /api/export/{virus_id}/metadata.tsv?profile=nextstrain      # TSV
+GET  /api/export/{virus_id}/sequences.fasta?profile=nextstrain   # FASTA, ids = INSDC_accession_version
+POST /api/export/{virus_id}/build?profile=nextstrain             # 서버 작업: 폴더에 파일 생성 → /api/job/{id}
+GET  /api/exports                                                # 만들어 둔 내보내기 목록
+CLI: python -m genomecurator export "Orthopoxvirus monkeypox" --out ./mpox_input</pre>
+<script>
+const q=()=>{const p=new URLSearchParams({profile:document.getElementById('pf').value});
+ const ml=document.getElementById('ml').value,cl=document.getElementById('cl').value.trim();if(ml)p.set('min_length',ml);if(cl)p.set('clade',cl);
+ const cp=[...document.querySelectorAll('.cp:checked')].map(x=>x.value);if(cp.length&&cp.length<3)p.set('completeness',cp.join(','));
+ const qn=[];if(document.getElementById('qb').checked)qn.push('bad');if(document.getElementById('qe').checked)qn.push('error');if(qn.length)p.set('qc_not',qn.join(','));
+ if(!document.getElementById('rs').checked)p.set('require_sequence','0');return p.toString()};
+async function refresh(){const w=document.getElementById('w').value;if(!w)return;const s=q();
+ document.getElementById('dm').href='/api/export/'+w+'/metadata.tsv?'+s;document.getElementById('df').href='/api/export/'+w+'/sequences.fasta?'+s;
+ const pv=document.getElementById('pv');pv.textContent='계산 중…';
+ try{const r=await (await fetch('/api/export/'+w+'/preview?'+s)).json();
+  if(r.error){pv.textContent=r.error;return}
+  pv.innerHTML='전체 유전체 '+r.genomes.toLocaleString()+'건 중 <b>'+r.selected.toLocaleString()+'건</b>이 나갑니다.'+(r.warnings.length?'<ul style="margin:6px 0 0 18px;color:var(--warn)">'+r.warnings.map(x=>'<li>'+x.replace(/[&<>]/g,c=>({"&":"&amp;","<":"&lt;",">":"&gt;"}[c]))+'</li>').join('')+'</ul>':'')}
+ catch(e){pv.textContent='미리보기 실패: '+e}}
+function build(){const w=document.getElementById('w').value,f=document.getElementById('bf');f.action='/api/export/'+w+'/build?'+q();runJob(f)}
+document.querySelectorAll('#w,#pf,#ml,#cl,.cp,#qb,#qe,#rs').forEach(x=>x.addEventListener('change',refresh));refresh();
+</script>
+{% endblock %}
