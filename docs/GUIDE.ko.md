@@ -297,6 +297,8 @@ FASTA 실제 길이·md5가 기록과 맞는지, 날짜가 미래가 아닌지, 
 * **내보내기**: `exports/<바이러스>/<데이터셋 이름>/<시각>/`에 `metadata.tsv`, `sequences.fasta`, `manifest.json`, 설정(비공개 포함이면 별도 파일도)을 씁니다. manifest의 `dataset`에 이름·규칙·**멤버 id 해시**가 기록되고 데이터셋의 *내보낸 기록*에도 남으므로, 규칙이나 데이터가 나중에 바뀌어도 어떤 멤버로 만든 결과인지 추적할 수 있습니다(같은 멤버면 해시가 같습니다). **Nextstrain 빌드**(`mpxv`/`hmpxv1`/`clade-i`)를 정해 두면 설정 파일이 그 빌드의 명령을 안내합니다(Ib는 `clade-i`).
 * **정의 삭제**는 정의와 내보낸 기록만 지웁니다. 유전체·서열·이미 내보낸 파일은 그대로입니다.
 * CLI: `python -m genomecurator dataset-create "Orthopoxvirus monkeypox" "clade Ib" --clade Ib --build clade-i` / `dataset-list` / `dataset-export ... [--nextstrain-dir ~/mpox/phylogenetic]` / `dataset-delete`. API: `GET/POST /api/datasets`, `POST /api/datasets/{id}/export`, `GET /api/export/{virus}/metadata.tsv?dataset={id}`(+ `sequences.fasta`; 다운로드에는 비공개가 실리지 않음).
+* **유전체처럼 보기**: 데이터셋의 **목록 보기**(또는 `/dataset/<id>`)는 유전체 탭과 같은 표(필터, 정렬, 열 선택, 상세 패널, TSV)를 그 데이터셋의 멤버로만 보여 줍니다. 서열이 없는 멤버도 표시되고(내보내기에서는 빠짐) 위의 배너 **모두 받기**는 이 데이터셋의 서열만 받습니다. 데이터셋이 *비공개 포함*이면 비공개 멤버가 🔒 *출처: 비공개*로 같은 표에 섞여 보이고 *출처* 필터로 나눌 수 있습니다(공개 페이지·일반 유전체 탭에는 여전히 나타나지 않습니다).
+* **대시보드에서 보기**: 대시보드 위의 *데이터셋* 선택에서 고르면 모든 차트와 지표가 그 데이터셋의 멤버만으로 그려지고, 차트를 눌러 들어가는 목록도 그 데이터셋 안에서 필터됩니다.
 * 서열을 아직 다 받지 않았다면 멤버 수가 서열 있는 것만 셉니다(미리보기가 건수를 알려 줍니다) — 유전체 탭에서 서열을 받은 뒤 다시 보세요.
 
 ## 명령어 모음 (Cheat sheet)

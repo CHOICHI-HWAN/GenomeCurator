@@ -1604,3 +1604,46 @@ def test_dataset_api(tmp_path, monkeypatch):
     assert len(c.get(f"/api/datasets/{ds['id']}/history").json()) == 1
     assert c.post("/api/datasets/999/export").status_code == 404
     assert c.delete(f"/api/datasets/{ds['id']}").json() == {"deleted": True} and c.get("/api/datasets?watch=1").json() == []
+
+
+def _embedded(html, ident):
+    import json
+    import re
+    return json.loads(re.search(rf'<script type="application/json" id="{ident}">(.*?)</script>', html, re.S).group(1))
+
+
+def test_dataset_is_browsable_like_the_genome_table_and_on_the_dashboard(tmp_path, monkeypatch):
+    from fastapi.testclient import TestClient
+    from genomecurator import datasets, private, sources, web
+    _ds_env(tmp_path, monkeypatch)
+    monkeypatch.setattr(sources, "pathoplexus_slug_for", lambda acc: None)             # the genome page looks the Pathoplexus organism up once; no network in tests
+    private.import_texts(1, *_priv_files([{"PPX_accession": "LAB_V1", "strain": "kr-1", "date": "2025-02-03", "country": "Uganda", "clade": "Ib"},
+                                          {"PPX_accession": "LAB_V2", "strain": "pe-1", "date": "2025", "country": "Peru"}], {"LAB_V1": "ACGT" * 40, "LAB_V2": "ACGT" * 41}))
+    ib = datasets.save(1, "Ib", {"clade": ["Ib"]}, include_private=True)
+    pub, priv = datasets.member_ids(1, ib)
+    assert pub == {"A1", "N3"} and priv == {"LAB_V1"}                       # N3 has no sequence file: still a member for browsing (an export would skip it)
+    assert datasets.member_ids(1, datasets.save(1, "pub only", {"clade": ["Ib"]}))[1] == set()          # private rows only when the dataset asks
+    c = TestClient(web.create_app(scheduler=False))
+    page = c.get(f"/dataset/{ib['id']}")
+    assert page.status_code == 200 and "Dataset View" in page.text and "이 데이터셋의 대시보드" in page.text
+    d = _embedded(page.text, "gdata")
+    rows = {r["accession"]: r for r in d["rows"]}
+    assert set(rows) == {"A1", "N3", "LAB_V1"} and rows["LAB_V1"]["is_private"] and rows["LAB_V1"]["source_kind"] == "비공개" and rows["A1"]["source_kind"] == "공개"
+    assert rows["N3"]["has_fasta"] == "No" and rows["LAB_V1"]["has_fasta"] == "Yes" and rows["LAB_V1"]["completeness"] == "비공개"
+    assert [i for i, r in enumerate(d["rows"])] == [r["id"] for r in d["rows"]]                          # row ids are positions (the table's selection uses them)
+    assert any(f["k"] == "source_kind" for f in d["facets"]) and any(col["k"] == "source_kind" for col in d["cols"])
+    assert "서열이 없는 1건" in page.text.replace("\n", " ")
+    # the ordinary genome table is unchanged: every curated genome, no private rows, no dataset header
+    g = c.get("/genomes?watch=1")
+    gd = _embedded(g.text, "gdata")
+    assert {r["accession"] for r in gd["rows"]} == {"A1", "X2", "N3"} and "Dataset View" not in g.text and not any(col["k"] == "source_kind" for col in gd["cols"])
+    assert c.get("/dataset/999", follow_redirects=False).status_code == 303
+    # the dashboard over the dataset
+    dash = c.get(f"/dashboard?dataset={ib['id']}")
+    dd = _embedded(dash.text, "dd")
+    assert dash.status_code == 200 and dd["total"] == 3 and dd["clade"]["labels"] == ["Ib"] and "데이터셋: Ib" in dash.text and f"/dataset/{ib['id']}?" in dash.text
+    full = _embedded(c.get("/dashboard?watch=1").text, "dd")
+    assert full["total"] == 3 and set(full["clade"]["labels"]) == {"Ib", "IIa"} and "/genomes?watch=1&" in c.get("/dashboard?watch=1").text
+    only = _embedded(c.get(f"/dashboard?dataset={datasets.find(1, 'pub only')['id']}").text, "dd")
+    assert only["total"] == 2                                                                                # public members only when the dataset leaves the private store out
+    assert c.get("/dashboard?dataset=999&watch=1").status_code == 200                                         # an unknown dataset falls back to everything

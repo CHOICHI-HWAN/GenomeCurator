@@ -537,7 +537,8 @@ def create_app(scheduler: bool = True) -> FastAPI:
             cols, rows, sel, _ = export.table(ds["watch_id"], "nextstrain", ds)
             from collections import Counter
             top = lambda k: Counter(r.get(k) or "(비어 있음)" for r in rows).most_common(8)
-            return {**pv, "by_clade": top("clade"), "by_country": top("country"), "by_year": sorted(Counter((r["date"] or "????")[:4] for r in rows).items())[-12:],
+            pt, pm = len(export.private_table(ds["watch_id"])[1]), len(export.private_table(ds["watch_id"], ds)[1])
+            return {**pv, "private_total": pt, "private_match": pm, "by_clade": top("clade"), "by_country": top("country"), "by_year": sorted(Counter((r["date"] or "????")[:4] for r in rows).items())[-12:],
                     "summary": datasets.describe(ds["rules"])}
         except (ValueError, KeyError, TypeError) as e:
             return JSONResponse({"error": str(e)}, 400)
@@ -937,13 +938,15 @@ def create_app(scheduler: bool = True) -> FastAPI:
         curate.dryrun(cid)
         return RedirectResponse(f"/changeset/{cid}", 303)
 
-    @app.get("/genomes")
-    def genomes(request: Request, watch: int = 0, msg: str = ""):
+    def _genome_view(watch: int, accessions: set | None = None, private_ids: set | None = None, cols=None, facets=None):
+        """The rows and settings the genome table page needs. accessions / private_ids narrow it to a dataset's members (private rows are
+        added, marked as private); both None = every curated genome of the virus."""
         watches = _rows("SELECT w.id, w.name, w.taxon_id, (SELECT COUNT(*) FROM genome g WHERE g.watch_id=w.id AND IFNULL(g.genome_status,'')!='Removed') n FROM watchlist w")
-        watch = current_watch(request, watch, watches)
         cur = next((w for w in watches if w["id"] == watch), None)
         rows = _rows("SELECT g.*, s.md5, s.gc_content FROM genome g LEFT JOIN genome_sequence s ON s.accession=g.accession "
                      "WHERE g.watch_id=? AND IFNULL(g.genome_status,'')!='Removed' ORDER BY g.genome_id", watch)
+        if accessions is not None:
+            rows = [r for r in rows if r["accession"] in accessions]
         prov: dict[str, dict] = {}
         for p in _rows("SELECT p.genome_id, p.field, p.source FROM field_provenance p JOIN genome g ON g.genome_id=p.genome_id "
                        "WHERE g.watch_id=?", watch):
@@ -969,11 +972,40 @@ def create_app(scheduler: bool = True) -> FastAPI:
             r["has_sra"] = "Yes" if r.get("sra_accession") else "No"
             r["has_fasta"] = "Yes" if r.get("md5") else "No"
             r["completeness"], r["ref_coverage"] = completeness.classify(r.get("genome_status"), r.get("genome_length"), ref and ref[1])
-        ppx = _ppx_slug(watch, rows)
+            r["source_kind"] = "공개"
+        if private_ids:
+            for rec in private.rows_for_export(watch):
+                if rec["id"] in private_ids:
+                    pr = export.private_as_genome(rec)
+                    pr["id"] = len(rows)
+                    rows.append(pr)
+        ppx = _ppx_slug(watch, [r for r in rows if not r.get("is_private")])
         data = {"rows": rows, "name": "genomes", "watch": cur and cur["name"], "lineage": lineage, "ppx": ppx,
                 "ref_note": completeness.describe(ref),
-                "cols": _cols(GN_COLS, rows), "facets": _facets(GN_FACETS, rows)}
-        return render(request, "genomes.html", data=data, nav="gen", watches=watches, watch=watch, msg=msg)
+                "cols": _cols(cols or GN_COLS, rows), "facets": _facets(facets or GN_FACETS, rows)}
+        return watches, data
+
+    @app.get("/genomes")
+    def genomes(request: Request, watch: int = 0, msg: str = ""):
+        watch = current_watch(request, watch, _rows("SELECT w.id, w.name, (SELECT COUNT(*) FROM genome g WHERE g.watch_id=w.id) n FROM watchlist w"))
+        watches, data = _genome_view(watch)
+        return render(request, "genomes.html", data=data, nav="gen", watches=watches, watch=watch, msg=msg, private_n=len(private.list_rows(watch)) if watch else 0, dataset=None)
+
+    @app.get("/dataset/{dsid}")
+    def dataset_view(request: Request, dsid: int, msg: str = ""):
+        """A saved dataset browsed like the genome table: filters, sorting, detail panel, TSV; private members (if the dataset includes them) are marked."""
+        ds = datasets.get(dsid)
+        if not ds:
+            return RedirectResponse("/datasets", 303)
+        pub, priv = datasets.member_ids(ds["watch_id"], ds)
+        cols = GN_COLS[:2] + [("source_kind", "출처", True, True)] + GN_COLS[2:]
+        facets = [("source_kind", "출처 (공개/비공개)")] + GN_FACETS
+        watches, data = _genome_view(ds["watch_id"], pub, priv, cols, facets)
+        data["name"] = "dataset_" + export.slug(ds["name"])
+        n_seq = sum(1 for r in data["rows"] if r.get("has_fasta") == "Yes")
+        info = {"public": len(pub), "private": len(priv), "no_seq": len(pub) - sum(1 for r in data["rows"] if not r.get("is_private") and r.get("has_fasta") == "Yes"), "with_seq": n_seq}
+        return render(request, "genomes.html", data=data, nav="ds", watches=watches, watch=ds["watch_id"], msg=msg, private_n=0, dataset=ds, ds_info=info,
+                      ds_summary=datasets.describe(ds["rules"]))
 
     @app.post("/genomes/fasta")
     async def genomes_fasta(request: Request):
@@ -1083,10 +1115,15 @@ def create_app(scheduler: bool = True) -> FastAPI:
                       seq=seqcheck.summary(wid) if wid else None, plan=seqcheck.load_plan(wid) if wid else None, seq_rows=seqcheck.results(wid) if wid else [])
 
     @app.get("/dashboard")
-    def dashboard(request: Request, watch: int = 0):
+    def dashboard(request: Request, watch: int = 0, dataset: int = 0):
         watches = _rows("SELECT w.id, w.name, (SELECT COUNT(*) FROM genome g WHERE g.watch_id=w.id) n FROM watchlist w")
-        watch = current_watch(request, watch, watches)
+        ds = datasets.get(dataset) if dataset else None
+        watch = ds["watch_id"] if ds else current_watch(request, watch, watches)
         g = _rows("SELECT * FROM genome WHERE watch_id=? AND IFNULL(genome_status,'')!='Removed'", watch)
+        pub = priv = None
+        if ds:                                   # the same charts, over the dataset's members only (private ones too when the dataset includes them)
+            pub, priv = datasets.member_ids(watch, ds)
+            g = [r for r in g if r["accession"] in pub]
         _c = connect()
         try:
             _ref = completeness.reference_map(_c).get(watch)
@@ -1094,11 +1131,18 @@ def create_app(scheduler: bool = True) -> FastAPI:
             _c.close()
         for r in g:
             r["completeness"], _ = completeness.classify(r.get("genome_status"), r.get("genome_length"), _ref and _ref[1])
+        if ds and priv:
+            g += [export.private_as_genome(rec) for rec in private.rows_for_export(watch) if rec["id"] in priv]
         prov = _rows("SELECT p.source, COUNT(*) n FROM field_provenance p JOIN genome g ON g.genome_id=p.genome_id "
-                     "WHERE g.watch_id=? GROUP BY p.source", watch)
+                     "WHERE g.watch_id=? GROUP BY p.source", watch) if not ds else \
+            _rows("SELECT p.source, g.accession FROM field_provenance p JOIN genome g ON g.genome_id=p.genome_id WHERE g.watch_id=?", watch)
+        if ds:
+            from collections import Counter
+            cnt = Counter(r["source"] for r in prov if r["accession"] in pub)
+            prov = [{"source": k, "n": v} for k, v in cnt.items()]
         last = _rows("SELECT last_checked FROM watchlist WHERE id=?", watch)
-        return render(request, "dashboard.html", nav="dash", watches=watches, watch=watch,
-                      data=dashboard_data(g, prov, last[0]["last_checked"] if last else None))
+        return render(request, "dashboard.html", nav="dash", watches=watches, watch=watch, dataset=ds,
+                      datasets=datasets.listing(watch), data=dashboard_data(g, prov, last[0]["last_checked"] if last else None))
 
     @app.get("/api/deploy/preview")
     def deploy_preview():

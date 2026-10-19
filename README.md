@@ -26,6 +26,7 @@ It is for viruses only. Bacteria differ in record structure (multi-contig assemb
 11. **Private store.** Local, unpublished genomes are uploaded one at a time or from a spreadsheet (template included; every upload is a version; dry run first) into a store separate from the public set and exported as *separate files* wired to the Nextstrain workflow's own `private_metadata` / `private_sequences`, so a final analysis dataset can combine both without mixing them.
 12. **Leave genomes out, don't delete them.** Mark genomes as excluded from the final dataset (with a reason, reversible); exports skip them and record them in `excluded.tsv`.
 13. **Datasets.** Save named, ad hoc selections (e.g. only clade Ib) with live preview and traceable exports (rules + member hash in the manifest).
+    Each dataset can be browsed like the genome table and viewed on the dashboard.
 14. **Analysis with Apache Superset** (optional, read-only view of your data) and a **read-only static page** for GitHub Pages.
 
 ## Screenshots

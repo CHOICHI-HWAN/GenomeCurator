@@ -199,6 +199,21 @@ def export_history(dataset_id: int, limit: int = 10) -> list[dict]:
         con.close()
 
 
+def member_ids(watch_id: int, ds: dict) -> tuple[set[str], set[str]]:
+    """(public accessions, private ids) that the dataset's rules and manual lists pick - for browsing and the dashboard. Unlike an export this does
+    NOT require a sequence file (the view shows who lacks one); genomes marked excluded are not members."""
+    from . import export, exclusions, private
+    _w, rows = export._load(watch_id)
+    pub = {g["accession"] for g in rows if not g.get("_excluded") and matches(ds, export.nextstrain_row(g), g)}
+    priv: set[str] = set()
+    if ds.get("include_private"):
+        ex = exclusions.marked(watch_id, "private")
+        for r in private.rows_for_export(watch_id):
+            if r["id"] not in ex and matches(ds, export.private_row(r), None, key=r["id"]):
+                priv.add(r["id"])
+    return pub, priv
+
+
 # ------------------------------------------------------------------------------------------------ what values exist (for the rule builder)
 def facets(watch_id: int) -> dict:
     """Value counts over the genomes the dataset rules can pick from (curated, not Removed, not marked excluded) - and the private store -

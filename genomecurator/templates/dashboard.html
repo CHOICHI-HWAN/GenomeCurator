@@ -6,8 +6,10 @@
 @media(max-width:520px){.charts{grid-template-columns:1fr}}
 </style>
 <div class="pagehead"><h2>대시보드</h2>
-<select onchange="location.href='/dashboard?watch='+this.value">{% for w in watches %}<option value="{{ w.id }}" {{ 'selected' if w.id==watch }}>{{ w.name }} ({{ w.n }})</option>{% endfor %}</select></div>
-{% if not data.total %}<div class="card mut">이 바이러스에는 아직 반영된 유전체가 없습니다. 큐레이션 페이지에서 승인 후 적용하면 차트가 채워집니다.</div>{% else %}
+<select onchange="location.href='/dashboard?watch='+this.value">{% for w in watches %}<option value="{{ w.id }}" {{ 'selected' if w.id==watch }}>{{ w.name }} ({{ w.n }})</option>{% endfor %}</select>
+<select onchange="location.href='/dashboard?watch={{ watch }}'+(this.value?'&dataset='+this.value:'')" title="데이터셋을 고르면 그 멤버만으로 차트를 그립니다"><option value="">전체 유전체</option>{% for d in datasets %}<option value="{{ d.id }}" {{ 'selected' if dataset and d.id==dataset.id }}>데이터셋: {{ d.name }}</option>{% endfor %}</select>
+{% if dataset %}<span class="mut" style="font-size:12.5px">{{ dataset.name }}{% if dataset.include_private %} · 🔒 비공개 포함{% endif %} — <a href="/dataset/{{ dataset.id }}">목록 보기</a> · <a href="/datasets?watch={{ watch }}">정의</a></span>{% endif %}</div>
+{% if not data.total %}<div class="card mut">{% if dataset %}이 데이터셋에는 아직 멤버가 없습니다. 규칙을 확인하세요.{% else %}이 바이러스에는 아직 반영된 유전체가 없습니다. 큐레이션 페이지에서 승인 후 적용하면 차트가 채워집니다.{% endif %}</div>{% else %}
 <div class="cards" id="kpis"></div>
 <div class="charts">
  <div class="ch"><h4>월별 신규 등록 <small>release_date</small></h4><div><canvas id="c_monthly"></canvas></div></div>
@@ -35,7 +37,7 @@ if(typeof Chart==='undefined'){document.querySelector('.charts').innerHTML='<div
 Chart.defaults.color=fg;Chart.defaults.borderColor=bd;Chart.defaults.font.family='"Segoe UI","Malgun Gothic",sans-serif';
 const base=(extra={})=>({responsive:true,maintainAspectRatio:false,plugins:{legend:{display:false}},...extra});
 const mk=(id,type,labels,values,opt={},color=acc)=>new Chart(document.getElementById(id),{type,data:{labels,datasets:[{data:values,backgroundColor:color,borderRadius:2}]},options:opt});
-const go=(key)=>(e,els,chart)=>{if(!els.length)return;const l=chart.data.labels[els[0].index];if(l==='기타'||l==='(없음)')return;location.href='/genomes?watch={{ watch }}&f='+encodeURIComponent(key+':'+l)};
+const go=(key)=>(e,els,chart)=>{if(!els.length)return;const l=chart.data.labels[els[0].index];if(l==='기타'||l==='(없음)')return;location.href='{{ ('/dataset/' ~ dataset.id ~ '?') if dataset else ('/genomes?watch=' ~ watch ~ '&') }}f='+encodeURIComponent(key+':'+l)};
 mk('c_monthly','bar',D.monthly.labels,D.monthly.values,base());
 mk('c_year','bar',D.year.labels,D.year.values,base());
 mk('c_country','bar',D.country.labels,D.country.values,base({indexAxis:'y',onClick:go('isolation_country'),onHover:(e,a)=>e.native.target.style.cursor=a.length?'pointer':'default'}));
