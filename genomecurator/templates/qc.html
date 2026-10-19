@@ -1,0 +1,50 @@
+{% extends "base.html" %}{% block body %}
+<div class="pagehead"><h2>QC (서열 품질 · Nextclade)</h2><span class="mut">저장된 서열을 한 번 더 검사합니다. 경고만 하고 아무것도 막지 않으며, 큐레이션 값을 몰래 바꾸지 않습니다.</span></div>
+<div class="help"><b>서열 통계</b>(길이, N·모호 염기 비율, GC, 기록된 길이와 일치 여부)는 모든 바이러스에 적용됩니다.
+<b>Nextclade</b>는 데이터셋이 있는 바이러스에서만 돌며 clade/lineage와 자체 품질 점수를 줍니다.
+Nextclade가 부른 clade/lineage는 소스 값과 <b>같으면</b> 아무 일도 없고, 소스가 비어 있으면 <b>채울 후보</b>로, <b>다르면</b> 검토 화면의 "소스 간 불일치"에 Nextclade 값이 함께 올라와 직접 고릅니다
+(<b>QC 실행 + 확인</b> 또는 다음 <i>지금 확인</i> 때 반영).</div>
+
+<div class="card">
+ <b>도구</b>: Nextclade {% if tool_ok %}<span style="color:var(--ok)">v{{ tool_version }}</span>{% else %}<span style="color:var(--bad)">설치 안 됨</span> — <code>mamba install -c bioconda nextclade</code> (또는 environment.yml로 환경 다시 만들기). 설치 전에는 서열 통계만 돕니다.{% endif %}
+ · 서열 통계: 내장
+</div>
+
+<h3>바이러스별 상태</h3>
+<table id="qt"><thead><tr><th>바이러스</th><th>유전체 · 서열 파일</th><th>Nextclade 데이터셋</th><th>데이터셋 버전</th><th>QC 결과</th><th>Nextclade clade 대조</th><th></th></tr></thead><tbody>
+{% for w in watches %}{% set sm = summary[w.id] %}{% set ds = datasets_map[w.id] %}<tr data-w="{{ w.id }}" data-ds="{{ ds or '' }}">
+<td><b>{{ w.name }}</b></td><td class="nw">{{ '{:,}'.format(w.n) }} · {{ '{:,}'.format(w.ns) }}</td>
+<td>{% if ds %}<code>{{ ds }}</code>{% else %}<span class="mut">없음 (서열 통계만)</span>{% endif %}</td>
+<td class="dsv nw">{% if ds %}<span class="mut">확인 중…</span>{% else %}<span class="mut">-</span>{% endif %}</td>
+<td class="nw">{% for tool, label in (('seqstats', '서열 통계'), ('nextclade', 'Nextclade')) %}{% set b = sm.by.get(tool) %}{% if b %}<div><span class="mut">{{ label }}</span>
+ <span class="qs good">양호 {{ b.get('good', 0) }}</span> · <span class="qs mediocre">주의 {{ b.get('mediocre', 0) }}</span> · <span class="qs bad">불량 {{ b.get('bad', 0) + b.get('error', 0) }}</span></div>{% endif %}{% endfor %}
+ {% if not sm.by %}<span class="mut">아직 실행 안 함</span>{% endif %}</td>
+<td class="nw">{% if sm.total_nextclade %}채울 수 있는 값 <b>{{ sm.clade_fill }}</b> · 소스와 다른 값 <b style="color:{{ 'var(--bad)' if sm.clade_diff else 'var(--ok)' }}">{{ sm.clade_diff }}</b>{% else %}<span class="mut">-</span>{% endif %}</td>
+<td class="nw"><button type="button" onclick="qcRun({{ w.id }},0,0)" {% if not w.ns %}disabled title="서열 파일이 없습니다 (유전체 화면의 Get FASTA로 받으세요)"{% endif %}>QC 실행</button>
+ <button type="button" class="p" onclick="qcRun({{ w.id }},0,1)" {% if not w.ns %}disabled{% endif %} title="QC를 돌린 뒤 바로 '지금 확인'을 해서 Nextclade 값이 검토 화면에 올라오게 합니다">QC 실행 + 확인</button>
+ {% if ds %}<button type="button" class="upd" style="display:none" onclick="qcDs('{{ ds }}')">데이터셋 업데이트</button>{% endif %}</td></tr>
+{% else %}<tr><td colspan="7" class="mut">등록된 바이러스가 없습니다.</td></tr>{% endfor %}</tbody></table>
+<form id="qf" method="post" style="display:none"></form>
+
+{% for w in watches %}{% set sm = summary[w.id] %}{% if sm.worst or sm.clade_examples %}
+<h3>{{ w.name }}</h3>
+{% if sm.clade_examples %}<div class="card"><b>소스와 clade/lineage가 다른 유전체</b> (처음 {{ sm.clade_examples|length }}건 / 전체 {{ sm.clade_diff }}건) — <i>QC 실행 + 확인</i> 후 검토 화면에서 고릅니다.
+<table style="margin-top:6px"><tr><th>Accession</th><th>소스 clade</th><th>Nextclade clade</th><th>소스 lineage</th><th>Nextclade lineage</th></tr>
+{% for c in sm.clade_examples %}<tr><td>{{ c.accession }}</td><td>{{ c.clade or '-' }}</td><td style="color:var(--warn)">{{ c.nc_clade or '-' }}</td><td>{{ c.lineage or '-' }}</td><td style="color:var(--warn)">{{ c.nc_lineage or '-' }}</td></tr>{% endfor %}</table></div>{% endif %}
+{% if sm.worst %}<div class="card"><b>주의·불량 유전체</b> (심한 순, 최대 60건)
+<table style="margin-top:6px"><tr><th>Accession</th><th>검사</th><th>상태</th><th>이유</th></tr>
+{% for x in sm.worst %}<tr><td>{{ x.accession }}</td><td>{{ '서열 통계' if x.tool == 'seqstats' else 'Nextclade' }}</td><td><span class="qs {{ x.status }}">{{ {'mediocre': '주의', 'bad': '불량', 'error': '오류'}[x.status] }}</span></td>
+<td class="mut">{{ x.reasons|join(' · ') if x.reasons else ('점수 ' ~ x.score if x.score is not none else '') }}</td></tr>{% endfor %}</table></div>{% endif %}
+{% endif %}{% endfor %}
+
+<script>
+function qcRun(w,force,chk){const f=document.getElementById('qf');f.action='/api/qc/run?watch='+w+'&force='+force+'&then_check='+chk;runJob(f)}
+function qcDs(p){const f=document.getElementById('qf');f.action='/api/qc/dataset?path='+encodeURIComponent(p);runJob(f)}
+(async()=>{let d;try{d=await (await fetch('/api/qc/datasets')).json()}catch(e){return}
+ const ST={current:['최신','var(--ok)'],outdated:['업데이트 가능','var(--warn)'],missing:['내려받기 필요','var(--bad)'],unknown:['최신 여부 확인 불가','var(--mut)']};
+ d.rows.forEach(r=>{const tr=document.querySelector('tr[data-w="'+r.watch_id+'"]');if(!tr||!r.dataset)return;
+  const c=tr.querySelector('.dsv'),s=ST[r.state]||['',''];
+  c.innerHTML=(r.local?'<code>'+r.local.slice(0,10)+'</code> ':'')+'<span style="color:'+s[1]+'">'+s[0]+'</span>'+(r.latest&&r.state==='outdated'?' <span class="mut">(최신 '+r.latest.slice(0,10)+')</span>':'');
+  if(['outdated','missing'].includes(r.state)&&r.tool)tr.querySelector('.upd').style.display=''})})();
+</script>
+{% endblock %}

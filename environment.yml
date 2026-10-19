@@ -3,6 +3,7 @@
 name: genomecurator
 channels:
   - conda-forge
+  - bioconda
 dependencies:
   - python=3.12
   - pip
@@ -12,6 +13,7 @@ dependencies:
   - httpx>=0.27
   - apscheduler>=3.10,<4
   - python-multipart>=0.0.9
+  - nextclade>=3          # clade/lineage and sequence QC (QC tab); optional at runtime, sequence statistics work without it
   - pytest>=8
   - pip:
       - -e .

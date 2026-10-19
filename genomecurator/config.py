@@ -72,6 +72,8 @@ MIN_FREE_BYTES = int(os.environ.get("GC_MIN_FREE_BYTES", str(500 * 1024 * 1024))
 
 # Source priority: earlier wins when the same field conflicts.
 SOURCE_PRIORITY = ["pathoplexus", "ncbi", "bvbrc"]
+# every origin a field value can have: the three databases, then Nextclade (sequence-derived clade/lineage; it only fills blanks by itself)
+VALUE_SOURCES = SOURCE_PRIORITY + ["nextclade"]
 
 # watchlist name -> Pathoplexus (Loculus/LAPIS) organism slug. Absent = skipped.
 PATHOPLEXUS_ORGANISMS: dict[str, str] = {}

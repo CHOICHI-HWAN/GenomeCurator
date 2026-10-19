@@ -14,7 +14,7 @@ from itertools import combinations
 from .db import connect
 
 SOURCES = ["ncbi", "bvbrc", "pathoplexus"]
-LABEL = {"ncbi": "NCBI", "bvbrc": "BV-BRC", "pathoplexus": "Pathoplexus"}
+LABEL = {"ncbi": "NCBI", "bvbrc": "BV-BRC", "pathoplexus": "Pathoplexus", "nextclade": "Nextclade"}
 # field -> comparison kind
 FIELDS = {
     "accession_version": "num", "genome_length": "num", "collection_date": "date", "isolation_country": "country",
@@ -118,9 +118,10 @@ def analyze(per_source: dict[str, dict[str, dict]]) -> tuple[dict, list[tuple]]:
            "examples_not_in_ncbi": {s: sorted(accs[s] - ncbi)[:10] for s in present if s != "ncbi"}}
     fields: dict[str, dict] = {}
     rows: list[tuple] = []
-    for a, b in combinations(present, 2):
+    cmp_sources = present + (["nextclade"] if per_source.get("nextclade") else [])      # Nextclade only has clade/lineage, so only those are compared
+    for a, b in combinations(cmp_sources, 2):
         pair = f"{a}|{b}"
-        for acc in accs[a] & accs[b]:
+        for acc in set(per_source[a]) & set(per_source[b]):
             ra, rb = per_source[a][acc], per_source[b][acc]
             for f, kind in FIELDS.items():
                 va, vb = ra.get(f), rb.get(f)

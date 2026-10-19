@@ -214,7 +214,7 @@ def merge(per_source: dict[str, dict[str, dict]], choices: dict[str, dict[str, d
     merged = {}
     for acc in per_source["ncbi"]:
         rec, prov = {}, {}
-        for src in config.SOURCE_PRIORITY:
+        for src in config.VALUE_SOURCES:
             for k, v in per_source.get(src, {}).get(acc, {}).items():
                 if isinstance(v, (list, tuple, set)):  # sources occasionally return arrays (e.g. segment)
                     v = "; ".join(str(x) for x in v)
@@ -273,6 +273,11 @@ def _check(watch_name: str, progress=None) -> int | None:
         per_source, notes = sources.fetch_all(w["name"], w["taxon"], w["taxon_id"],
                                               json.loads(w["filters_json"] or "{}"), progress=p)
         notes = notes0 + notes
+        from . import qc
+        ncs = {a: r for a, r in qc.nextclade_source(w["id"], con).items() if a in per_source["ncbi"]}
+        if ncs:      # Nextclade's clade/lineage from the stored sequences take part as one more source (QC tab)
+            per_source["nextclade"] = ncs
+            notes.append(f"Nextclade clade/lineage {len(ncs)}건 포함")
         ppx = sources.pathoplexus_resolve(w["name"], w["taxon"], w["taxon_id"])
         if ppx and ppx[0] != w["pathoplexus_organism"]:
             con.execute("UPDATE watchlist SET pathoplexus_organism=? WHERE id=?", (ppx[0], w["id"]))

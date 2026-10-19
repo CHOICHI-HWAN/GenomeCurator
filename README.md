@@ -21,7 +21,8 @@ It is for viruses only. Bacteria differ in record structure (multi-contig assemb
 6. **Schema watch.** Detects when a source renames or removes a field your adapters read, daily and on demand.
 7. **Genome completeness classes**: Complete / Near complete (≥ 90% of the longest RefSeq genome, adjustable) / Partial.
 8. **Jobs tab.** Every long task runs on the server with status, progress, log and error; it survives page changes and restarts.
-9. **Analysis with Apache Superset** (optional, read-only view of your data) and a **read-only static page** for GitHub Pages.
+9. **Sequence QC.** Sequence statistics (length, N and ambiguity, GC) for every genome, and [Nextclade](https://github.com/nextstrain/nextclade) clade/lineage plus its quality score for viruses that have a Nextclade dataset (mpox, Ebola species, measles, dengue, ...). A clade that differs from the sources goes to the review screen instead of being overwritten; datasets are updated from a button.
+10. **Analysis with Apache Superset** (optional, read-only view of your data) and a **read-only static page** for GitHub Pages.
 
 ## Screenshots
 
@@ -45,7 +46,7 @@ Requires Python 3.10+ and internet access to the three sources. x86-64 and ARM (
 ```bash
 git clone https://github.com/CHOICHI-HWAN/GenomeCurator.git
 cd GenomeCurator
-mamba env create -f environment.yml      # or: conda env create -f environment.yml
+mamba env create -f environment.yml      # or: conda env create -f environment.yml (includes Nextclade from bioconda)
 mamba activate genomecurator
 python -m pytest -q                      # optional: all green means it works
 ```
@@ -85,6 +86,7 @@ Other commands (`python -m genomecurator --help` for all options):
 | `dry-run <id>` / `apply <id>` | Pre-apply checks / apply approved items |
 | `reconcile <name>` | Source-vs-source agreement report |
 | `verify` | Integrity checks on local data |
+| QC tab | Sequence statistics and Nextclade per virus; update Nextclade datasets; *Run QC + check* |
 | `schema-check [--daily]` | Check the sources' and local schema |
 | `backup [zip]` / `restore <zip>` | Portable backup of curated data and FASTA |
 | `serve [--port N] [--open] [--superset] [--no-scheduler]` | Web server (optionally with Superset) |

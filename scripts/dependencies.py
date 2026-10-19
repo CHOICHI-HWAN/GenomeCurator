@@ -39,6 +39,7 @@ SERVICES = [
     ("BV-BRC (`www.bv-brc.org`)", "보강 메타데이터·서열 / Enriching metadata and sequences", "https://www.bv-brc.org/"),
     ("Pathoplexus LAPIS (`lapis.pathoplexus.org`, `pathoplexus.org`)", "보강 메타데이터·변이·서열, organism 목록 / Enriching metadata, mutations, sequences; organism list", "https://pathoplexus.org/"),
     ("ICTV via EBI OLS4 (`www.ebi.ac.uk`)", "워치 등록 전 종명 확인 / Species-name check before adding a watch", "https://ictv.global/"),
+    ("Nextstrain Nextclade datasets (`data.clades.nextstrain.org`)", "Nextclade 데이터셋(QC 탭에서 필요할 때 내려받음, 저장소에는 포함하지 않음) / Nextclade datasets, downloaded on demand from the QC tab and not part of this repository", "https://clades.nextstrain.org/"),
     ("GitHub Pages / `git`", "공개 페이지 게시(선택) / Publishing the public page (optional)", "https://pages.github.com/"),
 ]
 
@@ -115,6 +116,7 @@ def main():
           "| [Chart.js](https://www.chartjs.org/) | 4.4.1 (jsDelivr CDN) | MIT | 대시보드와 공개 페이지의 차트(보는 쪽에 인터넷 필요) / Charts on the dashboard and the public page (viewer needs internet) |", "",
           "## 도구 / Tools (not Python libraries)", "",
           "- **conda / mamba** — 환경 생성 / environment creation (`environment.yml`).",
+          "- **[Nextclade](https://github.com/nextstrain/nextclade) CLI** — clade/lineage·서열 품질 / clade, lineage and sequence QC. 라이선스 MIT (conda-forge/bioconda `nextclade`, `environment.yml`에 포함; 없으면 서열 통계만 동작). License: MIT. Datasets are by their listed authors (see each dataset's README); no licence file ships with them, so they are fetched on demand and not redistributed here.",
           "- **Google Chrome (headless)** — README GIF 녹화에만 사용(선택) / only for recording the README GIFs (optional).",
           "- **git** — 공개 페이지 게시(선택) / publishing the public page (optional).", "",
           "## 데이터를 가져오는 외부 서비스 / External services the app contacts", "",

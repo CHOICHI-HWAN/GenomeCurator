@@ -62,6 +62,12 @@ CREATE TABLE IF NOT EXISTS job(
   id TEXT PRIMARY KEY, kind TEXT, label TEXT, status TEXT,  -- running|done|error|interrupted
   pct REAL DEFAULT 0, msg TEXT, started TEXT, finished TEXT, error TEXT, redirect TEXT, log_json TEXT, result_json TEXT);
 CREATE INDEX IF NOT EXISTS ix_job_started ON job(started);
+-- sequence QC (qc.py): one row per accession and tool (seqstats, nextclade); derived data, safe to delete and recompute
+CREATE TABLE IF NOT EXISTS qc_result(
+  accession TEXT, tool TEXT, watch_id INTEGER, status TEXT,  -- good|mediocre|bad|error
+  score REAL, clade TEXT, lineage TEXT, metrics_json TEXT, version TEXT, dataset TEXT, dataset_tag TEXT, seq_md5 TEXT, checked_at TEXT,
+  PRIMARY KEY(accession, tool));
+CREATE INDEX IF NOT EXISTS ix_qc_watch ON qc_result(watch_id, tool);
 -- a person's choice between the sources' values (resolve.py); honoured by every later check
 CREATE TABLE IF NOT EXISTS field_choice(
   watch_id INTEGER, accession TEXT, field TEXT, source TEXT,  -- ncbi|bvbrc|pathoplexus|custom

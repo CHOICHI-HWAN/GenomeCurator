@@ -20,7 +20,7 @@ from itertools import combinations
 from . import config, reconcile, seqcheck
 from .db import audit
 
-LABEL = {"ncbi": "NCBI", "bvbrc": "BV-BRC", "pathoplexus": "Pathoplexus", "custom": "직접 입력", "manual": "직접 입력"}
+LABEL = {"ncbi": "NCBI", "bvbrc": "BV-BRC", "pathoplexus": "Pathoplexus", "nextclade": "Nextclade", "custom": "직접 입력", "manual": "직접 입력"}
 CONF_RANK = {"high": 3, "medium": 2, "low": 1}
 CONF_MIN = {"high": 3, "medium": 2, "low": 1}
 NUMERIC = {"accession_version", "genome_length"}
@@ -31,7 +31,7 @@ def _s(v) -> str:
 
 
 def _prio(sources: list[str]) -> int:
-    order = config.SOURCE_PRIORITY
+    order = config.VALUE_SOURCES
     return min((order.index(s) for s in sources if s in order), default=99)
 
 
@@ -108,6 +108,14 @@ def suggest(field: str, groups: list[dict], seq: dict | None = None) -> dict:
         if same:
             why += " (" + ", ".join(LABEL[s] for s in same) + "는 서열이 NCBI와 같아 표기·버전 지연일 뿐입니다)"
         return {**g, "confidence": "high", "reason": why}
+    nc = next((g for g in cands if "nextclade" in g["sources"]), None)
+    if field in ("clade", "lineage") and nc is not None and len(cands) > 1:
+        others = [s for g in cands for s in g["sources"] if s != "nextclade" and g is not nc]
+        agree = [s for s in nc["sources"] if s != "nextclade"]
+        why = "Nextclade가 저장된 서열을 데이터셋 기준으로 분류한 값입니다 (서열에서 계산하므로 소스의 표기보다 근거가 확실합니다)"
+        if agree:
+            return {**nc, "confidence": "high", "reason": why + f" — {', '.join(LABEL[s] for s in agree)}도 같은 값입니다"}
+        return {**nc, "confidence": "medium", "reason": why + f". {', '.join(LABEL[s] for s in others)}와 다르니 의심되면 소스 값을 고르세요"}
     clusters = _clusters(kind, cands)
     weight = lambda cl: sum(len(g["sources"]) for g in cl)
     top = max(weight(c) for c in clusters)
@@ -141,7 +149,7 @@ def analyse(per_src: dict[str, dict], current: dict, prov: dict, chosen: dict, s
             continue
         worst = "conflict" if "conflict" in verdicts else "cosmetic"
         groups: dict[str, list[str]] = {}
-        for s in config.SOURCE_PRIORITY:
+        for s in config.VALUE_SOURCES:
             if s in vals:
                 groups.setdefault(vals[s], []).append(s)
         glist = [{"value": v, "sources": ss} for v, ss in groups.items()]
@@ -173,7 +181,7 @@ def _coerce(field: str, value: str):
 
 def default_value(per_src: dict[str, dict], field: str):
     """What the plain priority merge gives for this field -> (value, source) or (None, None)."""
-    for s in config.SOURCE_PRIORITY:
+    for s in config.VALUE_SOURCES:
         v = per_src.get(s, {}).get(field)
         if isinstance(v, (list, tuple, set)):
             v = "; ".join(str(x) for x in v)

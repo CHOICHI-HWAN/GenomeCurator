@@ -852,3 +852,131 @@ def test_schema_traffic_light_per_source(tmp_path, monkeypatch):
     t = schema_check.traffic()
     assert {k: v["status"] for k, v in t["sources"].items()} == {"ncbi": "ok", "pathoplexus": "fail", "bvbrc": "warn"}
     assert t["sources"]["pathoplexus"]["fail"] == 1 and "gone" in t["sources"]["pathoplexus"]["msg"]
+
+
+def _qc_env(tmp_path, monkeypatch, n_N=0):
+    """A watch with two stored genomes (A1, X2) and a fake `nextclade` on PATH: it calls A1 clade Ib and X2 clade IIb."""
+    import os
+    import stat
+    from genomecurator import config, db
+    monkeypatch.setattr(config, "DATA_DIR", tmp_path)
+    monkeypatch.setattr(config, "DB_PATH", tmp_path / "g.db")
+    bindir = tmp_path / "bin"
+    bindir.mkdir()
+    nc = bindir / "nextclade"
+    nc.write_text("""#!/usr/bin/env python3
+import sys, json, os
+a = sys.argv[1:]
+if a[0] == "--version":
+    print("nextclade 9.9.9")
+elif a[:2] == ["dataset", "list"]:
+    print(json.dumps([{"version": {"tag": "2030-01-01--00-00-00Z"}}]))
+elif a[:2] == ["dataset", "get"]:
+    d = a[a.index("--output-dir") + 1]
+    os.makedirs(d)
+    open(os.path.join(d, "pathogen.json"), "w").write(json.dumps({"version": {"tag": "2030-01-01--00-00-00Z"}}))
+elif a[0] == "run":
+    out = a[a.index("--output-tsv") + 1]
+    names = [l[1:].strip() for l in open(a[-1]) if l.startswith(">")]
+    with open(out, "w") as f:
+        f.write("index\\tseqName\\tclade\\tlineage\\tqc.overallScore\\tqc.overallStatus\\tcoverage\\terrors\\n")
+        for i, n in enumerate(names):
+            f.write(f"{i}\\t{n}\\t{'IIb' if n.startswith('X') else 'Ib'}\\tA.4\\t{5 * i}\\t{'bad' if n.startswith('X') else 'good'}\\t0.99\\t\\n")
+""")
+    nc.chmod(nc.stat().st_mode | stat.S_IEXEC)
+    monkeypatch.setenv("PATH", f"{bindir}{os.pathsep}{os.environ['PATH']}")
+    con = db.connect()
+    con.execute("INSERT INTO watchlist(id,name,taxon,taxon_id) VALUES(1,'Mpox','Orthopoxvirus monkeypox',3431483)")
+    for i, (acc, seq) in enumerate([("A1", "ACGT" * 50), ("X2", "ACGT" * 40 + "N" * 40)]):
+        (tmp_path / "genomes").mkdir(exist_ok=True)
+        f = tmp_path / "genomes" / f"{acc}.fna"
+        f.write_text(f">{acc} test\n{seq}\n")
+        con.execute("INSERT INTO genome(genome_id,watch_id,accession,genome_length,clade) VALUES(?,?,?,?,?)", (f"g{i}", 1, acc, len(seq), "Ib" if acc == "A1" else "IIa"))
+        con.execute("INSERT INTO genome_sequence(accession,genome_id,md5,file_path) VALUES(?,?,?,?)", (acc, f"g{i}", f"md5{acc}", f"genomes/{acc}.fna"))
+    con.commit()
+    con.close()
+
+
+def test_qc_seqstats_verdicts(tmp_path):
+    from genomecurator import qc
+    f = tmp_path / "a.fna"
+    f.write_text(">a\n" + "ACGT" * 100 + "\n")
+    assert qc.seqstats(f, 400)["status"] == "good"
+    assert qc.seqstats(f, 399)["status"] == "bad"                       # length differs from the record
+    f.write_text(">a\n" + "ACGT" * 95 + "N" * 20 + "\n")                  # 5% N
+    assert qc.seqstats(f)["status"] == "bad"
+    f.write_text(">a\n" + "ACGT" * 99 + "NNNN\n")                          # 1% N
+    assert qc.seqstats(f)["status"] == "mediocre"
+    f.write_text(">a\n" + "ACGT" * 100 + "R" + "\n")                       # a single ambiguity code in 401: 0.25%
+    assert qc.seqstats(f)["status"] == "mediocre"
+    f.write_text(">a\n")
+    assert qc.seqstats(f)["status"] == "bad"
+
+
+def test_qc_run_stores_results_and_skips_unchanged(tmp_path, monkeypatch):
+    from genomecurator import qc
+    _qc_env(tmp_path, monkeypatch)
+    assert qc.dataset_for("Orthopoxvirus monkeypox") == "nextstrain/mpox/all-clades" and qc.dataset_for("Nipah virus") is None
+    st = qc.dataset_status()[0]
+    assert st["state"] == "missing" and st["latest"] == "2030-01-01--00-00-00Z"          # nothing downloaded yet
+    r0 = qc.run(1)
+    assert r0["nextclade"] == 0 and r0["stats"] == 2 and any("내려받아지지" in n for n in r0["notes"])       # stats only, and it says why
+    up = qc.dataset_update("nextstrain/mpox/all-clades")
+    assert up["after"] == "2030-01-01--00-00-00Z" and qc.dataset_status()[0]["state"] == "current"
+    r = qc.run(1)
+    assert r["nextclade"] == 2 and r["skipped"] == 2                                       # stats were already there
+    pg = qc.per_genome(1)
+    assert pg["A1"]["qc"] == "good" and pg["A1"]["nc_clade"] == "Ib"
+    assert pg["X2"]["qc"] == "bad" and pg["X2"]["nc_clade"] == "IIb" and pg["X2"]["stats_status"] == "bad"
+    again = qc.run(1)
+    assert again["nextclade"] == 0 and again["stats"] == 0                                 # nothing changed: nothing recomputed
+    assert qc.run(1, force=True)["nextclade"] == 2
+    s = qc.summary(1)
+    assert s["clade_diff"] == 1 and s["clade_examples"][0]["accession"] == "X2"            # source says IIa, Nextclade says IIb
+    assert qc.nextclade_source(1) == {"A1": {"clade": "Ib", "lineage": "A.4"}, "X2": {"clade": "IIb", "lineage": "A.4"}}
+
+
+def test_nextclade_enters_curation_as_a_source(tmp_path, monkeypatch):
+    from genomecurator import config, curate, qc, reconcile, resolve
+    _qc_env(tmp_path, monkeypatch)
+    qc.dataset_update("nextstrain/mpox/all-clades")
+    qc.run(1)
+    ps = {"ncbi": {"A1": {"genome_length": 200, "clade": "Ib"}, "X2": {"genome_length": 200, "clade": "IIa"}, "Y3": {"genome_length": 5}},
+          "bvbrc": {}, "pathoplexus": {}, "nextclade": qc.nextclade_source(1)}
+    rep, rows = reconcile.analyze(ps)
+    assert rep["coverage"]["sources"] == {"ncbi": 3}                                       # Nextclade is not a database: no coverage numbers
+    assert [(r[0], r[1], r[2], r[3], r[5]) for r in rows] == [("X2", "clade", "conflict", "ncbi", "nextclade")]
+    m = curate.merge(ps)
+    assert m["A1"][0]["clade"] == "Ib" and m["X2"][0]["clade"] == "IIa" and m["X2"][1]["clade"] == "ncbi"       # a database wins by default
+    ps["ncbi"]["Y3"].pop("genome_length")
+    ps["ncbi"]["X2"].pop("clade")
+    assert curate.merge(ps)["X2"][0]["clade"] == "IIb" and curate.merge(ps)["X2"][1]["clade"] == "nextclade"   # but Nextclade fills a blank
+    fs = resolve.analyse({"ncbi": {"clade": "IIa"}, "nextclade": {"clade": "IIb"}}, {"clade": "IIa"}, {"clade": "ncbi"}, {})
+    assert fs[0]["suggestion"]["value"] == "IIb" and fs[0]["suggestion"]["confidence"] == "medium"
+    fs = resolve.analyse({"ncbi": {"clade": "IIb"}, "bvbrc": {"clade": "IIa"}, "nextclade": {"clade": "IIb"}}, {}, {}, {})
+    assert fs[0]["suggestion"]["value"] == "IIb" and fs[0]["suggestion"]["confidence"] == "high"
+
+
+def test_qc_api_and_pages(tmp_path, monkeypatch):
+    import time
+    from fastapi.testclient import TestClient
+    from genomecurator import web
+    _qc_env(tmp_path, monkeypatch)
+    c = TestClient(web.create_app(scheduler=False))
+    assert c.get("/qc").status_code == 200
+    d = c.get("/api/qc/datasets").json()
+    assert d["tool"] == "9.9.9" and d["rows"][0]["state"] == "missing"
+    assert c.post("/api/qc/dataset?path=evil/path").status_code == 400                   # only datasets of registered viruses
+
+    def wait(jid):
+        for _ in range(200):
+            j = c.get(f"/api/job/{jid}").json()
+            if j["done"]:
+                return j
+            time.sleep(0.05)
+        raise AssertionError("job did not finish")
+    assert wait(c.post("/api/qc/dataset?path=nextstrain/mpox/all-clades").json()["job"])["status"] == "done"
+    j = wait(c.post("/api/qc/run?watch=1").json()["job"])
+    assert j["status"] == "done" and j["result"]["nextclade"] == 2 and j["kind"] == "qc"
+    assert "QC" in c.get("/qc").text and c.get("/genomes?watch=1").status_code == 200
+    assert c.post("/api/qc/run?watch=99").status_code == 404

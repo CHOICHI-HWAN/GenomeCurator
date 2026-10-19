@@ -6,7 +6,7 @@ from fastapi import FastAPI, Form, Request
 from fastapi.responses import HTMLResponse, JSONResponse, RedirectResponse, Response
 from fastapi.templating import Jinja2Templates
 
-from . import __version__, analysis, completeness, config, curate, jobs, log
+from . import __version__, analysis, completeness, qc, config, curate, jobs, log
 from .db import audit_now, connect
 
 _log = log.get("web")
@@ -63,10 +63,11 @@ GN_COLS = [("genome_name", "Genome Name", True), ("strain", "Strain", True), ("g
            ("biosample_accession", "BioSample", False), ("sequencing_platform", "Sequencing Platform", False),
            ("assembly_method", "Assembly Method", False), ("has_sra", "SRA Available", False), ("has_fasta", "FASTA", False),
            ("genome_quality", "Genome Quality", False), ("genome_id", "Genome ID", False), ("bvbrc_genome_id", "BV-BRC ID", False),
+           ("qc", "QC", True, True), ("nc_clade", "Nextclade Clade", None), ("nc_lineage", "Nextclade Lineage", None),
            ("gc_content", "GC %", False), ("release_date", "Release Date", False), ("date_modified", "Modified", False)]
 TAX_FACETS = [("clade", "Clade"), ("lineage", "Lineage"), ("serotype", "Serotype"), ("genotype", "Genotype"), ("subtype", "Subtype")]
 GN_FACETS = [("completeness", "Completeness"), ("genome_status", "NCBI Status"), ("host_name", "Host"), ("isolation_country", "Country"),
-             ("collection_year", "Collection Year"), ("has_sra", "SRA"), ("has_fasta", "FASTA"), ("genome_quality", "Quality")]
+             ("collection_year", "Collection Year"), ("has_sra", "SRA"), ("has_fasta", "FASTA"), ("qc", "QC"), ("genome_quality", "Quality")]
 
 
 def _cols(cols, rows):
@@ -457,6 +458,49 @@ def create_app(scheduler: bool = True) -> FastAPI:
                         "last": last[0] if last else None})
         return out
 
+    # ------------------------------------------------------------------------------------------------ QC (sequence stats, Nextclade)
+    @app.get("/qc")
+    def qc_page(request: Request, watch: int = 0):
+        watches = _rows("SELECT w.id, w.name, w.taxon, (SELECT COUNT(*) FROM genome g WHERE g.watch_id=w.id) n, "
+                       "(SELECT COUNT(*) FROM genome_sequence s JOIN genome g ON g.genome_id=s.genome_id WHERE g.watch_id=w.id) ns FROM watchlist w ORDER BY w.name")
+        return render(request, "qc.html", nav="qc", watches=watches, tool_version=qc.nextclade_version(), tool_ok=qc.nextclade_bin() is not None,
+                      summary={w["id"]: qc.summary(w["id"]) for w in watches},
+                      datasets_map={w["id"]: qc.dataset_for(w["taxon"]) for w in watches})
+
+    @app.get("/api/qc/datasets")
+    def api_qc_datasets():
+        return {"tool": qc.nextclade_version(), "rows": qc.dataset_status()}
+
+    @app.post("/api/qc/run")
+    def api_qc_run(request: Request, watch: int, force: int = 0, then_check: int = 0):
+        """QC of one virus as a server job; then_check also runs 'check now' so Nextclade's clade/lineage enter the review screen."""
+        if not _same_origin(request):
+            return JSONResponse({"error": "cross-site request refused"}, 403)
+        w = _rows("SELECT name FROM watchlist WHERE id=?", watch)
+        if not w:
+            return JSONResponse({"error": "unknown virus"}, 404)
+        name = w[0]["name"]
+
+        def work(p):
+            res = qc.run(watch, lambda pct, m: p(pct * (0.6 if then_check else 1), m), bool(force))
+            if then_check:
+                p(62, "QC 결과를 소스와 함께 대조하는 중 (지금 확인)…")
+                cs = curate.check(name, progress=lambda pct, m: p(62 + pct * 0.3, m))
+                if cs:
+                    curate.dryrun(cs, progress=lambda pct, m: p(92 + pct * 0.08, m))
+                return {"redirect": f"/changeset/{cs}" if cs else "/qc", "result": res}
+            return {"redirect": f"/qc?watch={watch}", "result": res}
+        return start_job(work, f"QC · {name}", "qc")
+
+    @app.post("/api/qc/dataset")
+    def api_qc_dataset(request: Request, path: str):
+        if not _same_origin(request):
+            return JSONResponse({"error": "cross-site request refused"}, 403)
+        known = {qc.dataset_for(w["taxon"]) for w in _rows("SELECT taxon FROM watchlist")}
+        if path not in known:
+            return JSONResponse({"error": "등록된 바이러스에 연결된 데이터셋이 아닙니다."}, 400)
+        return start_job(lambda p: {"redirect": "/qc", "result": qc.dataset_update(path, p)}, f"Nextclade 데이터셋 업데이트 · {path}", "qc")
+
     @app.get("/analysis")
     def analysis_page(request: Request):
         return render(request, "analysis.html", nav="ana", st=analysis.status())
@@ -606,7 +650,10 @@ def create_app(scheduler: bool = True) -> FastAPI:
             ref = completeness.reference_map(_c).get(watch)
         finally:
             _c.close()
+        qcm = qc.per_genome(watch)
         for n, r in enumerate(rows):
+            q = qcm.get(r["accession"], {})
+            r["qc"], r["nc_clade"], r["nc_lineage"] = q.get("qc", "미실행"), q.get("nc_clade"), q.get("nc_lineage")
             r.pop("taxon_lineage_ids", None)
             r.pop("taxon_lineage_names", None)
             r["id"] = n

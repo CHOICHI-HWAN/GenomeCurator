@@ -12,6 +12,10 @@ re-pinned (the full list with licences is in [docs/DEPENDENCIES.md](docs/DEPENDE
 ## [Unreleased]
 
 ### Added
+- **QC tab (sequence QC)**: sequence statistics (length, N and ambiguity code share, GC, agreement with the recorded length) for every stored genome, and **Nextclade** (clade, lineage, its own quality score) for viruses that have a Nextclade dataset (mpox, Ebola species, measles, dengue, West Nile, rubella, VZV, hMPV; add more with `GC_NEXTCLADE_DATASETS`). Warnings only. Results are derived data in the new table `qc_result`.
+- Nextclade's clade/lineage take part in curation as a fourth *source*: they fill a blank, or - when they differ from NCBI / BV-BRC / Pathoplexus - appear in the review screen with a suggestion (high when a database agrees, medium otherwise) instead of overwriting anything. *Run QC + check* does both steps in one job.
+- Nextclade datasets are downloaded on demand and each virus shows its dataset version and whether a newer one exists, with an **Update dataset** button. Genome table gets QC / Nextclade clade / Nextclade lineage columns and a QC filter.
+- `environment.yml` now includes the `bioconda` channel and `nextclade` (MIT; x86-64 and ARM). Without Nextclade only the sequence statistics run. Datasets are not redistributed (they ship without a licence file).
 - **Source traffic light** in the page header: NCBI — Pathoplexus — BV-BRC connected by a line, each with a light from the newest schema check (blue = no change, yellow = needs a look, red = source code update needed, grey = never checked). Hover for the reason; click to open the Schema tab.
 - **Batch suggestions for selected rows**: in the review screen, select rows (checkboxes, **drag the mouse over rows**, **Shift+click** for a range, or filter by integrity and *Select all*) and press *Apply suggestions to selection*. A dialog shows the confidence breakdown and lets you take *medium and above* (recommended) or *everything, including low*. The whole-changeset button is now labelled *Auto-pick (all)*.
 - **Analysis tab**: start and stop Apache Superset from the app (it stays a separate program in its own conda env), see whether it is installed/running, open it. `serve --superset` starts it together with the app; a Superset started by the app goes down with it.
@@ -29,6 +33,7 @@ re-pinned (the full list with licences is in [docs/DEPENDENCIES.md](docs/DEPENDE
 - Concurrent database connections could fail with `view v_genome_analysis already exists`; the analysis view is now rebuilt only when its definition changed, in one transaction.
 
 ### Data & compatibility
+- New derived table `qc_result` (created automatically; not part of backups, recomputed by the QC tab). Schema version stays 1.
 - New operational table `job` (created automatically; not included in backups). Schema version stays 1.
 
 ## [0.2.0] - 2026-10-17

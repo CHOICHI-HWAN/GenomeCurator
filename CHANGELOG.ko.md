@@ -12,6 +12,10 @@ Virus Genome Metadata Curator(패키지 `genomecurator`, 이전 표시 이름 "G
 ## [Unreleased]
 
 ### 추가
+- **QC 탭(서열 QC)**: 저장된 모든 유전체의 서열 통계(길이, N·모호 염기 비율, GC, 기록된 길이와의 일치)와, Nextclade 데이터셋이 있는 바이러스(mpox, 에볼라 종들, 홍역, 뎅기, 웨스트나일, 풍진, VZV, hMPV; `GC_NEXTCLADE_DATASETS`로 추가)는 **Nextclade**(clade, lineage, 자체 품질 점수). 경고만 합니다. 결과는 새 테이블 `qc_result`에 저장되는 파생 데이터입니다.
+- Nextclade의 clade/lineage는 큐레이션에서 네 번째 *소스*로 참여합니다: 빈 값은 채우는 후보가 되고, NCBI / BV-BRC / Pathoplexus와 **다르면** 아무것도 덮어쓰지 않고 검토 화면에 추천(데이터베이스가 같은 값이면 높음, 아니면 보통)과 함께 올라옵니다. *QC 실행 + 확인*은 두 단계를 한 작업으로 합니다.
+- Nextclade 데이터셋은 필요할 때 내려받고, 바이러스마다 데이터셋 버전과 새 버전 유무를 보여 주며 **데이터셋 업데이트** 버튼이 있습니다. 유전체 표에 QC / Nextclade clade / Nextclade lineage 열과 QC 필터가 생겼습니다.
+- `environment.yml`에 `bioconda` 채널과 `nextclade`(MIT, x86-64·ARM)를 넣었습니다. Nextclade가 없으면 서열 통계만 동작합니다. 데이터셋은 라이선스 파일 없이 배포되어 재배포하지 않습니다.
 - **소스 신호등**: 모든 페이지 맨 위에 NCBI — Pathoplexus — BV-BRC를 선으로 이어 최근 스키마 점검 결과를 불빛으로 보여 줍니다(파랑 = 변화 없음, 노랑 = 확인 필요, 빨강 = 소스 코드 업데이트 필요, 회색 = 점검 전). 마우스를 올리면 이유가, 누르면 스키마 탭이 열립니다.
 - **선택한 항목에 추천값 일괄 적용**: 검토 화면에서 행을 고르고(체크박스, **마우스로 행을 끌어서**, **Shift+클릭**으로 범위, 또는 정합성 필터 후 *Select all*) *선택 항목에 추천 적용*을 누릅니다. 신뢰도 구성을 보여 주는 창에서 *보통 이상*(권장) 또는 *낮음까지 모두*를 고릅니다. 전체 버튼은 *Auto-pick (전체)*로 이름을 바꿨습니다.
 - **분석 탭**: 앱에서 Apache Superset을 켜고 끄고(여전히 별도 conda 환경의 별도 프로그램), 설치·실행 여부를 보고 바로 엽니다. `serve --superset`은 앱과 함께 켭니다. 앱이 켠 Superset은 앱이 꺼질 때 같이 꺼집니다.
@@ -29,6 +33,7 @@ Virus Genome Metadata Curator(패키지 `genomecurator`, 이전 표시 이름 "G
 - 동시에 DB 연결이 열릴 때 `view v_genome_analysis already exists` 오류가 날 수 있었습니다. 분석 뷰는 정의가 바뀐 때만 한 트랜잭션으로 다시 만듭니다.
 
 ### 데이터·호환성
+- 새 파생 테이블 `qc_result`(자동 생성, 백업에 포함되지 않으며 QC 탭에서 다시 계산). 스키마 버전은 1 그대로입니다.
 - 새 운영용 테이블 `job`(자동 생성, 백업에는 포함되지 않음). 스키마 버전은 1 그대로입니다.
 
 ## [0.2.0] - 2026-10-17
