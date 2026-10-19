@@ -12,6 +12,9 @@ Virus Genome Metadata Curator(패키지 `genomecurator`, 이전 표시 이름 "G
 ## [Unreleased]
 
 ### 추가
+- **Nextstrain 분석 연결**: **Nextstrain 탭**(또는 `python -m genomecurator analyze <바이러스> <데이터셋>`)에서 데이터셋으로 Nextstrain mpox 워크플로(`phylogenetic/`)를 돌립니다. 도구가 데이터셋을 워크플로 체크아웃에 바로 내보내고, 설정 overlay를 만들어 빌드의 기본 설정 뒤에 붙여(Snakefile은 설정이 없을 때만 기본값을 읽습니다) `nextstrain build --ambient`를 서버 작업으로 실행하며, 단계별 진행률과 로그를 보여 주고 결과를 보관합니다. **데이터셋 자체의 Nextstrain 설정**은 YAML 입력칸입니다(`filter.min_length` 같은 중첩 키가 워크플로 설정에 합쳐지고, 실행 전에 합쳐진 최종 설정을 보여 주며, 입력·이름·비공개 파일은 도구가 관리). 도구는 별도 conda 환경(`nextstrain/environment.yml`, 이름 `gc-nextstrain`: nextstrain-cli, augur, snakemake, nextclade, iqtree, mafft, auspice)에 있고, 탭이 환경을 점검하며 버튼으로 워크플로를 받고/업데이트하고 분석마다 워크플로 커밋과 도구 버전을 기록합니다.
+- **분석할 때마다 보관하고 골라 보기**: 분석마다 기록(멤버 해시·건수, 규칙, 설정, 워크플로 커밋, 도구 버전, 메모, 로그)과 Auspice 파일(`data/nextstrain/auspice/`), 입력 표·manifest·최종 설정(`data/nextstrain/runs/`)이 남습니다. 다시 돌려도 이전 결과를 덮어쓰지 않고, 멤버·설정·워크플로가 완전히 같은 분석은 강제하지 않는 한 반복하지 않습니다. 분석 표는 지난 분석마다 **오늘의 데이터셋과 어떻게 다른지**(멤버 같음 / +추가 −삭제, 설정 다름, 워크플로 다름)를 보여 줘서 어느 결과가 현재 데이터와 맞는지 알 수 있고, 로컬 **Auspice** 서버(`auspice view`, 127.0.0.1만)가 보관된 어떤 분석이든 이름으로 엽니다. QC가 없어 워크플로의 기본 필터에서 빠질 멤버는 실행 전에 알려 줍니다.
+- `exclude`가 INSDC accession뿐 아니라 Pathoplexus accession(Nextstrain 트리에 보이는 id)도 받습니다.
 - **데이터셋 QC**: *데이터셋 QC 실행*(데이터셋 보기, 데이터셋 편집 화면, `POST /api/datasets/{id}/qc`)이 바이러스 전체가 아니라 그 데이터셋의 멤버 — 서열 파일이 있는 공개 유전체와, 데이터셋이 포함하면 비공개 유전체 — 에 대해서만 서열 통계와 Nextclade를 돌립니다. 바뀌지 않은 서열은 건너뜁니다(*다시 계산*은 강제). 데이터셋 보기에 QC 요약 카드(도구별 양호/주의/불량, 아직 QC를 안 한 멤버 수)가 나오고, 표의 QC 열·필터로 살펴볼 유전체를 골라 볼 수 있습니다.
 - **데이터셋을 유전체 표처럼 보고 대시보드에서도 보기**: 모든 데이터셋에 *Dataset View*(`/dataset/<id>`)가 생깁니다 — 필터·정렬·열 선택·값 출처가 나오는 상세 패널·TSV가 있는 같은 표를 그 데이터셋의 멤버로만 보여 줍니다(서열이 없는 멤버도 표시·집계, 데이터셋이 비공개를 포함하면 비공개 멤버가 *출처* 열·필터와 함께 *비공개*로 표시). **대시보드**에는 데이터셋 선택이 생겨 모든 차트·지표·표로의 이동이 그 데이터셋만 대상으로 합니다. 데이터셋 카드와 편집 화면에서 둘 다 링크됩니다. 유전체 표는 비공개 유전체가 몇 건 있는지(일부러 따로 보관하므로 표에는 없음) 알려 주고, 데이터셋 미리보기는 규칙에 맞는 비공개 유전체 수와 포함 여부를 항상 보여 줍니다.
 - **데이터셋(필요할 때 만드는, 이름 붙여 저장하는 분석 대상)**: 어떤 유전체가 이 분석에 속하는지(예: clade Ib만)를 정의해 이름으로 저장하고, 실시간으로 미리 보며, 몇 번이고 다시 내보냅니다. 데이터셋은 *정의*입니다: 규칙(clade, lineage, outbreak, 대륙, 국가, 숙주, 완성도, 수집 연도, 길이 범위, 뺄 QC 상태, 서열 필수 여부)과 직접 넣기·빼기, 비공개 저장소 포함 여부이며, 전역 *데이터셋에서 제외* 표시는 그대로 적용됩니다. **데이터셋 탭**은 데이터에 실제로 있는 값(건수와 서열 있는 수 포함)으로 규칙을 만들고, 클릭할 때마다 멤버 수와 clade·국가·연도 분포, 경고를 보여 주며, mpox 프리셋(clade Ib, Ia, I, IIb, 완전한 유전체)이 있습니다. 내보내기는 `exports/<바이러스>/<데이터셋>/<시각>/`에 쓰고 manifest에 데이터셋·규칙·**멤버 id의 해시**를 기록하며(내보낸 기록에도 남음) 규칙이 나중에 바뀌어도 결과를 추적할 수 있습니다. 내보낼 때 만들어지는 설정 파일이 안내할 nextstrain/mpox 빌드(`mpxv`, `hmpxv1`, `clade-i`)를 데이터셋마다 정할 수 있습니다. CLI `dataset-create` / `dataset-list` / `dataset-export` / `dataset-delete`, API `GET/POST /api/datasets`, `/api/datasets/{id}/export`, 그리고 다른 프로그램용으로 `/api/export/{virus}/metadata.tsv|sequences.fasta`의 `?dataset=<id>`(다운로드에는 비공개가 실리지 않음).
@@ -47,6 +50,7 @@ Virus Genome Metadata Curator(패키지 `genomecurator`, 이전 표시 이름 "G
 - 동시에 DB 연결이 열릴 때 `view v_genome_analysis already exists` 오류가 날 수 있었습니다. 분석 뷰는 정의가 바뀐 때만 한 트랜잭션으로 다시 만듭니다.
 
 ### 데이터·호환성
+- 새 테이블 `analysis_run`과 컬럼 `dataset.params_yaml`(자동 생성·추가, 일반 백업에는 포함되지 않음), 새 의존성 `pyyaml`(MIT). Nextstrain 도구는 별도 환경이며 Docker 이미지에는 들어 있지 않습니다.
 - 새 테이블 `private_genome`·`private_version`(업로드 이력)과 스프레드시트 업로드용 새 의존성 `openpyxl`(MIT). 이전 설명: `private_genome`(자동 생성, 일반 백업에는 포함되지 않으며 `backup --with-private` 사용). 비공개 유전체의 서열은 `data/private/<바이러스>/`에 있습니다. 스키마 버전은 1 그대로입니다.
 - 새 파생 테이블 `qc_result`(자동 생성, 백업에 포함되지 않으며 QC 탭에서 다시 계산). 스키마 버전은 1 그대로입니다.
 - 새 운영용 테이블 `job`(자동 생성, 백업에는 포함되지 않음). 스키마 버전은 1 그대로입니다.

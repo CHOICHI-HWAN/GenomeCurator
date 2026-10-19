@@ -16,6 +16,7 @@ Versions are the ones **this project was tested with**; the allowed ranges live 
 | `httpx` | 0.28.1 | BSD-3-Clause | NCBI·BV-BRC·Pathoplexus 호출(재시도·시간제한) / HTTP client for all source requests |
 | `apscheduler` | 3.11.3 | MIT | 매일 확인·스키마 점검 스케줄러 / Scheduler for the daily checks |
 | `python-multipart` | 0.0.32 | Apache-2.0 | 웹 폼(승인·적용 등) 해석 / Parses web form posts |
+| `pyyaml` | 6.0.3 | MIT | Nextstrain 분석 설정(YAML) 검사·병합 / Checks and merges the YAML settings of a Nextstrain analysis |
 | `openpyxl` | 3.1.5 | MIT | 비공개 유전체 스프레드시트(.xlsx) 업로드·템플릿 / Spreadsheet (.xlsx) upload and template for private genomes |
 
 ## 개발·테스트 / Development (`.[dev]`)
@@ -51,6 +52,8 @@ Versions are the ones **this project was tested with**; the allowed ranges live 
 ## 도구 / Tools (not Python libraries)
 
 - **conda / mamba** — 환경 생성 / environment creation (`environment.yml`).
+- **Nextstrain 분석 환경 / Nextstrain analysis environment** (`nextstrain/environment.yml`, 별도 conda 환경 `gc-nextstrain`, 저장소·Docker 이미지에는 포함하지 않음 / a separate conda environment, not part of the repository or the Docker image): [nextstrain-cli](https://github.com/nextstrain/cli) MIT · [augur](https://github.com/nextstrain/augur) **AGPL-3.0** · [auspice](https://github.com/nextstrain/auspice) **AGPL-3.0** · [snakemake](https://snakemake.github.io/) MIT · [IQ-TREE](http://www.iqtree.org/) GPL-2.0+ · [MAFFT](https://mafft.cbrc.jp/alignment/software/) BSD · TreeTime MIT · Nextclade MIT · Node.js MIT. 모두 별도 프로그램으로 실행하며(링크·수정·재배포 없음) 앱은 환경의 `bin/`을 PATH 앞에 둘 뿐입니다 / all run as separate programs (no linking, modification or redistribution); the app only puts the environment's `bin/` on PATH.
+- **[nextstrain/mpox](https://github.com/nextstrain/mpox) 워크플로** — MIT. 필요할 때 `git clone`으로 `data/nextstrain/mpox`에 받습니다(저장소에는 포함하지 않음) / MIT; cloned on demand into `data/nextstrain/mpox`, not part of this repository.
 - **[Nextclade](https://github.com/nextstrain/nextclade) CLI** — clade/lineage·서열 품질 / clade, lineage and sequence QC. 라이선스 MIT (conda-forge/bioconda `nextclade`, `environment.yml`에 포함; 없으면 서열 통계만 동작). License: MIT. Datasets are by their listed authors (see each dataset's README); no licence file ships with them, so they are fetched on demand and not redistributed here.
 - **Google Chrome (headless)** — README GIF 녹화에만 사용(선택) / only for recording the README GIFs (optional).
 - **git** — 공개 페이지 게시(선택) / publishing the public page (optional).

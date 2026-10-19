@@ -17,6 +17,13 @@ def _exists(con, scope: str, watch_id: int, i: str) -> bool:
     return con.execute("SELECT 1 FROM genome WHERE watch_id=? AND accession=?", (watch_id, i)).fetchone() is not None
 
 
+def _resolve(con, watch_id: int, i: str) -> str | None:
+    """A public genome by its accession - or by its Pathoplexus accession (the id Nextstrain trees show), with or without the version."""
+    r = con.execute("SELECT accession FROM genome WHERE watch_id=? AND (accession=? OR accession||'.'||accession_version=? OR pathoplexus_accession=? OR pathoplexus_accession LIKE ?)",
+                    (watch_id, i, i, i, i + ".%")).fetchone()
+    return r[0] if r else None
+
+
 def add(watch_id: int, ids: list[str], scope: str = "public", reason: str = "") -> dict:
     """Mark genomes as excluded (idempotent: marking again only updates the reason). Unknown ids are reported, not stored."""
     if scope not in SCOPES:
@@ -28,7 +35,13 @@ def add(watch_id: int, ids: list[str], scope: str = "public", reason: str = "") 
         now = datetime.now().isoformat(timespec="seconds")
         done, new, unknown = 0, 0, []
         for i in dict.fromkeys(str(x).strip() for x in ids if str(x).strip()):
-            if not _exists(con, scope, watch_id, i):
+            if scope == "public":
+                acc = _resolve(con, watch_id, i)
+                if not acc:
+                    unknown.append(i)
+                    continue
+                i = acc
+            elif not _exists(con, scope, watch_id, i):
                 unknown.append(i)
                 continue
             old = con.execute("SELECT 1 FROM dataset_exclusion WHERE scope=? AND watch_id=? AND id=?", (scope, watch_id, i)).fetchone()
@@ -49,6 +62,8 @@ def remove(watch_id: int, ids: list[str], scope: str = "public") -> dict:
     try:
         n = 0
         for i in dict.fromkeys(str(x).strip() for x in ids if str(x).strip()):
+            if scope == "public":
+                i = _resolve(con, watch_id, i) or i
             n += con.execute("DELETE FROM dataset_exclusion WHERE scope=? AND watch_id=? AND id=?", (scope, watch_id, i)).rowcount
         if n:
             audit(con, "dataset_include", f"{scope} 바이러스 {watch_id}: {n}건 제외 해제")

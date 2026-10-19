@@ -402,14 +402,16 @@ def exports_dir() -> Path:
     return config.DATA_DIR / "exports"
 
 
-def write(watch_id: int, out_dir: Path | None = None, profile: str = "nextstrain", progress=None, nextstrain_dir: Path | None = None, include_private: bool = False, dataset: dict | None = None, **filters) -> dict:
+def write(watch_id: int, out_dir: Path | None = None, profile: str = "nextstrain", progress=None, nextstrain_dir: Path | None = None, include_private: bool = False, dataset: dict | None = None,
+          run_name: str | None = None, extra_config: str = "", **filters) -> dict:
     """Write metadata.tsv, sequences.fasta, manifest.json and nextstrain-config.yaml. Default folder: data/exports/<virus>/<timestamp>/.
     With nextstrain_dir (the `phylogenetic/` folder of a nextstrain/mpox checkout) the files go to <it>/data/genomecurator/ and the config to
     <it>/build-configs/genomecurator/config.yaml with paths relative to that folder - the form that also works inside the Docker runtime.
     include_private additionally writes the private store as metadata-private.tsv / sequences-private.fasta (never mixed into the public files)
     and wires them to the workflow's private_metadata / private_sequences.
     dataset (datasets.py) decides who is in: its rules, manual adds / removals and its own include_private; the manifest records the rules and a
-    hash of the exact member ids, and the folder defaults to exports/<virus>/<dataset>/<timestamp>/."""
+    hash of the exact member ids, and the folder defaults to exports/<virus>/<dataset>/<timestamp>/.
+    run_name / extra_config are for an analysis run (nextstrain.py): a unique build + Auspice name, and the dataset's own YAML settings."""
     if dataset and dataset.get("include_private"):
         include_private = True
     p = progress or (lambda *a: None)
@@ -505,10 +507,10 @@ def write(watch_id: int, out_dir: Path | None = None, profile: str = "nextstrain
     if ns:
         cfg_path = ns / "build-configs" / "genomecurator" / "config.yaml"
         cfg_path.parent.mkdir(parents=True, exist_ok=True)
-        cfg = nextstrain_config(out, profile, relative_to=ns, private=bool(priv), build=(dataset or {}).get("build"))
+        cfg = nextstrain_config(out, profile, relative_to=ns, private=bool(priv), build=(dataset or {}).get("build"), run_name=run_name, extra=extra_config)
     else:
         cfg_path = out / "nextstrain-config.yaml"
-        cfg = nextstrain_config(out, profile, private=bool(priv), build=(dataset or {}).get("build"))
+        cfg = nextstrain_config(out, profile, private=bool(priv), build=(dataset or {}).get("build"), run_name=run_name, extra=extra_config)
     cfg_path.write_text(cfg, encoding="utf-8")
     con = connect()
     try:
@@ -525,7 +527,8 @@ def write(watch_id: int, out_dir: Path | None = None, profile: str = "nextstrain
             "excluded": pv.get("excluded", 0)}
 
 
-def nextstrain_config(out: Path, profile: str = "nextstrain", relative_to: Path | None = None, private: bool = False, build: str | None = None) -> str:
+def nextstrain_config(out: Path, profile: str = "nextstrain", relative_to: Path | None = None, private: bool = False, build: str | None = None,
+                      run_name: str | None = None, extra: str = "") -> str:
     """A config *overlay* for the Nextstrain mpox workflow: only `inputs` (local files instead of data.nextstrain.org) and use_remote_files.
     The workflow's Snakefile loads its own defaults/<build>/config.yaml only when no config is given, so pass the build's defaults first."""
     def path(name: str) -> str:
@@ -546,7 +549,9 @@ def nextstrain_config(out: Path, profile: str = "nextstrain", relative_to: Path 
                f"# workflow's merge script matches on. Keep this config and the *-private.* files out of anything you publish.\n"
                f"private_metadata: \"{path('metadata-private.tsv')}\"\nprivate_sequences: \"{path('sequences-private.fasta')}\"\n" if private else "") +
             f"inputs:\n  - name: genomecurator\n    metadata: \"{path('metadata.tsv')}\"\n    sequences: \"{path('sequences.fasta')}\"\n"
-            + (f"strain_id_field: \"{idc}\"\n" if idc != "PPX_accession" else ""))
+            + (f"strain_id_field: \"{idc}\"\n" if idc != "PPX_accession" else "")
+            + (f"# one build per analysis run: its own results folder and its own Auspice dataset name\nbuild_name: \"{run_name}\"\nauspice_name: \"{run_name}\"\n" if run_name else "")
+            + (f"# --- this dataset's own Nextstrain settings (Nextstrain tab) ---\n{extra.rstrip()}\n" if extra and extra.strip() else ""))
 
 
 def list_exports(watch_name: str | None = None, limit: int = 20) -> list[dict]:

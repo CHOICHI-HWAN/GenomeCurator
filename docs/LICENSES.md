@@ -23,6 +23,16 @@ Reviewed 2026-10-19 from the installed packages, the projects' LICENSE files and
 | conda 기본 라이브러리 | GPL-3.0(+GCC 예외)·LGPL: `readline`, `libgcc`, `libgomp`, `ld_impl` 등 | 시스템 런타임입니다. 코드에 링크하지 않습니다. |
 | 브라우저의 Chart.js 4.4.1 (jsDelivr CDN) | MIT | 공개 페이지는 CDN에서 불러옵니다(저장소에 포함 안 됨). |
 
+### Nextstrain 분석 (별도 환경, 저장소에 포함하지 않음)
+| 구성요소 | 라이선스 | 비고 |
+|---|---|---|
+| nextstrain/mpox 워크플로 | MIT | `git clone`으로 `data/nextstrain/mpox`에 받습니다(저장소에는 없음). 분석마다 커밋 해시를 기록합니다. |
+| nextstrain-cli, snakemake, TreeTime, Nextclade, Node.js | MIT | 별도 conda 환경 `gc-nextstrain` |
+| MAFFT | BSD | 〃 |
+| **augur, auspice** | **AGPL-3.0** | 〃. 수정하지 않고 **별도 프로그램으로 실행**만 하며 이 저장소·Docker 이미지에는 들어가지 않습니다. Auspice 보기 서버는 `127.0.0.1`에만 열립니다. **다른 사람이 쓰도록 네트워크에 공개**하면 AGPL의 소스 제공 의무(수정하지 않았다면 업스트림 소스 링크)가 그 운영자에게 생기니, 공개하려면 따로 검토하세요. |
+| **IQ-TREE** | **GPL-2.0+** | 〃 (별도 프로그램으로 실행) |
+분석 결과(트리 JSON)와 입력 표에는 공개 데이터의 출처 조건과 *비공개* 데이터의 공유 제한이 그대로 따라갑니다: 비공개 포함 분석 결과(`data/nextstrain/auspice/`, `runs/`)는 공유하지 마세요.
+
 ### 선택 (개발·시연·분석)
 | 구성요소 | 라이선스 | 비고 |
 |---|---|---|

@@ -1,0 +1,85 @@
+{% extends "base.html" %}{% block body %}
+<div class="pagehead"><h2>Nextstrain 분석</h2><span class="mut">데이터셋으로 nextstrain/mpox 워크플로를 돌리고, 분석할 때마다 결과를 보관해 골라 봅니다</span></div>
+<div class="help">데이터셋을 <b>내보내 → 워크플로 설정(config)을 만들어 → 실행</b>하는 것까지 이 화면에서 합니다. 분석마다 <b>그때의 데이터셋 멤버(해시)·규칙·설정·워크플로 버전</b>이 기록되고 결과(Auspice 파일)는 계속 보관되므로,
+데이터가 바뀐 뒤에 다시 분석해도 이전 결과가 사라지지 않고 아래 표에서 골라 볼 수 있습니다. 같은 멤버·설정·워크플로면 다시 돌리지 않습니다(강제로 돌릴 수는 있음). 모든 것이 이 컴퓨터 안에서만 돌고, 비공개 유전체가 포함된 결과도 밖으로 나가지 않습니다.</div>
+
+<div class="card" id="setup"><span class="mut">환경을 확인하는 중…</span></div>
+
+<div class="card">
+ <div style="display:flex;gap:12px;flex-wrap:wrap;align-items:end">
+  <label>바이러스<br><select id="w" onchange="location.href='/nextstrain?watch='+this.value">{% for w in watches %}<option value="{{ w.id }}" {{ 'selected' if w.id == wid }}>{{ w.name }}</option>{% endfor %}</select></label>
+  <label>데이터셋<br><select id="dsel" onchange="pick(this.value)" style="min-width:260px"></select></label>
+  <span id="dinfo" class="mut" style="font-size:12.5px"></span>
+ </div>
+ <div id="panel" style="margin-top:12px"></div>
+</div>
+
+<h3>분석 결과 <span class="mut" style="font-size:12.5px;font-weight:400" id="rcount"></span></h3>
+<div id="runs"><span class="mut">데이터셋을 고르세요.</span></div>
+<pre id="logbox" style="display:none;background:var(--stripe);border:1px solid var(--bd);border-radius:4px;padding:8px 10px;font:12px/1.5 Consolas,Menlo,monospace;max-height:340px;overflow:auto;white-space:pre-wrap"></pre>
+<form id="jf" method="post" style="display:none"></form>
+<script>
+const WID={{ wid }},START_DS={{ dsid }};
+const esc=s=>String(s??'').replace(/[&<>"]/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c]));
+let DS=[],CUR=null,INFO=null,VIEW=false;
+const post=(u,b)=>fetch(u,{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(b||{})}).then(r=>r.json());
+function job(url){const f=document.getElementById('jf');f.action=url;runJob(f)}
+async function setup(){const s=await (await fetch('/api/nextstrain/status')).json();VIEW=s.viewer.running;const row=(ok,label,body)=>'<div style="display:flex;gap:10px;align-items:center;flex-wrap:wrap;margin:4px 0"><span style="width:20px;color:'+(ok?'var(--ok)':'var(--bad)')+'">'+(ok?'✔':'✖')+'</span><b style="min-width:150px">'+label+'</b>'+body+'</div>';
+ document.getElementById('setup').innerHTML=
+  row(s.env.ok,'Nextstrain 환경',s.env.ok?'<span class="mut">'+esc(s.env.name)+' · <code>'+esc(s.env.prefix)+'</code></span>':'<span>없음 — 터미널에서 <code>'+esc(s.env.how)+'</code> (nextstrain-cli, augur, snakemake, nextclade, iqtree, mafft, auspice가 들어 있습니다)</span>')
+ +row(s.workflow.ok,'워크플로 저장소',s.workflow.ok?'<span class="mut"><code>'+esc(s.workflow.dir)+'</code> · 버전 <code>'+esc(s.workflow.commit)+'</code> · 빌드 '+esc(s.workflow.builds.join(', '))+'</span> <button type="button" onclick="job(\'/api/nextstrain/clone\')" title="git pull로 최신으로 맞춥니다 (분석 결과에는 어떤 버전으로 돌렸는지 기록됩니다)">업데이트</button>':'<span>없음</span> <button type="button" class="p" onclick="job(\'/api/nextstrain/clone\')">워크플로 받기 (git clone '+esc(s.workflow.repo)+')</button>')
+ +row(s.viewer.running,'Auspice 보기 서버',s.viewer.running?'<span class="mut">켜져 있음 · '+esc(s.viewer.url)+(s.viewer.started_by_app?'':' (직접 켠 것)')+'</span>'+(s.viewer.started_by_app?' <button type="button" onclick="stopViewer()">끄기</button>':''):'<span class="mut">꺼져 있음 — 결과를 볼 때 켭니다</span> <button type="button" onclick="startViewer()">켜기</button>')}
+async function startViewer(){job('/api/nextstrain/viewer/start')}
+async function stopViewer(){await post('/api/nextstrain/viewer/stop');setup()}
+async function loadDs(){DS=await (await fetch('/api/datasets?watch='+WID)).json();const sel=document.getElementById('dsel');
+ sel.innerHTML=DS.length?DS.map(d=>'<option value="'+d.id+'">'+esc(d.name)+'</option>').join(''):'<option value="">(데이터셋이 없습니다)</option>';
+ if(!DS.length){document.getElementById('panel').innerHTML='<div class="mut">먼저 <a href="/datasets?watch='+WID+'">데이터셋</a>을 만드세요 (예: clade Ib).</div>';return}
+ const id=START_DS&&DS.find(d=>d.id===START_DS)?START_DS:DS[0].id;sel.value=id;pick(id)}
+async function pick(id){if(!id)return;const r=await (await fetch('/api/datasets/'+id+'/nextstrain')).json();if(r.error){document.getElementById('panel').textContent=r.error;return}
+ INFO=r;CUR=r.dataset;history.replaceState(null,'','/nextstrain?dataset='+id);render()}
+function cmpBadge(c,r){if(r.status!=='done')return '';if(!c)return '';const b=[];
+ b.push(c.same_members?'<span style="color:var(--ok)">멤버 같음</span>':'<span style="color:var(--warn)">데이터가 바뀜 (현재 기준 +'+c.added+' / −'+c.removed+')</span>');
+ if(!c.same_params)b.push('<span style="color:var(--warn)">설정이 다름</span>');if(!c.same_workflow)b.push('<span style="color:var(--mut)">워크플로 버전이 다름</span>');
+ return b.join(' · ')+(c.current?' <b style="color:var(--ok)">← 현재와 같은 입력</b>':'')}
+function render(){const d=INFO.dataset,runs=INFO.runs,last=runs.find(r=>r.status==='done');
+ document.getElementById('dinfo').innerHTML='규칙: '+esc(d.summary)+' · 지금 멤버 <b>'+INFO.members.toLocaleString()+'건</b>'+(d.include_private?' (🔒 비공개 포함)':'')+' · <a href="/dataset/'+d.id+'">목록 보기</a> · <a href="/datasets?watch='+WID+'">정의 편집</a>';
+ const changed=last&&last.cmp&&!last.cmp.same_members;
+ document.getElementById('panel').innerHTML=
+  (INFO.error?'<div class="msg" style="border-left-color:var(--bad)">'+esc(INFO.error)+'</div>':'')
+  +(INFO.qc_missing?'<div class="msg" style="border-left-color:var(--warn)">⚠ Nextclade QC가 없는 공개 멤버 <b>'+INFO.qc_missing.toLocaleString()+'건</b>은 워크플로의 기본 필터(<code>QC_rare_mutations</code>)에 걸려 분석에서 빠집니다. <a href="/dataset/'+d.id+'">데이터셋 보기</a>에서 <b>이 데이터셋 QC 실행</b>을 먼저 하세요.</div>':'')
+  +(last?'<div class="msg" style="border-left-color:'+(last.cmp&&last.cmp.current?'var(--ok)':'var(--warn)')+'">마지막 분석 <b>'+esc(last.started.replace('T',' '))+'</b>: '+cmpBadge(last.cmp,last)+'</div>':'<div class="msg">이 데이터셋은 아직 분석한 적이 없습니다.</div>')
+  +'<div style="display:grid;grid-template-columns:1fr 1fr;gap:12px"><div><label><b>이 데이터셋의 Nextstrain 설정</b> <span class="mut" style="font-size:12px">(워크플로 config를 덮어쓸 YAML — 비워도 됩니다)</span><br>'
+  +'<textarea id="py" rows="10" style="width:100%;font:12px monospace" placeholder="# 예: 필터와 시간 추정을 바꾸려면&#10;filter:&#10;  min_length: 150000&#10;  min_date: 2020&#10;timetree: true">'+esc(d.params_yaml||'')+'</textarea></label>'
+  +'<div style="display:flex;gap:8px;align-items:center;margin-top:4px"><button type="button" onclick="saveParams()">설정 저장 + 확인</button><span id="pmsg" class="mut" style="font-size:12.5px"></span></div>'
+  +'<div class="mut" style="font-size:12px;margin-top:4px">빌드 <b>'+esc(d.build)+'</b>(데이터셋 정의에서 고름). 입력 파일·이름·비공개 파일 연결은 도구가 관리하므로 쓸 수 없습니다. 중첩 키는 워크플로 설정에 합쳐집니다(예: <code>filter.min_length</code>만 바꿔도 됩니다).</div></div>'
+  +'<div><details open><summary><b>실제로 적용될 설정</b> <span class="mut" style="font-size:12px">(빌드 기본값 + 이 데이터셋의 입력 + 위 설정)</span></summary><pre style="background:var(--stripe);border:1px solid var(--bd);border-radius:4px;padding:6px 8px;font:11.5px/1.45 monospace;max-height:260px;overflow:auto;margin:4px 0">'+esc(INFO.merged||'(워크플로 저장소가 있어야 보입니다)')+'</pre></details>'
+  +'<details><summary class="mut" style="font-size:12.5px">빌드 기본 설정 보기 (참고)</summary><pre style="background:var(--stripe);border:1px solid var(--bd);border-radius:4px;padding:6px 8px;font:11.5px/1.45 monospace;max-height:220px;overflow:auto">'+esc(INFO.defaults||'')+'</pre></details></div></div>'
+  +'<div style="display:flex;gap:10px;flex-wrap:wrap;align-items:end;margin-top:12px"><label>실행 방식<br><select id="rt"><option value="ambient">ambient (Nextstrain 환경의 도구)</option><option value="docker">docker (nextstrain 이미지)</option></select></label>'
+  +'<label>코어<br><input id="co" type="number" min="1" style="width:70px" placeholder="전체"></label><label>메모(이 분석에 남김)<br><input id="nt" style="width:260px" placeholder="예: 비공개 3건 추가 후"></label>'
+  +'<label title="멤버·설정·워크플로가 같아도 다시 돌립니다"><input type="checkbox" id="fo"> 같은 입력이어도 다시 분석</label>'
+  +'<button type="button" class="p" onclick="analyze()">분석 실행</button></div>';
+ renderRuns()}
+async function saveParams(){const t=document.getElementById('py').value;const r=await post('/api/datasets/'+CUR.id+'/nextstrain/params',{params_yaml:t});
+ document.getElementById('pmsg').innerHTML=r.error?'<span style="color:var(--bad)">'+esc(r.error)+'</span>':'<span style="color:var(--ok)">저장했습니다</span>';if(!r.error)pick(CUR.id)}
+async function analyze(){const t=document.getElementById('py').value;if(t!==(CUR.params_yaml||'')){const r=await post('/api/datasets/'+CUR.id+'/nextstrain/params',{params_yaml:t});if(r.error){alert(r.error);return}}
+ const q=new URLSearchParams({runtime:document.getElementById('rt').value,force:document.getElementById('fo').checked?1:0,note:document.getElementById('nt').value});const c=document.getElementById('co').value;if(c)q.set('cores',c);
+ if(INFO.qc_missing&&!confirm('QC가 없는 '+INFO.qc_missing.toLocaleString()+'건은 분석에서 빠집니다. 그래도 진행할까요? (먼저 데이터셋 QC를 하는 것을 권합니다)'))return;
+ if(!confirm('"'+CUR.name+'" 데이터셋('+INFO.members.toLocaleString()+'건)으로 Nextstrain 분석을 시작합니다. 몇 분~몇 시간 걸릴 수 있고(서열 수에 따라), 서버에서 진행되므로 다른 메뉴로 가도 됩니다.'))return;job('/api/datasets/'+CUR.id+'/analyze?'+q)}
+function renderRuns(){const runs=INFO.runs;document.getElementById('rcount').textContent='('+runs.length+'건, 새 분석은 이전 결과를 지우지 않습니다)';
+ document.getElementById('runs').innerHTML=runs.length?'<table><tr><th>시각</th><th>이름</th><th>상태</th><th>그때의 멤버</th><th>현재 데이터셋과 비교</th><th>메모</th><th>워크플로 · 도구</th><th></th></tr>'+runs.map(r=>{
+  const st={done:['완료','var(--ok)'],error:['오류','var(--bad)'],running:['진행 중','var(--acc)'],interrupted:['중단','var(--bad)']}[r.status]||[r.status,''];
+  const v=r.versions||{},tools=v.tools?Object.entries(v.tools).map(([k,x])=>k+' '+String(x).replace(/^\S+ /,'')).join(' · '):'';
+  return '<tr><td class="nw">'+esc(r.started.replace('T',' '))+(r.finished?'<div class="mut" style="font-size:11.5px">~ '+esc(r.finished.slice(11))+'</div>':'')+'</td><td><code>'+esc(r.name)+'</code></td>'
+   +'<td><span style="color:'+st[1]+';font-weight:600">'+st[0]+'</span></td><td class="nw">공개 '+(r.n_public||0).toLocaleString()+(r.n_private?' · 🔒 '+r.n_private:'')+'</td><td style="font-size:12.5px">'+(cmpBadge(r.cmp,r)||'<span class="mut">-</span>')+'</td>'
+   +'<td><input value="'+esc(r.note||'')+'" style="width:140px;height:24px" onchange="note('+r.id+',this.value)"></td><td class="mut" style="font-size:11.5px"><code>'+esc(r.workflow_commit||'')+'</code> '+esc(r.build)+'<br>'+esc(tools)+'</td>'
+   +'<td class="nw">'+(r.status==='done'?'<button type="button" class="p" onclick="openRun(\''+esc(r.name)+'\')">Auspice로 보기</button> ':'')+'<button type="button" onclick="showLog('+r.id+')">로그</button> <button type="button" onclick="del('+r.id+')" title="결과와 기록을 지웁니다">삭제</button></td></tr>'
+   +(r.error?'<tr><td></td><td colspan="7" style="color:var(--bad);font-size:12px;white-space:pre-wrap">'+esc(String(r.error).slice(0,500))+'</td></tr>':'')}).join('')+'</table>':'<div class="mut">아직 분석 결과가 없습니다. 위에서 <b>분석 실행</b>을 누르세요.</div>'}
+async function note(id,t){await post('/api/analyses/'+id+'/note',{note:t})}
+async function showLog(id){const r=await (await fetch('/api/analyses/'+id+'?tail=120')).json();const b=document.getElementById('logbox');b.style.display='';b.textContent=r.name+'\n'+'─'.repeat(40)+'\n'+(r.log_tail||'(로그 없음)');b.scrollTop=b.scrollHeight;b.scrollIntoView({behavior:'smooth'})}
+async function del(id){if(!confirm('이 분석의 결과 파일과 기록을 삭제할까요? (되돌릴 수 없습니다. 데이터셋과 유전체는 그대로입니다)'))return;await fetch('/api/analyses/'+id,{method:'DELETE'});pick(CUR.id)}
+async function openRun(name){const s=await (await fetch('/api/nextstrain/status')).json();
+ if(s.viewer.running){window.open(s.viewer.url+name,'_blank');return}
+ if(confirm('결과를 보려면 이 컴퓨터에서 Auspice 보기 서버를 켜야 합니다 (밖으로 나가지 않습니다). 켤까요? 켠 뒤 같은 버튼을 다시 누르세요.'))job('/api/nextstrain/viewer/start')}
+setup();loadDs();
+</script>
+{% endblock %}

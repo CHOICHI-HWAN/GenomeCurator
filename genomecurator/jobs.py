@@ -23,7 +23,7 @@ KEEP = 300                     # finished jobs kept in the table
 LOG_MAX = 800
 SAVE_EVERY = 1.0               # seconds between progress writes (the first and the last are always written)
 KINDS = {"check": "확인", "apply": "적용", "fasta": "서열 받기", "seqcheck": "서열 검증", "schema": "스키마 점검", "watch_add": "바이러스 추가",
-         "lookup": "바이러스 조회", "superset": "Superset", "qc": "QC", "export": "내보내기", "dataset": "데이터셋", "dsqc": "데이터셋 QC", "private": "비공개 QC", "deploy": "배포", "scheduled": "예약 실행", "job": "작업"}
+         "lookup": "바이러스 조회", "superset": "Superset", "qc": "QC", "export": "내보내기", "dataset": "데이터셋", "dsqc": "데이터셋 QC", "nextstrain": "Nextstrain", "private": "비공개 QC", "deploy": "배포", "scheduled": "예약 실행", "job": "작업"}
 
 
 def _now() -> str:

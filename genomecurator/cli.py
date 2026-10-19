@@ -91,6 +91,16 @@ def _main(argv=None):
     dx = sub.add_parser("dataset-delete", help="delete a dataset's definition (genomes and exported files stay)")
     dx.add_argument("name")
     dx.add_argument("dataset")
+    na = sub.add_parser("analyze", help="run the Nextstrain mpox workflow on a saved dataset (every run is kept); `analyze <virus> --status` shows the setup")
+    na.add_argument("name", help="the registered virus")
+    na.add_argument("dataset", nargs="?", help="the dataset's name")
+    na.add_argument("--status", action="store_true", help="environment, workflow checkout and viewer")
+    na.add_argument("--clone", action="store_true", help="get / update the nextstrain/mpox workflow checkout")
+    na.add_argument("--list", action="store_true", help="the kept runs of the dataset")
+    na.add_argument("--runtime", choices=("ambient", "docker"), default="ambient")
+    na.add_argument("--cores", type=int)
+    na.add_argument("--force", action="store_true", help="run again even when members, settings and workflow are the same as a finished run")
+    na.add_argument("--note", default="")
     xc = sub.add_parser("exclude", help="leave genomes out of the final analysis dataset (nothing is deleted); --undo puts them back")
     xc.add_argument("name", help="the registered virus")
     xc.add_argument("ids", nargs="*", help="accessions (or private ids with --private)")
@@ -190,6 +200,33 @@ def _main(argv=None):
                     pr = lambda pct, msg: print(f"[{round(pct):3d}%] {msg}", file=sys.stderr)
                     print(json.dumps(export.write(w["id"], Path(args.out) if args.out else None, "nextstrain", pr, nextstrain_dir=args.nextstrain_dir, dataset=d), ensure_ascii=False, indent=2))
         except ValueError as e:
+            raise SystemExit(str(e))
+    elif args.cmd == "analyze":
+        from . import datasets, nextstrain
+        pr = lambda pct, msg: print(f"[{round(pct):3d}%] {msg}", file=sys.stderr)
+        con = connect()
+        try:
+            w = con.execute("SELECT id FROM watchlist WHERE name=?", (args.name,)).fetchone()
+        finally:
+            con.close()
+        if not w:
+            raise SystemExit(f"unknown watch: {args.name}")
+        try:
+            if args.status:
+                print(json.dumps(nextstrain.status(), ensure_ascii=False, indent=2))
+            elif args.clone:
+                print(json.dumps(nextstrain.clone_workflow(pr), ensure_ascii=False))
+            else:
+                d = datasets.find(w["id"], args.dataset or "")
+                if not d:
+                    raise ValueError(f"데이터셋이 없습니다: {args.dataset}")
+                if args.list:
+                    for r in nextstrain.list_runs(d["id"]):
+                        print("\t".join(str(r[k] or "") for k in ("name", "status", "started", "n_public", "n_private", "workflow_commit", "note")))
+                else:
+                    r = nextstrain.run(d, args.runtime, args.cores, args.force, args.note, pr)
+                    print(json.dumps({k: r[k] for k in ("id", "name", "status", "auspice_file", "run_dir") if k in r} | ({"reused": True} if r.get("reused") else {}), ensure_ascii=False, indent=2))
+        except (ValueError, RuntimeError) as e:
             raise SystemExit(str(e))
     elif args.cmd == "exclude":
         from . import exclusions

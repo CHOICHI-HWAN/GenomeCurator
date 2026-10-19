@@ -1692,3 +1692,196 @@ def test_dataset_qc_runs_only_for_its_members(tmp_path, monkeypatch):
         time.sleep(0.05)
     assert j["status"] == "done" and j["kind"] == "dsqc" and j["result"]["public"]["sequences"] == 1
     assert c.post("/api/datasets/999/qc").status_code == 404
+
+
+def _ns_env(tmp_path, monkeypatch):
+    """_ds_env plus a fake Nextstrain world: a workflow checkout (Snakefile + a clade-i build config) and a fake environment whose `nextstrain build`
+    writes <auspice_name>.json the way the real workflow would, printing snakemake-style progress."""
+    import os
+    import stat
+    from genomecurator import nextstrain, sources
+    _ds_env(tmp_path, monkeypatch)
+    monkeypatch.setattr(sources, "pathoplexus_slug_for", lambda acc: None)
+    co = tmp_path / "wf"
+    (co / "phylogenetic" / "defaults" / "clade-i").mkdir(parents=True)
+    (co / "phylogenetic" / "Snakefile").write_text("")
+    (co / "phylogenetic" / "defaults" / "clade-i" / "config.yaml").write_text("filter:\n  min_length: 170000\n  min_date: 1900\ntimetree: false\nroot: best\n")
+    monkeypatch.setenv("GC_NEXTSTRAIN_DIR", str(co))
+    env = tmp_path / "envs" / "gc-nextstrain"
+    (env / "bin").mkdir(parents=True)
+    fake = env / "bin" / "nextstrain"
+    fake.write_text("""#!/usr/bin/env python3
+import os, re, sys, json
+a = sys.argv[1:]
+if a[0] == "--version":
+    print("Nextstrain CLI 9.9"); sys.exit(0)
+cfgs = a[a.index("--configfile") + 1:]
+cfgs = cfgs[:cfgs.index("--cores")] if "--cores" in cfgs else cfgs
+overlay = open(cfgs[-1]).read()
+name = re.search(r'auspice_name: "([^"]+)"', overlay).group(1)
+if os.environ.get("FAKE_NS_FAIL"):
+    print("rule align:"); print("Error in rule align: boom"); sys.exit(3)
+for i, r in enumerate(["align", "tree", "refine", "export"], 1):
+    print(f"rule {r}:"); print(f"{i} of 4 steps ({25 * i}%) done")
+os.makedirs("auspice", exist_ok=True)
+json.dump({"meta": {"title": name}, "tree": {"name": "root"}}, open(f"auspice/{name}.json", "w"))
+json.dump({"nuc": "ACGT"}, open(f"auspice/{name}_root-sequence.json", "w"))
+""")
+    fake.chmod(fake.stat().st_mode | stat.S_IEXEC)
+    for t in ("auspice", "augur", "snakemake", "nextclade", "iqtree"):
+        f = env / "bin" / t
+        f.write_text(f"#!/bin/sh\necho '{t} 1.0'\n")
+        f.chmod(f.stat().st_mode | stat.S_IEXEC)
+    monkeypatch.setattr(nextstrain, "env_prefix", lambda: env)
+    return nextstrain
+
+
+import os as _os
+import pytest as _pytest
+_unix_only = _pytest.mark.skipif(_os.name == "nt", reason="the fake `nextstrain` is a shell-style script")
+
+
+def test_nextstrain_settings_validation_and_merge(tmp_path, monkeypatch):
+    import pytest
+    from genomecurator import datasets
+    ns = _ns_env(tmp_path, monkeypatch)
+    assert ns.parse_params("") == {} and ns.parse_params("# only a comment\n") == {}
+    assert ns.parse_params("filter:\n  min_length: 150000\n")["filter"]["min_length"] == 150000
+    for bad, why in (("inputs: []\n", "관리"), ("build_name: x\n", "관리"), ("- a\n- b\n", "YAML"), ("filter: [unclosed\n", "읽을 수 없")):
+        with pytest.raises(ValueError, match=why):
+            ns.parse_params(bad)
+    assert ns.params_sha("filter:\n  min_length: 1\n") == ns.params_sha("filter: {min_length: 1}\n") != ns.params_sha("filter:\n  min_length: 2\n")      # content, not formatting
+    ds = datasets.save(1, "Ib", {"clade": ["Ib"]}, include_private=True, build="clade-i")
+    ds = datasets.get(ds["id"])
+    m = ns.merged_config(ds, "run-1")
+    assert m["filter"] == {"min_length": 170000, "min_date": 1900} and m["inputs"][0]["metadata"] == "data/genomecurator/metadata.tsv" and m["use_remote_files"] is False
+    assert m["private_metadata"].endswith("metadata-private.tsv") and m["build_name"] == m["auspice_name"] == "run-1"
+    datasets.set_params(ds["id"], "filter:\n  min_length: 100\ntimetree: true\n")
+    m2 = ns.merged_config(datasets.get(ds["id"]), "run-1")
+    assert m2["filter"] == {"min_length": 100, "min_date": 1900} and m2["timetree"] is True and m2["root"] == "best"           # nested keys merge into the workflow's config
+
+
+@_unix_only
+def test_nextstrain_run_keeps_every_run_and_compares_with_today(tmp_path, monkeypatch):
+    import json
+    import pytest
+    from genomecurator import datasets, exclusions, private
+    ns = _ns_env(tmp_path, monkeypatch)
+    private.import_texts(1, *_priv_files([{"PPX_accession": "LAB_N1", "strain": "a", "date": "2025", "country": "Uganda", "clade": "Ib"}], {"LAB_N1": "ACGT" * 40}))
+    ds = datasets.save(1, "Ib set", {"clade": ["Ib"]}, include_private=True, build="clade-i")
+    ds = datasets.get(ds["id"])
+    seen = []
+    r1 = ns.run(ds, note="first", progress=lambda pct, m: seen.append((round(pct), m)))
+    assert r1["status"] == "done" and r1["n_public"] == 1 and r1["n_private"] == 1 and r1["note"] == "first" and r1["build"] == "clade-i" and r1["workflow_commit"] == ""
+    assert any("align" in m for _, m in seen) and seen[-1] == (100, "분석 완료") and any("4/4" in m for _, m in seen)
+    name = r1["name"]
+    assert name.startswith("mpox-ib-set-") and "_" not in name                                    # hyphens only: Auspice reads '_' as a folder separator
+    assert (tmp_path / "nextstrain" / "auspice" / f"{name}.json").exists() and (tmp_path / "nextstrain" / "auspice" / f"{name}_root-sequence.json").exists()
+    rd = __import__("pathlib").Path(r1["run_dir"])
+    assert {p.name for p in rd.iterdir()} >= {"members.txt", "metadata.tsv", "metadata-private.tsv", "manifest.json", "config-overlay.yaml", "run.log", "versions.json"}
+    assert ns.run_members(r1) == ["PP_A1", "private:LAB_N1"] and "steps (100%)" in (rd / "run.log").read_text(encoding="utf-8")
+    ov = (rd / "config-overlay.yaml").read_text(encoding="utf-8")
+    assert f'build_name: "{name}"' in ov and "private_metadata" in ov and "defaults/clade-i/config.yaml" in ov
+    # the same members / settings / workflow: not repeated
+    again = ns.run(ds)
+    assert again["id"] == r1["id"] and again["reused"] and len(ns.list_runs(ds["id"])) == 1
+    assert ns.run(ds, force=True)["id"] != r1["id"] and len(ns.list_runs(ds["id"])) == 2          # forced: a new run, the old one stays
+    # the data changes -> a new run; the first one is still there and says how it differs from today
+    private.import_texts(1, *_priv_files([{"PPX_accession": "LAB_N2", "strain": "b", "date": "2025", "country": "Uganda", "clade": "Ib"}], {"LAB_N2": "ACGT" * 41}))
+    r3 = ns.run(ds, note="after adding LAB_N2")
+    assert r3["n_private"] == 2 and not r3.get("reused") and len(ns.list_runs(ds["id"])) == 3
+    now = ns.current_members(ds)
+    c1 = ns.compare(ns.get_run(r1["id"]), now, ns.params_sha(""), "")
+    assert c1["same_members"] is False and c1["added"] == 1 and c1["removed"] == 0 and c1["current"] is False
+    c3 = ns.compare(ns.get_run(r3["id"]), now, ns.params_sha(""), "")
+    assert c3["current"] and c3["same_members"] and c3["same_params"] and c3["same_workflow"]
+    # a settings change alone is a different analysis
+    datasets.set_params(ds["id"], "timetree: true\n")
+    ds2 = datasets.get(ds["id"])
+    assert ns.compare(ns.get_run(r3["id"]), now, ns.params_sha(ds2["params_yaml"]), "")["same_params"] is False
+    r4 = ns.run(ds2)
+    assert not r4.get("reused") and "timetree: true" in (__import__("pathlib").Path(r4["run_dir"]) / "config-overlay.yaml").read_text(encoding="utf-8")
+    # members that are left out change the hash too
+    exclusions.add(1, ["PP_A1"], "public", "x")
+    assert datasets.members_hash(ns.current_members(ds2)) != r4["members_sha"]
+    # a failing workflow is recorded with its log tail, and kept
+    monkeypatch.setenv("FAKE_NS_FAIL", "1")
+    with pytest.raises(RuntimeError, match="boom"):
+        ns.run(ds2, force=True)
+    bad = ns.list_runs(ds["id"])[0]
+    assert bad["status"] == "error" and "boom" in bad["error"] and not (tmp_path / "nextstrain" / "auspice" / f"{bad['name']}.json").exists()
+    monkeypatch.delenv("FAKE_NS_FAIL")
+    # an interrupted run (server restart) is marked, notes can be edited, deleting a run removes only its own files
+    con = __import__("genomecurator.db", fromlist=["x"]).connect()
+    con.execute("UPDATE analysis_run SET status='running' WHERE id=?", (bad["id"],))
+    con.commit()
+    con.close()
+    assert ns.mark_interrupted() == 1 and ns.get_run(bad["id"])["status"] == "interrupted"
+    ns.set_note(r1["id"], "keep this")
+    assert ns.get_run(r1["id"])["note"] == "keep this"
+    assert ns.delete_run(r1["id"]) and not ns.delete_run(r1["id"]) and not (tmp_path / "nextstrain" / "auspice" / f"{r1['name']}.json").exists()
+    assert (tmp_path / "nextstrain" / "auspice" / f"{r3['name']}.json").exists() and ns.get_run(r3["id"]) is not None
+
+
+def test_nextstrain_run_refuses_what_is_missing(tmp_path, monkeypatch):
+    import pytest
+    from genomecurator import datasets
+    ns = _ns_env(tmp_path, monkeypatch)
+    ds = datasets.get(datasets.save(1, "Ib", {"clade": ["Ib"]}, build="clade-i")["id"])
+    monkeypatch.setattr(ns, "env_prefix", lambda: None)
+    with pytest.raises(RuntimeError, match="환경"):
+        ns.run(ds)
+    monkeypatch.setattr(ns, "env_prefix", lambda: tmp_path / "envs" / "gc-nextstrain")
+    monkeypatch.setenv("GC_NEXTSTRAIN_DIR", str(tmp_path / "nowhere"))
+    with pytest.raises(RuntimeError, match="워크플로 저장소"):
+        ns.run(ds)
+    monkeypatch.setenv("GC_NEXTSTRAIN_DIR", str(tmp_path / "wf"))
+    with pytest.raises(ValueError, match="빌드"):
+        ns.run({**ds, "build": "nope"})
+    with pytest.raises(ValueError, match="runtime"):
+        ns.run(ds, runtime="cloud")
+    with pytest.raises(ValueError, match="멤버가 없습니다"):
+        ns.run({**ds, "rules": datasets.normalize({"clade": ["IX"]})})
+    assert ns.list_runs(ds["id"]) == []                                                           # nothing was started
+
+
+@_unix_only
+def test_nextstrain_api(tmp_path, monkeypatch):
+    import time
+    from fastapi.testclient import TestClient
+    from genomecurator import datasets, web
+    ns = _ns_env(tmp_path, monkeypatch)
+    ds = datasets.save(1, "Ib set", {"clade": ["Ib"]}, build="clade-i")
+    c = TestClient(web.create_app(scheduler=False))
+    st = c.get("/api/nextstrain/status").json()
+    assert st["env"]["ok"] and st["workflow"]["ok"] and st["workflow"]["builds"] == ["clade-i"] and st["viewer"]["running"] is False
+    assert c.get("/nextstrain").status_code == 200 and c.get(f"/nextstrain?dataset={ds['id']}").status_code == 200
+    info = c.get(f"/api/datasets/{ds['id']}/nextstrain").json()
+    assert info["members"] == 1 and info["qc_missing"] == 0 and "min_length" in info["merged"] and "min_length" in info["defaults"] and info["runs"] == [] and info["error"] == ""
+    assert c.get("/api/datasets/999/nextstrain").status_code == 404
+    bad = c.post(f"/api/datasets/{ds['id']}/nextstrain/params", json={"params_yaml": "inputs: []"})
+    assert bad.status_code == 400 and "관리" in bad.json()["error"]
+    assert c.post(f"/api/datasets/{ds['id']}/nextstrain/params", json={"params_yaml": "timetree: true\n"}).json() == {"saved": True}
+    assert "timetree: true" in c.get(f"/api/datasets/{ds['id']}/nextstrain").json()["merged"]
+
+    def wait(jid):
+        for _ in range(300):
+            j = c.get(f"/api/job/{jid}").json()
+            if j["done"]:
+                return j
+            time.sleep(0.05)
+        raise AssertionError("job did not finish")
+    j = wait(c.post(f"/api/datasets/{ds['id']}/analyze?note=api").json()["job"])
+    assert j["status"] == "done" and j["kind"] == "nextstrain" and j["result"]["name"].startswith("mpox-ib-set-") and not j["result"]["reused"]
+    j2 = wait(c.post(f"/api/datasets/{ds['id']}/analyze").json()["job"])
+    assert j2["result"]["reused"] is True
+    runs = c.get(f"/api/analyses?dataset={ds['id']}").json()
+    assert len(runs) == 1 and runs[0]["status"] == "done" and runs[0]["url"].endswith("/" + runs[0]["name"]) and runs[0]["note"] == "api"
+    d = c.get(f"/api/analyses/{runs[0]['id']}").json()
+    assert "steps (100%)" in d["log_tail"] and d["n_public"] == 1
+    info = c.get(f"/api/datasets/{ds['id']}/nextstrain").json()
+    assert info["runs"][0]["cmp"]["current"] is True
+    assert c.post(f"/api/analyses/{runs[0]['id']}/note", json={"note": "good one"}).json() == {"saved": True} and c.get(f"/api/analyses/{runs[0]['id']}").json()["note"] == "good one"
+    assert c.get("/api/analyses/999").status_code == 404 and c.post("/api/datasets/999/analyze").status_code == 404
+    assert c.delete(f"/api/analyses/{runs[0]['id']}").json() == {"deleted": True} and c.get(f"/api/analyses?dataset={ds['id']}").json() == []
+    assert c.post("/api/nextstrain/viewer/restart").status_code == 400 and c.post("/api/nextstrain/viewer/stop").json() == {"stopped": False}

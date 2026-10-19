@@ -6,7 +6,7 @@ from fastapi import FastAPI, Form, Request
 from fastapi.responses import HTMLResponse, JSONResponse, RedirectResponse, Response, StreamingResponse
 from fastapi.templating import Jinja2Templates
 
-from . import __version__, analysis, completeness, datasets, exclusions, export, private, qc, config, curate, jobs, log
+from . import __version__, analysis, completeness, datasets, exclusions, export, nextstrain, private, qc, config, curate, jobs, log
 from .db import audit_now, connect
 
 _log = log.get("web")
@@ -170,6 +170,7 @@ def _item_ids(form) -> list[int]:
 def create_app(scheduler: bool = True) -> FastAPI:
     log.setup()
     jobs.mark_interrupted()      # whatever the table still calls running died with the previous process
+    nextstrain.mark_interrupted()
     app = FastAPI(title="Virus Genome Metadata Curator")
 
     def pending_count():
@@ -577,6 +578,120 @@ def create_app(scheduler: bool = True) -> FastAPI:
         if not ds:
             return JSONResponse({"error": "unknown dataset"}, 404)
         return start_job(lambda p: {"redirect": f"/dataset/{dsid}", "result": datasets.run_qc(ds, p, bool(force))}, f"데이터셋 QC · {ds['name']}", "dsqc")
+
+    # ------------------------------------------------------------------------------------------------ Nextstrain analysis of a dataset
+    @app.get("/nextstrain")
+    def nextstrain_page(request: Request, dataset: int = 0, watch: int = 0):
+        ds = datasets.get(dataset) if dataset else None
+        watches = _rows("SELECT id, name FROM watchlist ORDER BY name")
+        wid = ds["watch_id"] if ds else (watch or next((w["id"] for w in watches if "monkeypox" in w["name"].lower()), watches[0]["id"] if watches else 0))
+        return render(request, "nextstrain.html", nav="ns", watches=watches, wid=wid, dsid=ds["id"] if ds else 0)
+
+    @app.get("/api/nextstrain/status")
+    def api_ns_status():
+        return nextstrain.status()
+
+    @app.post("/api/nextstrain/clone")
+    def api_ns_clone(request: Request):
+        if not _same_origin(request):
+            return JSONResponse({"error": "cross-site request refused"}, 403)
+        return start_job(lambda p: {"redirect": "/nextstrain", "result": nextstrain.clone_workflow(p)}, "Nextstrain 워크플로 받기", "nextstrain")
+
+    @app.post("/api/nextstrain/viewer/{action}")
+    def api_ns_viewer(request: Request, action: str):
+        if not _same_origin(request):
+            return JSONResponse({"error": "cross-site request refused"}, 403)
+        if action == "stop":
+            return {"stopped": nextstrain.stop_viewer()}
+        if action != "start":
+            return JSONResponse({"error": "start 또는 stop"}, 400)
+        return start_job(lambda p: {"redirect": "/nextstrain", "result": {"url": nextstrain.start_viewer(p)}}, "Auspice 보기 서버 켜기", "nextstrain")
+
+    @app.get("/api/datasets/{dsid}/nextstrain")
+    def api_ds_nextstrain(dsid: int):
+        """Everything the analysis panel needs: the dataset's settings, the effective config, how the kept runs relate to the dataset today."""
+        ds = datasets.get(dsid)
+        if not ds:
+            return JSONResponse({"error": "unknown dataset"}, 404)
+        err = ""
+        try:
+            merged = nextstrain.merged_config(ds)
+            import yaml
+            merged_text = yaml.safe_dump(merged, allow_unicode=True, sort_keys=False)
+            defaults_text = yaml.safe_dump(nextstrain.default_config(ds.get("build")), allow_unicode=True, sort_keys=False)
+            psha = nextstrain.params_sha(ds.get("params_yaml", ""))
+        except ValueError as e:
+            merged_text = defaults_text = psha = ""
+            err = str(e)
+        now_ids = nextstrain.current_members(ds)
+        commit = nextstrain.workflow_commit()
+        runs = []
+        for r in nextstrain.list_runs(dsid):
+            r["cmp"] = nextstrain.compare(r, now_ids, psha, commit) if psha else None
+            r["url"] = nextstrain.viewer_url(r["name"]) if r["status"] == "done" else ""
+            runs.append(r)
+        return {"dataset": {"id": ds["id"], "name": ds["name"], "build": ds["build"] or "mpxv", "include_private": ds["include_private"], "params_yaml": ds["params_yaml"], "summary": datasets.describe(ds["rules"])},
+                "members": len(now_ids), "qc_missing": nextstrain.qc_missing(ds), "members_sha": datasets.members_hash(now_ids), "workflow_commit": commit, "defaults": defaults_text, "merged": merged_text, "error": err, "runs": runs}
+
+    @app.post("/api/datasets/{dsid}/nextstrain/params")
+    async def api_ds_ns_params(request: Request, dsid: int):
+        if not _same_origin(request):
+            return JSONResponse({"error": "cross-site request refused"}, 403)
+        if not datasets.get(dsid):
+            return JSONResponse({"error": "unknown dataset"}, 404)
+        body = await request.json()
+        text = str(body.get("params_yaml") or "")
+        try:
+            nextstrain.parse_params(text)
+        except ValueError as e:
+            return JSONResponse({"error": str(e)}, 400)
+        datasets.set_params(dsid, text)
+        return {"saved": True}
+
+    @app.post("/api/datasets/{dsid}/analyze")
+    def api_ds_analyze(request: Request, dsid: int, force: int = 0, runtime: str = "ambient", cores: int = 0, note: str = ""):
+        """Run the Nextstrain mpox workflow on this dataset (a server job; every run is kept)."""
+        if not _same_origin(request):
+            return JSONResponse({"error": "cross-site request refused"}, 403)
+        ds = datasets.get(dsid)
+        if not ds:
+            return JSONResponse({"error": "unknown dataset"}, 404)
+
+        def work(p):
+            r = nextstrain.run(ds, runtime, cores or None, bool(force), note, p)
+            return {"redirect": f"/nextstrain?dataset={dsid}", "result": {"run": r["id"], "name": r["name"], "reused": bool(r.get("reused"))}}
+        return start_job(work, f"Nextstrain 분석 · {ds['name']}", "nextstrain")
+
+    @app.get("/api/analyses")
+    def api_analyses(dataset: int = 0, watch: int = 0):
+        out = nextstrain.list_runs(dataset or None, watch or None)
+        for r in out:
+            r["url"] = nextstrain.viewer_url(r["name"]) if r["status"] == "done" else ""
+        return out
+
+    @app.get("/api/analyses/{rid}")
+    def api_analysis(rid: int, tail: int = 60):
+        r = nextstrain.get_run(rid)
+        if not r:
+            return JSONResponse({"error": "unknown run"}, 404)
+        lp = Path(r["log_path"] or "")
+        r["log_tail"] = "".join(lp.read_text(encoding="utf-8", errors="replace").splitlines(True)[-max(1, min(tail, 500)):]) if lp.exists() else ""
+        r["url"] = nextstrain.viewer_url(r["name"]) if r["status"] == "done" else ""
+        return r
+
+    @app.post("/api/analyses/{rid}/note")
+    async def api_analysis_note(request: Request, rid: int):
+        if not _same_origin(request):
+            return JSONResponse({"error": "cross-site request refused"}, 403)
+        body = await request.json()
+        nextstrain.set_note(rid, str(body.get("note") or ""))
+        return {"saved": True}
+
+    @app.delete("/api/analyses/{rid}")
+    def api_analysis_delete(request: Request, rid: int):
+        if not _same_origin(request):
+            return JSONResponse({"error": "cross-site request refused"}, 403)
+        return {"deleted": nextstrain.delete_run(rid)}
 
     @app.get("/api/datasets/{dsid}/history")
     def api_datasets_history(dsid: int):

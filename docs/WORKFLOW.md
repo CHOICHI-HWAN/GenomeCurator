@@ -22,7 +22,8 @@
 7. **감시**: 매일 새벽 스키마 점검으로 소스의 응답 구조가 바뀌었는지 봅니다. 헤더의 신호등(NCBI — Pathoplexus — BV-BRC)과 스키마 탭에 결과가 보입니다.
 8. **비공개 유전체**: 공개되지 않은 로컬 유전체는 *비공개* 탭(CLI `private-check`/`private-import`)으로 공개 데이터와 분리된 저장소에 가져오고(dry-run 먼저), QC를 돌립니다. 내보내기에서 *비공개 포함*을 켜면 별도 파일로만 나갑니다.
 9. **데이터셋**: 분석에 쓸 유전체를 규칙으로 골라(예: clade Ib만) 이름을 붙여 저장하고, 내보낼 때 그 시점의 멤버가 확정되어 manifest에 규칙과 멤버 해시가 남습니다.
-10. **다른 프로그램에 넘기기**: *내보내기* 탭·CLI(`export`)·내부 API가 같은 id·순서의 `metadata.tsv` + `sequences.fasta` + `manifest.json`을 만듭니다(Nextstrain mpox 워크플로 형식 지원: `--nextstrain-dir`로 체크아웃에 바로 써 주며, 워크플로의 기본값 config 뒤에 overlay를 붙여 로컬 입력으로 돌립니다). 그 밖의 내보내기: 유전체 표 TSV, Superset 분석(읽기 전용), GitHub Pages용 정적 페이지(배포하기), 백업(zip).
+10. **Nextstrain 분석**: *Nextstrain* 탭에서 데이터셋을 워크플로 체크아웃에 내보내 설정 overlay와 함께 `nextstrain build`로 돌립니다(서버 작업). 분석마다 멤버 해시·규칙·설정·워크플로 커밋·도구 버전과 결과가 **보관**되고, 오늘의 데이터셋과 비교해 어느 결과가 현재 데이터와 맞는지 보며, 로컬 Auspice로 골라 엽니다.
+11. **다른 프로그램에 넘기기**: *내보내기* 탭·CLI(`export`)·내부 API가 같은 id·순서의 `metadata.tsv` + `sequences.fasta` + `manifest.json`을 만듭니다(Nextstrain mpox 워크플로 형식 지원: `--nextstrain-dir`로 체크아웃에 바로 써 주며, 워크플로의 기본값 config 뒤에 overlay를 붙여 로컬 입력으로 돌립니다). 그 밖의 내보내기: 유전체 표 TSV, Superset 분석(읽기 전용), GitHub Pages용 정적 페이지(배포하기), 백업(zip).
 
 ## 2. 서버 안에서 (작업과 기록)
 

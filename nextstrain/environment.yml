@@ -1,0 +1,22 @@
+# Environment for the Nextstrain mpox workflow (github.com/nextstrain/mpox, phylogenetic/) - separate from the app's environment, like Superset.
+#   mamba env create -f nextstrain/environment.yml        (then the app finds it by name: GC_NEXTSTRAIN_ENV, default gc-nextstrain)
+name: gc-nextstrain
+channels:
+  - conda-forge
+  - bioconda
+dependencies:
+  - python=3.12
+  - nextstrain-cli
+  - augur
+  - snakemake>=8
+  - snakemake-storage-plugin-http
+  - snakemake-storage-plugin-s3
+  - nextclade>=3
+  - iqtree
+  - mafft
+  - auspice          # the local viewer (nextstrain view / auspice view)
+  - nodejs
+  - git
+  - pandas
+  - biopython
+  - pyyaml

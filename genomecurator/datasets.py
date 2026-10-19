@@ -94,7 +94,8 @@ def members_hash(ids: list[str]) -> str:
 def _row(r) -> dict:
     return {"id": r["id"], "watch_id": r["watch_id"], "name": r["name"], "description": r["description"] or "", "rules": normalize(json.loads(r["rules_json"] or "{}")),
             "include_private": bool(r["include_private"]), "manual_include": json.loads(r["manual_include_json"] or "[]"),
-            "manual_exclude": json.loads(r["manual_exclude_json"] or "[]"), "build": r["build"] or "", "created": r["created"], "updated": r["updated"]}
+            "manual_exclude": json.loads(r["manual_exclude_json"] or "[]"), "build": r["build"] or "", "created": r["created"], "updated": r["updated"],
+            "params_yaml": r["params_yaml"] or ""}
 
 
 def save(watch_id: int, name: str, rules: dict | None = None, description: str = "", include_private: bool = False, manual_include: list | None = None,
@@ -128,6 +129,16 @@ def save(watch_id: int, name: str, rules: dict | None = None, description: str =
         audit(con, "dataset_save", f"{name} ({'수정' if dataset_id else '생성'}): {describe(rules or {})}")
         con.commit()
         return _row(con.execute("SELECT * FROM dataset WHERE id=?", (did,)).fetchone())
+    finally:
+        con.close()
+
+
+def set_params(dataset_id: int, text: str) -> None:
+    """Store the dataset's Nextstrain settings (YAML overrides of the workflow's config). Validation is nextstrain.parse_params's job."""
+    con = connect()
+    try:
+        con.execute("UPDATE dataset SET params_yaml=?, updated=? WHERE id=?", (text, datetime.now().isoformat(timespec="seconds"), dataset_id))
+        con.commit()
     finally:
         con.close()
 
