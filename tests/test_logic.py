@@ -2093,10 +2093,34 @@ def test_mutprofile_annotation_and_paf():
 
 def test_mutprofile_reference_choice():
     from genomecurator import mutprofile as mp
-    assert mp.reference_choice({"build": "clade-i"}) == "KJ642613.1"                      # clade I runs against its own reference
+    assert mp.reference_choice({"build": "clade-i"}) == "NC_003310.1"                      # clade I runs against the clade I RefSeq reference
     assert mp.reference_choice({"build": "mpxv"}) == mp.reference_choice({"build": ""}) == "NC_063383.1"
     assert mp.reference_choice({"build": "clade-i", "mutprofile_json": '{"reference": "NC_063383.1"}'}) == "NC_063383.1"
     assert mp.settings_sha({"build": "clade-i"}) != mp.settings_sha({"build": "mpxv"})   # a different reference is a different analysis
+
+
+def test_genbank_reference_to_fasta_and_gff3():
+    from genomecurator import mutprofile as mp
+    gb = '''LOCUS       TEST       30 bp    DNA     linear   VRL 01-JAN-2000
+FEATURES             Location/Qualifiers
+     source          1..30
+                     /organism="x"
+     CDS             join(1..6,
+                     10..15)
+                     /gene="A1"
+                     /product="two-exon;
+                     protein"
+     CDS             complement(20..28)
+                     /gene="B2"
+ORIGIN
+        1 atgaaatttc atgcccccca tgggggtaac
+//
+'''
+    seq, gff = mp.genbank_to_fasta_gff3(gb, "TEST")
+    assert len(seq) == 30 and seq.startswith("ATGAAA")
+    rows = [l.split("\t") for l in gff.splitlines() if not l.startswith("#")]
+    assert [(r[3], r[4], r[6]) for r in rows] == [("1", "6", "+"), ("10", "15", "+"), ("20", "28", "-")]
+    assert "gene=A1" in rows[0][8] and "product=two-exon%3B protein" in rows[0][8] and rows[0][8].split(";")[0] == rows[1][8].split(";")[0]
 
 
 def mp_rev(s):

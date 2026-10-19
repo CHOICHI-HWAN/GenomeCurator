@@ -72,7 +72,7 @@ def parse_settings(text) -> dict:
             out[k] = int(d[k])
     if d.get("reference") not in (None, ""):
         if d["reference"] != "auto" and d["reference"] not in REFERENCES:
-            raise ValueError("reference는 auto, NC_063383.1, KJ642613.1 중 하나입니다.")
+            raise ValueError("reference는 auto, " + ", ".join(REFERENCES) + " 중 하나입니다.")
         out["reference"] = d["reference"]
     prof = str(d.get("profiles") or "").replace(" ", "").upper()
     if prof:
@@ -91,26 +91,88 @@ def settings_sha(ds: dict) -> str:
 
 
 # ------------------------------------------------------------------------------------------------ reference + annotation
-REFERENCES = {"NC_063383.1": ("", "RefSeq 참조 (clade IIa/IIb 등 기본)"), "KJ642613.1": ("clade-i", "clade I 참조 (Nextstrain·Nextclade가 clade I에 쓰는 것)")}
+REFERENCES = {"NC_063383.1": "RefSeq 참조 (clade II 등 기본)", "NC_003310.1": "RefSeq clade I 참조 (Zaire-96-I-16)", "KJ642613.1": "Nextstrain clade-i 빌드가 쓰는 참조"}
 
 
 def reference_choice(ds: dict) -> str:
     """The reference accession used: the setting, or - on 'auto' - NC_063383.1 (RefSeq, what Nextclade / Squirrel / snipit use) except for the clade I build,
-    which Nextstrain and Nextclade run against their own clade I reference."""
+    which is analysed against the clade I RefSeq reference NC_003310.1."""
     r = effective(ds).get("reference", "auto")
     if r in REFERENCES:
         return r
-    return "KJ642613.1" if (ds.get("build") or "") == "clade-i" else "NC_063383.1"
+    return "NC_003310.1" if (ds.get("build") or "") == "clade-i" else "NC_063383.1"
 
 
 def reference_files(ds: dict) -> tuple[Path, Path | None]:
-    """The reference FASTA and gene annotation (the workflow's own files for that reference, so genes match the sequence)."""
+    """The reference FASTA and its gene annotation (GFF3). NC_063383.1 and KJ642613.1 come with the Nextstrain workflow; NC_003310.1 is fetched once from NCBI
+    (GenBank record, public) and kept under data/reference/ - the sequence and the genes come from the same record, so they always agree."""
+    acc = reference_choice(ds)
+    if acc == "NC_003310.1":
+        return fetch_genbank_reference(acc)
     base = nextstrain.workflow_dir() / "defaults"
-    d = base / "clade-i" if reference_choice(ds) == "KJ642613.1" else base
+    d = base / "clade-i" if acc == "KJ642613.1" else base
     fa, gff = d / "reference.fasta", d / "genome_annotation.gff3"
     if not fa.exists():
-        raise RuntimeError(f"참조 서열({reference_choice(ds)})을 찾을 수 없습니다. Nextstrain 설정 카드에서 워크플로를 먼저 받아 주세요.")
+        raise RuntimeError(f"참조 서열({acc})을 찾을 수 없습니다. Nextstrain 설정 카드에서 워크플로를 먼저 받아 주세요.")
     return fa, (gff if gff.exists() else None)
+
+
+def fetch_genbank_reference(acc: str) -> tuple[Path, Path]:
+    from . import config, sources
+    d = config.DATA_DIR / "reference"
+    fa, gff, gb = d / f"{acc}.fasta", d / f"{acc}.gff3", d / f"{acc}.gb"
+    if not (fa.exists() and gff.exists()):
+        if not gb.exists():
+            d.mkdir(parents=True, exist_ok=True)
+            with sources._client() as c:
+                r = sources._get(c, "https://eutils.ncbi.nlm.nih.gov/entrez/eutils/efetch.fcgi", params={"db": "nuccore", "id": acc, "rettype": "gb", "retmode": "text"})
+            if r.status_code != 200 or "ORIGIN" not in r.text:
+                raise RuntimeError(f"NCBI에서 참조 서열 {acc}를 받지 못했습니다 (HTTP {r.status_code}). 네트워크를 확인하거나 {gb}에 GenBank 파일을 직접 두세요.")
+            gb.write_text(r.text, encoding="utf-8")
+        seq, gff_text = genbank_to_fasta_gff3(gb.read_text(encoding="utf-8"), acc)
+        fa.write_text(f">{acc}\n" + "\n".join(seq[i:i + 70] for i in range(0, len(seq), 70)) + "\n", encoding="utf-8")
+        gff.write_text(gff_text, encoding="utf-8")
+    return fa, gff
+
+
+def _loc_parts(loc: str) -> tuple[list[tuple[int, int]], str]:
+    strand = "-" if loc.startswith("complement") else "+"
+    parts = [(int(a), int(b)) for a, b in re.findall(r"(\d+)\.\.(\d+)", loc)]
+    if not parts and re.fullmatch(r"(complement\()?\d+\)?", loc):
+        n = int(re.search(r"\d+", loc).group())
+        parts = [(n, n)]
+    return parts, strand
+
+
+def genbank_to_fasta_gff3(text: str, acc: str) -> tuple[str, str]:
+    """The sequence and the CDS features (join / complement included) of one GenBank record as FASTA text and GFF3."""
+    seq = "".join(re.findall(r"[acgtn]+", text.split("\nORIGIN", 1)[1].split("\n//")[0])).upper()
+    feat = text.split("\nFEATURES", 1)[1].split("\nORIGIN", 1)[0].split("\n", 1)[1]
+    blocks, cur = [], None
+    for line in feat.split("\n"):
+        if line[5:6].strip():
+            cur = [line[5:21].strip(), line[21:].strip(), []]
+            blocks.append(cur)
+        elif cur is not None:
+            t = line[21:].strip()
+            if t.startswith("/"):
+                cur[2].append(t)
+            elif cur[2]:
+                cur[2][-1] += " " + t
+            else:
+                cur[1] += t
+    out, n = [f"##gff-version 3", f"##sequence-region {acc} 1 {len(seq)}"], 0
+    for key, loc, quals in blocks:
+        if key != "CDS":
+            continue
+        parts, strand = _loc_parts(loc)
+        q = {m.group(1): m.group(2) for m in (re.match(r'/(\w+)="?(.*?)"?$', x) for x in quals) if m}
+        n += 1
+        name = q.get("gene") or q.get("locus_tag") or f"cds{n}"
+        attr = f"ID=cds-{n};Name={name};gene={name};product={q.get('product', '').replace(';', '%3B').replace('=', '%3D')};protein_id={q.get('protein_id', '')}"
+        for a, b in parts:
+            out.append(f"{acc}\tGenBank\tCDS\t{a}\t{b}\t.\t{strand}\t0\t{attr}")
+    return seq, "\n".join(out) + "\n"
 
 
 def read_fasta(path: Path) -> tuple[str, str]:
