@@ -1647,3 +1647,48 @@ def test_dataset_is_browsable_like_the_genome_table_and_on_the_dashboard(tmp_pat
     only = _embedded(c.get(f"/dashboard?dataset={datasets.find(1, 'pub only')['id']}").text, "dd")
     assert only["total"] == 2                                                                                # public members only when the dataset leaves the private store out
     assert c.get("/dashboard?dataset=999&watch=1").status_code == 200                                         # an unknown dataset falls back to everything
+
+
+def test_dataset_qc_runs_only_for_its_members(tmp_path, monkeypatch):
+    import time
+    from fastapi.testclient import TestClient
+    from genomecurator import datasets, private, qc, sources, web
+    _qc_env(tmp_path, monkeypatch)                                              # A1, X2 with sequences; no QC yet
+    monkeypatch.setattr(sources, "pathoplexus_slug_for", lambda acc: None)
+    from genomecurator.db import connect
+    con = connect()
+    con.execute("UPDATE genome SET clade='Ib' WHERE accession='A1'")
+    con.execute("UPDATE genome SET clade='IIa' WHERE accession='X2'")
+    con.commit()
+    con.close()
+    qc.dataset_update("nextstrain/mpox/all-clades")
+    private.import_texts(1, *_priv_files([{"PPX_accession": "LAB_Q1", "strain": "a", "date": "2025", "country": "Uganda", "clade": "Ib"},
+                                          {"PPX_accession": "LAB_Q2", "strain": "b", "date": "2025", "country": "Uganda", "clade": "IIb"}], {"LAB_Q1": "ACGT" * 40, "LAB_Q2": "ACGT" * 41}))
+    ds = datasets.save(1, "Ib", {"clade": ["Ib"]}, include_private=True)
+    s0 = qc.summary_for(1, *datasets.member_ids(1, ds))
+    assert s0["public"]["members"] == 1 and s0["public"]["not_run"] == 1 and s0["private"]["members"] == 1 and s0["private"]["not_run"] == 1
+    res = datasets.run_qc(ds)
+    assert res["public"]["sequences"] == 1 and res["public"]["stats"] == 1 and res["private"]["sequences"] == 1
+    con = connect()
+    done = {r[0] for r in con.execute("SELECT DISTINCT accession FROM qc_result")}
+    con.close()
+    assert done == {"A1", "private:LAB_Q1"}                                      # X2 and LAB_Q2 are not in the dataset: untouched
+    s1 = qc.summary_for(1, *datasets.member_ids(1, ds))
+    assert s1["public"]["not_run"] == 0 and s1["public"]["seqstats"] == {"good": 1} and s1["public"]["nextclade"] == {"good": 1} and s1["private"]["seqstats"] == {"good": 1}
+    assert datasets.run_qc(ds)["public"]["stats"] == 0                          # nothing changed: nothing recomputed
+    assert datasets.run_qc(ds, force=True)["public"]["stats"] == 1
+    # without private members in the dataset the private store is left alone
+    pub_only = datasets.save(1, "Ib public", {"clade": ["Ib"]})
+    assert datasets.run_qc(pub_only)["private"] is None
+    c = TestClient(web.create_app(scheduler=False))
+    assert c.get(f"/api/datasets/{ds['id']}/qc").json()["public"]["members"] == 1 and c.get("/api/datasets/999/qc").status_code == 404
+    page = c.get(f"/dataset/{ds['id']}").text
+    assert "이 데이터셋 QC 실행" in page and "모두 QC 완료" in page
+    jid = c.post(f"/api/datasets/{ds['id']}/qc?force=1").json()["job"]
+    for _ in range(200):
+        j = c.get(f"/api/job/{jid}").json()
+        if j["done"]:
+            break
+        time.sleep(0.05)
+    assert j["status"] == "done" and j["kind"] == "dsqc" and j["result"]["public"]["sequences"] == 1
+    assert c.post("/api/datasets/999/qc").status_code == 404

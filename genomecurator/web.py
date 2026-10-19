@@ -560,6 +560,24 @@ def create_app(scheduler: bool = True) -> FastAPI:
             return JSONResponse({"error": "cross-site request refused"}, 403)
         return {"deleted": datasets.delete(dsid)}
 
+    @app.get("/api/datasets/{dsid}/qc")
+    def api_datasets_qc(dsid: int):
+        ds = datasets.get(dsid)
+        if not ds:
+            return JSONResponse({"error": "unknown dataset"}, 404)
+        pub, priv = datasets.member_ids(ds["watch_id"], ds)
+        return qc.summary_for(ds["watch_id"], pub, priv)
+
+    @app.post("/api/datasets/{dsid}/qc")
+    def api_datasets_qc_run(request: Request, dsid: int, force: int = 0):
+        """QC for this dataset's members only (a server job)."""
+        if not _same_origin(request):
+            return JSONResponse({"error": "cross-site request refused"}, 403)
+        ds = datasets.get(dsid)
+        if not ds:
+            return JSONResponse({"error": "unknown dataset"}, 404)
+        return start_job(lambda p: {"redirect": f"/dataset/{dsid}", "result": datasets.run_qc(ds, p, bool(force))}, f"데이터셋 QC · {ds['name']}", "dsqc")
+
     @app.get("/api/datasets/{dsid}/history")
     def api_datasets_history(dsid: int):
         return datasets.export_history(dsid)
@@ -1005,7 +1023,7 @@ def create_app(scheduler: bool = True) -> FastAPI:
         n_seq = sum(1 for r in data["rows"] if r.get("has_fasta") == "Yes")
         info = {"public": len(pub), "private": len(priv), "no_seq": len(pub) - sum(1 for r in data["rows"] if not r.get("is_private") and r.get("has_fasta") == "Yes"), "with_seq": n_seq}
         return render(request, "genomes.html", data=data, nav="ds", watches=watches, watch=ds["watch_id"], msg=msg, private_n=0, dataset=ds, ds_info=info,
-                      ds_summary=datasets.describe(ds["rules"]))
+                      ds_summary=datasets.describe(ds["rules"]), ds_qc=qc.summary_for(ds["watch_id"], pub, priv))
 
     @app.post("/genomes/fasta")
     async def genomes_fasta(request: Request):

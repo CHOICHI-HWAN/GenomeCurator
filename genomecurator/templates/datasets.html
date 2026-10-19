@@ -41,6 +41,7 @@
   <div style="display:flex;gap:8px;flex-wrap:wrap;margin-bottom:14px">
    <button type="button" class="p" onclick="saveDs()">저장</button>
    <button type="button" onclick="exportDs()" title="멤버를 확정해 metadata.tsv, sequences.fasta, manifest.json, 설정을 폴더에 만듭니다 (서버 작업)">내보내기 (폴더 만들기)</button>
+   <button type="button" id="bq" onclick="qcDs()" title="이 데이터셋의 멤버만 QC합니다 (서버 작업)" disabled>QC 실행</button>
    <a id="vw"><button type="button" disabled>유전체처럼 보기</button></a><a id="vd"><button type="button" disabled>대시보드로 보기</button></a>
    <a id="dm"><button type="button" disabled>metadata.tsv 받기</button></a><a id="df"><button type="button" disabled>sequences.fasta 받기</button></a>
    <span style="flex:1"></span><button type="button" id="bdel" onclick="delDs()" disabled>이 데이터셋 정의 삭제</button>
@@ -71,7 +72,8 @@ function fill(ds){CUR=ds&&ds.id?ds:null;const r=(ds&&ds.rules)||{};document.getE
  document.getElementById('y0').value=r.year_min||'';document.getElementById('y1').value=r.year_max||'';document.getElementById('l0').value=r.min_length||'';document.getElementById('l1').value=r.max_length||'';
  document.querySelectorAll('.qn').forEach(x=>x.checked=(r.qc_not||[]).includes(x.value));document.getElementById('mi').value=((ds&&ds.manual_include)||[]).join('\n');document.getElementById('me').value=((ds&&ds.manual_exclude)||[]).join('\n');
  renderRules(r);document.getElementById('bdel').disabled=!CUR;links();preview()}
-function links(){const a=document.getElementById('dm'),b=document.getElementById('df'),v=document.getElementById('vw'),d=document.getElementById('vd');
+async function qcDs(){if(!CUR)return;const f=document.getElementById('jf');f.action='/api/datasets/'+CUR.id+'/qc';runJob(f)}
+function links(){document.getElementById('bq').disabled=!CUR;const a=document.getElementById('dm'),b=document.getElementById('df'),v=document.getElementById('vw'),d=document.getElementById('vd');
  if(CUR){v.href='/dataset/'+CUR.id;d.href='/dashboard?watch='+WID+'&dataset='+CUR.id;v.firstChild.disabled=d.firstChild.disabled=false}else{v.removeAttribute('href');d.removeAttribute('href');v.firstChild.disabled=d.firstChild.disabled=true}
  if(CUR){a.href='/api/export/'+WID+'/metadata.tsv?dataset='+CUR.id;b.href='/api/export/'+WID+'/sequences.fasta?dataset='+CUR.id;a.firstChild.disabled=b.firstChild.disabled=false}else{a.removeAttribute('href');b.removeAttribute('href');a.firstChild.disabled=b.firstChild.disabled=true}}
 function changed(){clearTimeout(timer);timer=setTimeout(preview,350)}

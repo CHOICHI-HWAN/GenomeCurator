@@ -214,6 +214,19 @@ def member_ids(watch_id: int, ds: dict) -> tuple[set[str], set[str]]:
     return pub, priv
 
 
+def run_qc(ds: dict, progress=None, force: bool = False) -> dict:
+    """QC (sequence statistics, Nextclade) for exactly this dataset's members - the public genomes that have a sequence file and, when the
+    dataset includes them, the private ones - instead of the whole virus."""
+    from . import qc
+    p = progress or (lambda *a: None)
+    pub, priv = member_ids(ds["watch_id"], ds)
+    res = {"dataset": ds["name"], "public": None, "private": None}
+    res["public"] = qc.run(ds["watch_id"], lambda pct, m: p(pct * (0.8 if priv else 1), m), force, accessions=pub)
+    if priv:
+        res["private"] = qc.run_private(ds["watch_id"], lambda pct, m: p(80 + pct * 0.2, m), force, ids=priv)
+    return res
+
+
 # ------------------------------------------------------------------------------------------------ what values exist (for the rule builder)
 def facets(watch_id: int) -> dict:
     """Value counts over the genomes the dataset rules can pick from (curated, not Removed, not marked excluded) - and the private store -

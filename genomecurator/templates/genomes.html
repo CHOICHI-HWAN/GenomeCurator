@@ -9,7 +9,16 @@
 {% if dataset %}<div class="card" style="margin:6px 0;padding:8px 12px;border-left:4px solid var(--acc)"><b>데이터셋 {{ dataset.name }}</b>{% if dataset.description %} <span class="mut">— {{ dataset.description }}</span>{% endif %}
  <div class="mut" style="font-size:12.5px">정의: {{ ds_summary }} · 공개 <b>{{ ds_info.public }}건</b>{% if dataset.include_private %} · 🔒 비공개 <b>{{ ds_info.private }}건</b>{% endif %}
   {% if ds_info.no_seq %} · <span style="color:var(--warn)">서열이 없는 {{ ds_info.no_seq }}건은 내보내기에서 빠집니다 (아래 배너의 <b>모두 받기</b>가 이 데이터셋의 서열만 받습니다)</span>{% endif %}
-  · <a href="/datasets?watch={{ dataset.watch_id }}">정의 보기·내보내기</a> · <a href="/dashboard?watch={{ dataset.watch_id }}&dataset={{ dataset.id }}">이 데이터셋의 대시보드</a></div></div>{% endif %}
+  · <a href="/datasets?watch={{ dataset.watch_id }}">정의 보기·내보내기</a> · <a href="/dashboard?watch={{ dataset.watch_id }}&dataset={{ dataset.id }}">이 데이터셋의 대시보드</a></div>
+ {% set qa = ds_qc.public %}{% set qp = ds_qc.private %}
+ <div style="font-size:12.5px;margin-top:6px"><b>QC</b> (서열이 있는 멤버 {{ qa.with_sequence }}건{% if dataset.include_private %} + 🔒 {{ qp.with_sequence }}건{% endif %}):
+  서열 통계 <span class="qs good">양호 {{ qa.seqstats.get('good', 0) + (qp.seqstats.get('good', 0) if dataset.include_private else 0) }}</span> · <span class="qs mediocre">주의 {{ qa.seqstats.get('mediocre', 0) + (qp.seqstats.get('mediocre', 0) if dataset.include_private else 0) }}</span> · <span class="qs bad">불량 {{ qa.seqstats.get('bad', 0) + qa.seqstats.get('error', 0) + ((qp.seqstats.get('bad', 0) + qp.seqstats.get('error', 0)) if dataset.include_private else 0) }}</span>
+  &nbsp;|&nbsp; Nextclade <span class="qs good">양호 {{ qa.nextclade.get('good', 0) + (qp.nextclade.get('good', 0) if dataset.include_private else 0) }}</span> · <span class="qs mediocre">주의 {{ qa.nextclade.get('mediocre', 0) + (qp.nextclade.get('mediocre', 0) if dataset.include_private else 0) }}</span> · <span class="qs bad">불량 {{ qa.nextclade.get('bad', 0) + qa.nextclade.get('error', 0) + ((qp.nextclade.get('bad', 0) + qp.nextclade.get('error', 0)) if dataset.include_private else 0) }}</span>
+  {% set nr = qa.not_run + (qp.not_run if dataset.include_private else 0) %}{% if nr %}· <span style="color:var(--warn)">아직 QC를 안 한 {{ nr }}건</span>{% else %}· 모두 QC 완료{% endif %}
+  <button type="button" class="p" onclick="dsQc(0)" style="margin-left:8px" title="이 데이터셋의 멤버만 QC합니다 (이미 한 것은 건너뜁니다)">이 데이터셋 QC 실행</button>
+  <button type="button" onclick="dsQc(1)" title="이미 한 것도 다시 계산">다시 계산</button>
+  <span class="mut">표의 <b>QC</b> 열·필터로 주의/불량만 골라 볼 수 있습니다.</span></div>
+ <form id="dsqcf" method="post" action="/api/datasets/{{ dataset.id }}/qc" style="display:none"></form></div>{% endif %}
 {% if private_n %}<div class="msg" style="margin:6px 0">비공개 유전체 <b>{{ private_n }}건</b>은 공개 데이터와 분리되어 있어 이 표에 나타나지 않습니다 → <a href="/private?watch={{ watch }}">비공개 탭</a>에서 보고, <a href="/datasets?watch={{ watch }}">데이터셋</a>에서 <i>비공개 포함</i>을 켜면 분석용 파일에 별도로 실립니다.</div>{% endif %}
 <div id="noseq" class="msg" style="display:none;margin:6px 0"></div>
 <div class="mut" style="font-size:12px;margin:2px 0 4px" title="GC_NEAR_COMPLETE_PCT로 기준 비율을 바꿀 수 있습니다">ⓘ {{ data.ref_note }}</div>
@@ -28,6 +37,7 @@ const fmtEst=todo=>{const bp=todo.reduce((a,r)=>a+(+r.genome_length||0),0),gb=bp
 (function(){const DD=JSON.parse(document.getElementById('gdata').textContent),todo=DD.rows.filter(r=>r.has_fasta==='No');if(!todo.length)return;const e=fmtEst(todo);
  const el=document.getElementById('noseq');el.style.display='';el.innerHTML='서열(FASTA)이 아직 없는 유전체 <b>'+todo.length.toLocaleString()+'건</b> (약 '+e.gb+'). 분석·QC·내보내기에는 서열이 필요합니다. <button type="button" class="p" onclick="getSeq(true)" style="margin-left:8px">모두 받기</button>'
   +' <span class="mut" style="font-size:12px">NCBI에서 100건씩 받으며 중간에 멈춰도 이어받습니다. 끝나면 QC 탭에서 QC를 실행하세요.</span>'})();
+function dsQc(force){const f=document.getElementById('dsqcf');f.action='/api/datasets/{{ dataset.id if dataset else 0 }}/qc?force='+force;runJob(f)}
 async function exclSel(ex){const DD=JSON.parse(document.getElementById('gdata').textContent),sel=G.selected();
  if(!sel.length){alert((ex?'데이터셋에서 제외할':'제외 표시를 풀')+' 유전체를 표에서 먼저 선택하세요 (체크박스, 행 끌기, Shift+클릭, 또는 필터 후 Select all).');return}
  const picked=sel.map(i=>DD.rows[i]),ids=picked.filter(r=>!r.is_private).map(r=>r.accession),pids=picked.filter(r=>r.is_private).map(r=>r.accession);let reason='';

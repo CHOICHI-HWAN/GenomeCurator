@@ -9,6 +9,7 @@ quality score) for the viruses that have a Nextclade dataset.
 * Nextclade datasets are downloaded on demand from Nextstrain (the intended way); they are not part of this repository."""
 import csv
 import json
+from collections import Counter
 import os
 import re
 import shutil
@@ -253,9 +254,10 @@ def _store(con, acc, tool, watch_id, res, version, dataset, tag, md5):
                             ensure_ascii=False), version, dataset, tag, md5, datetime.now().isoformat(timespec="seconds")))
 
 
-def run(watch_id: int, progress=None, force: bool = False) -> dict:
+def run(watch_id: int, progress=None, force: bool = False, accessions=None) -> dict:
     """Sequence stats for every genome of the watch that has a sequence file, and Nextclade when the virus has a dataset.
-    Unchanged sequences (same md5, same tool and dataset version) are skipped unless force."""
+    Unchanged sequences (same md5, same tool and dataset version) are skipped unless force. `accessions` narrows the run to those genomes
+    (a dataset's members); the rest of the virus is left as it is."""
     p = progress or (lambda *a: None)
     con = connect()
     try:
@@ -265,6 +267,8 @@ def run(watch_id: int, progress=None, force: bool = False) -> dict:
         rows = [dict(r) for r in con.execute(
             "SELECT g.accession, g.genome_length, s.md5, s.file_path FROM genome g JOIN genome_sequence s ON s.genome_id=g.genome_id WHERE g.watch_id=? "
             "AND IFNULL(g.genome_status,'')!='Removed'", (watch_id,))]
+        if accessions is not None:
+            rows = [r for r in rows if r["accession"] in accessions]
         have = {(r[0], r[1]): (r[2], r[3], r[4]) for r in con.execute(
             "SELECT accession, tool, seq_md5, version, dataset_tag FROM qc_result WHERE watch_id=?", (watch_id,))}
     finally:
@@ -337,7 +341,7 @@ def run(watch_id: int, progress=None, force: bool = False) -> dict:
     return summary
 
 
-def run_private(watch_id: int, progress=None, force: bool = False) -> dict:
+def run_private(watch_id: int, progress=None, force: bool = False, ids=None) -> dict:
     """The same QC for the private store (accession `private:<id>`): sequence statistics, and Nextclade when the virus has a dataset."""
     p = progress or (lambda *a: None)
     con = connect()
@@ -350,6 +354,8 @@ def run_private(watch_id: int, progress=None, force: bool = False) -> dict:
             "SELECT accession, tool, seq_md5, version, dataset_tag FROM qc_result WHERE watch_id=? AND accession LIKE 'private:%'", (watch_id,))}
     finally:
         con.close()
+    if ids is not None:
+        rows = [r for r in rows if r["id"] in ids]
     todo = [(r, config.data_path(r["file_path"])) for r in rows if r["file_path"] and config.data_path(r["file_path"]).exists()]
     ds, ver = dataset_for(w["taxon"]), nextclade_version()
     tag = local_tag(ds) if ds else None
@@ -418,6 +424,38 @@ def nextclade_source(watch_id: int, con=None) -> dict[str, dict]:
     finally:
         if own:
             con.close()
+
+
+def summary_for(watch_id: int, public: set, private: set) -> dict:
+    """QC state of a set of genomes (a dataset's members): per tool and status, how many have no result yet, and how many calls differ from the sources."""
+    con = connect()
+    try:
+        have: dict[str, dict] = {}
+        for r in con.execute("SELECT accession, tool, status FROM qc_result WHERE watch_id=?", (watch_id,)):
+            have.setdefault(r["accession"], {})[r["tool"]] = r["status"]
+        seqd = {r[0] for r in con.execute("SELECT g.accession FROM genome g JOIN genome_sequence s ON s.genome_id=g.genome_id WHERE g.watch_id=? AND s.file_path IS NOT NULL AND s.file_path!=''", (watch_id,))}
+        pseq = {r[0] for r in con.execute("SELECT id FROM private_genome WHERE watch_id=?", (watch_id,))}
+    finally:
+        con.close()
+
+    def one(ids: set, key, sequenced: set) -> dict:
+        out = {"members": len(ids), "with_sequence": len(ids & sequenced), "seqstats": Counter(), "nextclade": Counter(), "not_run": 0, "bad": 0}
+        for i in ids & sequenced:
+            h = have.get(key(i), {})
+            if "seqstats" not in h:
+                out["not_run"] += 1
+            for t in ("seqstats", "nextclade"):
+                if t in h:
+                    out[t][h[t]] += 1
+            if "bad" in h.values() or "error" in h.values():
+                out["bad"] += 1
+        out["seqstats"], out["nextclade"] = dict(out["seqstats"]), dict(out["nextclade"])
+        return out
+    return {"public": one(public, lambda a: a, seqd), "private": one(private, lambda a: prefix_private(a), pseq)}
+
+
+def prefix_private(i: str) -> str:
+    return f"private:{i}"
 
 
 def summary(watch_id: int | None = None) -> dict:
