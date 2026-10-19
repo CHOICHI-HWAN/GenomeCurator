@@ -13,6 +13,7 @@ dependencies:
   - httpx>=0.27
   - apscheduler>=3.10,<4
   - python-multipart>=0.0.9
+  - openpyxl>=3.1         # spreadsheet (.xlsx) upload and template for private genomes
   - nextclade>=3          # clade/lineage and sequence QC (QC tab); optional at runtime, sequence statistics work without it
   - pytest>=8
   - pip:

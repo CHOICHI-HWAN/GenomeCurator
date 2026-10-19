@@ -408,7 +408,8 @@ def write(watch_id: int, out_dir: Path | None = None, profile: str = "nextstrain
         (out / ".gitignore").write_text("*private*\nPRIVATE_DATA.txt\n", encoding="utf-8")
         (out / "PRIVATE_DATA.txt").write_text("This folder contains PRIVATE (unpublished) genomes: metadata-private.tsv and sequences-private.fasta.\n"
                                               "Do not share, publish or commit it. The public files (metadata.tsv, sequences.fasta) contain no private data.\n", encoding="utf-8")
-        priv = {"rows": len(prows), "sequences": n_pseq, "files": {"metadata-private.tsv": {"sha256": hp_m.hexdigest(), "columns": pcols}, "sequences-private.fasta": {"sha256": hp_f.hexdigest()}}}
+        from . import private as _pv
+        priv = {"rows": len(prows), "sequences": n_pseq, "versions": {r["id"]: r["version"] for r in _pv.rows_for_export(watch_id)}, "files": {"metadata-private.tsv": {"sha256": hp_m.hexdigest(), "columns": pcols}, "sequences-private.fasta": {"sha256": hp_f.hexdigest()}}}
     pv = preview(watch_id, profile, include_private=include_private, **filters)
     con = connect()
     try:

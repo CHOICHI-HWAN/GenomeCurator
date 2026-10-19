@@ -27,7 +27,7 @@ def _compact_db(dest: Path, with_private: bool = False) -> dict:
     db.migrate(out)
     out.execute("ATTACH DATABASE ? AS src", (str(config.DB_PATH),))
     counts = {}
-    for t in KEEP_TABLES + ((["private_genome"]) if with_private else []):
+    for t in KEEP_TABLES + (["private_genome", "private_version"] if with_private else []):
         cols = [r[1] for r in out.execute(f"PRAGMA main.table_info({t})")]
         have = {r[1] for r in out.execute(f"PRAGMA src.table_info({t})")}
         sel = ",".join(c if c in have else "NULL" for c in cols)

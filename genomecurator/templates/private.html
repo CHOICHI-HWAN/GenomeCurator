@@ -1,17 +1,45 @@
 {% extends "base.html" %}{% block body %}
 <div class="pagehead"><h2>비공개 유전체</h2><span class="mut">공개되지 않은 로컬 유전체를 따로 보관하고, 최종 분석용 데이터세트에 붙입니다</span></div>
 <div class="help"><b>공개 데이터와 완전히 분리</b>되어 보관됩니다 — 유전체 화면, 공개 페이지 배포, Superset, 일반 백업, <i>지금 확인</i>에 나타나지 않습니다.
-내보내기에서 <b>"비공개 포함"</b>을 켰을 때만 <code>metadata-private.tsv</code> / <code>sequences-private.fasta</code>로 <u>별도 파일</u>에 나가며, Nextstrain의 <code>private_metadata</code> / <code>private_sequences</code>로 연결됩니다.
-<br><b>입력 형식</b>: Nextstrain에 준하는 메타데이터 TSV(열: id <code>PPX_accession</code> 또는 <code>accession</code>, <code>strain</code>, <code>date</code>, <code>country</code>, <code>division</code>, <code>location</code>, <code>host</code>, <code>clade</code>…)와, 헤더가 그 id인 FASTA.
-먼저 <b>검사(dry-run)</b>로 구조 오류(id 누락·중복·공개 accession과 충돌·서열 없는 행·서열 문자 오류)를 확인하고, 오류가 없을 때만 가져옵니다. 날짜·대륙·길이는 자동으로 맞추고 경고로 알려 줍니다.</div>
+내보내기에서 <b>"비공개 포함"</b>을 켰을 때만 <code>metadata-private.tsv</code> / <code>sequences-private.fasta</code>로 <u>별도 파일</u>에 나가며 Nextstrain의 <code>private_metadata</code> / <code>private_sequences</code>로 연결됩니다.
+<b>올릴 때마다 버전</b>이 기록됩니다(같은 id를 바뀐 내용으로 다시 올리면 새 버전, 같은 내용이면 변경 없음). 이전 버전은 삭제한 뒤에도 남아 복원할 수 있습니다.
+올리기 전에 <b>검사(dry-run)</b>가 구조 오류(id 누락·중복·공개 accession과 충돌·서열 없음·서열 문자 오류·커버리지 {{ '%g' % min_cov }}% 미만)를 알려 주고, 날짜·대륙·길이는 자동으로 맞춥니다.</div>
 
 <div class="card">
- <div style="display:flex;gap:12px;flex-wrap:wrap;align-items:end">
+ <div style="display:flex;gap:14px;flex-wrap:wrap;align-items:end">
   <label>바이러스<br><select id="w" onchange="location.href='/private?watch='+this.value">{% for w in watches %}<option value="{{ w.id }}" {{ 'selected' if w.id == wid }}>{{ w.name }}</option>{% endfor %}</select></label>
-  <label>메타데이터 TSV<br><input type="file" id="fm" accept=".tsv,.txt,.csv"></label>
-  <label>FASTA<br><input type="file" id="ff" accept=".fasta,.fa,.fna,.txt"></label>
-  <button type="button" id="bc" onclick="chk()">검사 (dry-run)</button>
-  <button type="button" class="p" id="bi" onclick="imp()" disabled>가져오기</button>
+  <label title="clade 칸이 비어 있는 행에 이 값을 채웁니다 (Nextclade가 판정한 값과 다르면 표시됩니다)">이 업로드의 기본 clade<br>
+   {% if clades %}<select id="dc"><option value="">(없음)</option>{% for c in clades %}<option value="{{ c }}" {{ 'selected' if c == 'Ib' }}>{{ c }}</option>{% endfor %}</select>{% else %}<input id="dc" style="width:90px" placeholder="예: Ib">{% endif %}</label>
+  <label>메모(이 업로드 버전에 남김)<br><input id="nt" style="width:260px" placeholder="예: 2025-10 캄팔라 배치"></label>
+ </div>
+ <div style="margin-top:12px;display:flex;gap:8px;flex-wrap:wrap">
+  <button type="button" id="tab1" class="p" onclick="tab(1)">하나씩 올리기</button>
+  <button type="button" id="tab2" onclick="tab(2)">스프레드시트로 한꺼번에</button>
+ </div>
+
+ <div id="p1" style="margin-top:12px">
+  <div style="display:grid;grid-template-columns:repeat(auto-fill,minmax(210px,1fr));gap:8px 14px">
+  {% for name, required, meaning, example, _ in columns if name not in ('date_released',) %}
+   <label title="{{ meaning }}">{{ name }}{% if required %} <b style="color:var(--bad)">*</b>{% endif %}<br>
+    {% if name == 'clade' and clades %}<select data-f="{{ name }}"><option value="">(기본값 사용)</option>{% for c in clades %}<option>{{ c }}</option>{% endfor %}</select>
+    {% else %}<input data-f="{{ name }}" placeholder="{{ example }}" style="width:100%">{% endif %}</label>
+  {% endfor %}
+  </div>
+  <div style="margin-top:10px;display:flex;gap:14px;flex-wrap:wrap;align-items:start">
+   <label>서열 파일(FASTA) <input type="file" id="f1" accept=".fasta,.fa,.fna,.txt"></label>
+   <label style="flex:1;min-width:280px">또는 서열 붙여넣기<br><textarea id="s1" rows="3" style="width:100%;font:12px monospace" placeholder="ACGT…  (FASTA 형식으로 붙여넣어도 됩니다)"></textarea></label>
+  </div>
+  <div style="margin-top:8px;display:flex;gap:8px"><button type="button" onclick="one(1)">검사 (dry-run)</button><button type="button" class="p" id="bo" onclick="one(0)" disabled>올리기</button></div>
+ </div>
+
+ <div id="p2" style="margin-top:12px;display:none">
+  <div style="margin-bottom:8px">① 템플릿을 받아 채웁니다: <a href="/api/private/template.xlsx?watch={{ wid }}"><b>스프레드시트(.xlsx) 템플릿</b></a> · <a href="/api/private/template.tsv">TSV 머리글</a>
+   <span class="mut">(시트 <code>genomes</code>에 한 줄에 유전체 하나, <code>열 설명</code> 시트에 열별 설명, 필수 열은 노란색)</span></div>
+  <div style="display:flex;gap:12px;flex-wrap:wrap;align-items:end">
+   <label>② 스프레드시트 (.xlsx / .tsv / .csv)<br><input type="file" id="fm" accept=".xlsx,.tsv,.csv,.txt"></label>
+   <label>③ FASTA (헤더 = id)<br><input type="file" id="ff" accept=".fasta,.fa,.fna,.txt"></label>
+   <button type="button" onclick="chk()">검사 (dry-run)</button><button type="button" class="p" id="bi" onclick="imp()" disabled>올리기</button>
+  </div>
  </div>
  <div id="rep" style="margin-top:10px"></div>
 </div>
@@ -21,30 +49,56 @@
  <button type="button" onclick="pqc(1)" {% if not rows %}disabled{% endif %} title="이미 한 것도 다시 계산">QC 다시 계산</button>
  <a href="/export"><button type="button">내보내기로 →</button></a></div>
 <form id="pf" method="post" style="display:none"></form>
-<table><tr><th>id</th><th>strain</th><th>날짜</th><th>국가</th><th>clade</th><th>길이</th><th>서열 통계</th><th>Nextclade</th><th>가져온 시각</th><th></th></tr>
-{% for r in rows %}<tr><td>{{ r.id }}</td><td>{{ r.strain }}</td><td>{{ r.date }}</td><td>{{ r.country }}</td>
+<table><tr><th>id</th><th>버전</th><th>strain</th><th>날짜</th><th>국가</th><th>clade</th><th>길이</th><th>서열 통계</th><th>Nextclade</th><th>최근 업로드</th><th></th></tr>
+{% for r in rows %}<tr><td>{{ r.id }}</td><td><a href="#h-{{ r.id }}" title="이력 보기">v{{ r.version }}</a></td><td>{{ r.strain }}</td><td>{{ r.date }}</td><td>{{ r.country }}</td>
 <td>{{ r.clade or '-' }}{% if r.clade_differs %} <span style="color:var(--warn)" title="입력한 clade와 Nextclade 판정이 다릅니다: {{ r.nextclade_clade }}">⚠ {{ r.nextclade_clade }}</span>{% endif %}</td>
 <td>{{ '{:,}'.format(r.length or 0) }}</td><td>{% if r.qc_stats %}<span class="qs {{ r.qc_stats }}">{{ {'good': '양호', 'mediocre': '주의', 'bad': '불량', 'error': '오류'}[r.qc_stats] }}</span>{% else %}<span class="mut">-</span>{% endif %}</td>
 <td>{% if r.qc_nextclade %}<span class="qs {{ r.qc_nextclade }}">{{ {'good': '양호', 'mediocre': '주의', 'bad': '불량', 'error': '오류'}[r.qc_nextclade] }}</span>{% else %}<span class="mut">-</span>{% endif %}</td>
 <td class="nw mut">{{ r.updated }}</td><td><button type="button" onclick="del_('{{ r.id }}')">삭제</button></td></tr>
-{% else %}<tr><td colspan="10" class="mut">아직 없습니다. 위에서 파일을 골라 검사한 뒤 가져오세요.</td></tr>{% endfor %}</table>
+{% else %}<tr><td colspan="11" class="mut">아직 없습니다. 위에서 올려 보세요.</td></tr>{% endfor %}</table>
+
+<h3>버전 이력 ({{ hist|length }}건)</h3>
+<table><tr><th>id</th><th>버전</th><th>시각</th><th>내용</th><th>파일 / 메모</th><th></th></tr>
+{% for h in hist %}<tr id="h-{{ h.id }}"><td>{{ h.id }}</td><td>v{{ h.version }}{% if h.current %} <span class="pill READY">현재</span>{% endif %}</td><td class="nw mut">{{ h.uploaded }}</td>
+<td>{% if h.deleted %}<span style="color:var(--bad)">삭제됨</span>{% elif h.new %}처음 올림 ({{ '{:,}'.format(h.length or 0) }} bp){% else %}{% if h.sequence_changed %}서열 바뀜{% endif %}{% if h.changes %}{{ ' · ' if h.sequence_changed }}바뀐 열: {{ h.changes|join(', ') }}{% endif %}{% endif %}</td>
+<td class="mut">{{ h.source_file }}{% if h.note %} · {{ h.note }}{% endif %}</td>
+<td>{% if not h.deleted and not h.current %}<button type="button" onclick="rest('{{ h.id }}',{{ h.version }})">이 버전으로 복원</button>{% endif %}</td></tr>
+{% else %}<tr><td colspan="6" class="mut">아직 없습니다.</td></tr>{% endfor %}</table>
+
 <script>
 const W=()=>document.getElementById('w').value,esc=s=>String(s??'').replace(/[&<>]/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;'}[c]));
-function fd(){const m=document.getElementById('fm').files[0],f=document.getElementById('ff').files[0];if(!m||!f){alert('메타데이터 TSV와 FASTA를 모두 고르세요.');return null}
- const d=new FormData();d.append('metadata',m);d.append('fasta',f);return d}
+const DC=()=>document.getElementById('dc').value.trim(),NT=()=>document.getElementById('nt').value.trim();
+function tab(n){document.getElementById('p1').style.display=n===1?'':'none';document.getElementById('p2').style.display=n===2?'':'none';
+ document.getElementById('tab1').className=n===1?'p':'';document.getElementById('tab2').className=n===2?'p':'';document.getElementById('rep').innerHTML=''}
 function show(r,done){const el=document.getElementById('rep');let h='';
- if(r.error){el.innerHTML='<div class="msg" style="border-left-color:var(--bad)">'+esc(r.error)+'</div>';return}
- h+='<div class="msg" style="border-left-color:'+(r.ok?'var(--ok)':'var(--bad)')+'">'+(done?'가져왔습니다: ':(r.ok?'오류 없음: ':'가져올 수 없습니다: '))+'신규 <b>'+(r.new??0)+'</b> · 갱신 <b>'+(r.update??0)+'</b> · 경고 '+(r.warnings||[]).length+' · 오류 '+(r.errors||[]).length+'</div>';
- if((r.errors||[]).length)h+='<div style="color:var(--bad)"><b>오류 (고쳐야 가져올 수 있음)</b><ul>'+r.errors.slice(0,30).map(x=>'<li>'+esc(x)+'</li>').join('')+'</ul></div>';
+ if(r.error){el.innerHTML='<div class="msg" style="border-left-color:var(--bad)">'+esc(r.error).replace(/\n/g,'<br>')+'</div>';return}
+ const c=(r.new||0)+' 신규 · '+(r.update||0)+' 새 버전 · '+(r.unchanged||0)+' 변경 없음';
+ h+='<div class="msg" style="border-left-color:'+(r.ok===false?'var(--bad)':'var(--ok)')+'">'+(done?'올렸습니다: ':(r.ok?'오류 없음: ':'올릴 수 없습니다: '))+c+' · 경고 '+(r.warnings||[]).length+' · 오류 '+(r.errors||[]).length+'</div>';
+ if((r.errors||[]).length)h+='<div style="color:var(--bad)"><b>오류 (고쳐야 올릴 수 있음)</b><ul>'+r.errors.slice(0,30).map(x=>'<li>'+esc(x)+'</li>').join('')+'</ul></div>';
  if((r.warnings||[]).length)h+='<details><summary>경고 '+r.warnings.length+'건 (자동으로 맞췄거나 비워 둔 것)</summary><ul>'+r.warnings.slice(0,200).map(x=>'<li>'+esc(x)+'</li>').join('')+'</ul></details>';
  el.innerHTML=h}
-async function chk(){const d=fd();if(!d)return;document.getElementById('bi').disabled=true;
- const r=await (await fetch('/api/private/'+W()+'/check',{method:'POST',body:d})).json();show(r,false);document.getElementById('bi').disabled=!(r.ok&&(r.new||r.update))}
-async function imp(){const d=fd();if(!d)return;if(!confirm('비공개 저장소에 가져옵니다 (같은 id가 있으면 갱신).'))return;
+// ---- one genome
+function fd1(){const d=new FormData();document.querySelectorAll('[data-f]').forEach(i=>{if(i.value.trim())d.append(i.dataset.f,i.value.trim())});
+ const f=document.getElementById('f1').files[0];if(f)d.append('fasta',f);d.append('sequence',document.getElementById('s1').value);d.append('default_clade',DC());d.append('note',NT());return d}
+async function one(dry){const d=fd1();const id=d.get('PPX_accession');if(!id){alert('PPX_accession(id)를 입력하세요.');return}
+ if(!document.getElementById('f1').files[0]&&!document.getElementById('s1').value.trim()){alert('서열 파일을 고르거나 서열을 붙여넣으세요.');return}
+ const r=await (await fetch('/api/private/'+W()+'/one?dry_run='+dry,{method:'POST',body:d})).json();
+ if(dry){show(r,false);document.getElementById('bo').disabled=!(r.ok&&((r.new||0)+(r.update||0)>0));return}
+ show(r,true);if(!r.error)setTimeout(()=>location.reload(),1200)}
+document.querySelectorAll('[data-f],#f1,#s1').forEach(x=>x.addEventListener('input',()=>document.getElementById('bo').disabled=true));
+// ---- spreadsheet
+function fd2(){const m=document.getElementById('fm').files[0],f=document.getElementById('ff').files[0];if(!m||!f){alert('스프레드시트와 FASTA를 모두 고르세요.');return null}
+ const d=new FormData();d.append('metadata',m);d.append('fasta',f);d.append('default_clade',DC());d.append('note',NT());return d}
+async function chk(){const d=fd2();if(!d)return;document.getElementById('bi').disabled=true;
+ const r=await (await fetch('/api/private/'+W()+'/check',{method:'POST',body:d})).json();show(r,false);document.getElementById('bi').disabled=!(r.ok&&((r.new||0)+(r.update||0)>0))}
+async function imp(){const d=fd2();if(!d)return;if(!confirm('비공개 저장소에 올립니다 (바뀐 id는 새 버전으로 기록됩니다).'))return;
  const r=await (await fetch('/api/private/'+W()+'/import',{method:'POST',body:d})).json();
- if(r.error){show({error:r.error},false);return}show({ok:true,new:r.new,update:r.update,warnings:r.warnings,errors:[]},true);setTimeout(()=>location.reload(),1500)}
-async function del_(id){if(!confirm(id+' 을(를) 비공개 저장소에서 삭제할까요? (서열 파일도 지워집니다)'))return;
+ if(r.error){show({error:r.error},false);return}show(r,true);setTimeout(()=>location.reload(),1500)}
+async function del_(id){if(!confirm(id+' 을(를) 비공개 저장소에서 삭제할까요?\n(버전 이력은 남아 있어 나중에 복원할 수 있습니다)'))return;
  await fetch('/api/private/'+W()+'/'+encodeURIComponent(id),{method:'DELETE'});location.reload()}
+async function rest(id,v){if(!confirm(id+' 의 버전 '+v+' 을(를) 새 버전으로 복원할까요?'))return;
+ const r=await (await fetch('/api/private/'+W()+'/'+encodeURIComponent(id)+'/restore?version='+v,{method:'POST'})).json();
+ if(r.error){alert(r.error);return}location.reload()}
 function pqc(f){const x=document.getElementById('pf');x.action='/api/private/'+W()+'/qc?force='+f;runJob(x)}
 </script>
 {% endblock %}

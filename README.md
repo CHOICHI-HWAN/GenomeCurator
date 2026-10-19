@@ -23,7 +23,7 @@ It is for viruses only. Bacteria differ in record structure (multi-contig assemb
 8. **Jobs tab.** Every long task runs on the server with status, progress, log and error; it survives page changes and restarts.
 9. **Sequence QC.** Sequence statistics (length, N and ambiguity, GC) for every genome, and [Nextclade](https://github.com/nextstrain/nextclade) clade/lineage plus its quality score for viruses that have a Nextclade dataset (mpox, Ebola species, measles, dengue, ...). A clade that differs from the sources goes to the review screen instead of being overwritten; datasets are updated from a button.
 10. **Export for other programs.** Aligned `metadata.tsv` + `sequences.fasta` (+ manifest with checksums) from a tab, the CLI or an internal API, with a profile that matches the [Nextstrain mpox](https://github.com/nextstrain/mpox) workflow's input columns.
-11. **Private store.** Local, unpublished genomes are imported (dry run first) into a store separate from the public set and exported as *separate files* wired to the Nextstrain workflow's own `private_metadata` / `private_sequences`, so a final analysis dataset can combine both without mixing them.
+11. **Private store.** Local, unpublished genomes are uploaded one at a time or from a spreadsheet (template included; every upload is a version; dry run first) into a store separate from the public set and exported as *separate files* wired to the Nextstrain workflow's own `private_metadata` / `private_sequences`, so a final analysis dataset can combine both without mixing them.
 12. **Analysis with Apache Superset** (optional, read-only view of your data) and a **read-only static page** for GitHub Pages.
 
 ## Screenshots

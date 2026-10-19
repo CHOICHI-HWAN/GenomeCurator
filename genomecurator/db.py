@@ -64,8 +64,12 @@ CREATE TABLE IF NOT EXISTS job(
 CREATE INDEX IF NOT EXISTS ix_job_started ON job(started);
 -- the private store (private.py): local, unpublished genomes of a virus; never part of `genome` (public page, Superset, backups, checks)
 CREATE TABLE IF NOT EXISTS private_genome(
-  watch_id INTEGER, id TEXT, metadata_json TEXT, file_path TEXT, seq_md5 TEXT, length INTEGER, source_file TEXT, imported TEXT, updated TEXT,
+  watch_id INTEGER, id TEXT, metadata_json TEXT, file_path TEXT, seq_md5 TEXT, length INTEGER, source_file TEXT, imported TEXT, updated TEXT, version INTEGER DEFAULT 1,
   PRIMARY KEY(watch_id, id));
+-- every upload of a private genome is a version (what was uploaded, when, from which file, what changed); kept after a delete so it can be restored
+CREATE TABLE IF NOT EXISTS private_version(
+  watch_id INTEGER, id TEXT, version INTEGER, metadata_json TEXT, file_path TEXT, seq_md5 TEXT, length INTEGER, source_file TEXT, uploaded TEXT, note TEXT, change_json TEXT,
+  PRIMARY KEY(watch_id, id, version));
 -- sequence QC (qc.py): one row per accession and tool (seqstats, nextclade); derived data, safe to delete and recompute
 CREATE TABLE IF NOT EXISTS qc_result(
   accession TEXT, tool TEXT, watch_id INTEGER, status TEXT,  -- good|mediocre|bad|error
@@ -131,6 +135,9 @@ def migrate(con: sqlite3.Connection) -> None:
                 "clade", "lineage", "serotype", "outbreak"):
         if col not in have:
             con.execute(f"ALTER TABLE genome ADD COLUMN {col} TEXT")
+    pcols = {r[1] for r in con.execute("PRAGMA table_info(private_genome)")}
+    if pcols and "version" not in pcols:
+        con.execute("ALTER TABLE private_genome ADD COLUMN version INTEGER DEFAULT 1")
     wcols = {r[1] for r in con.execute("PRAGMA table_info(watchlist)")}
     if "pathoplexus_organism" not in wcols:
         con.execute("ALTER TABLE watchlist ADD COLUMN pathoplexus_organism TEXT")

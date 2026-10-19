@@ -23,6 +23,7 @@ DIRECT = [
     ("runtime", "httpx", "NCBI·BV-BRC·Pathoplexus 호출(재시도·시간제한) / HTTP client for all source requests"),
     ("runtime", "apscheduler", "매일 확인·스키마 점검 스케줄러 / Scheduler for the daily checks"),
     ("runtime", "python-multipart", "웹 폼(승인·적용 등) 해석 / Parses web form posts"),
+    ("runtime", "openpyxl", "비공개 유전체 스프레드시트(.xlsx) 업로드·템플릿 / Spreadsheet (.xlsx) upload and template for private genomes"),
     ("dev", "pytest", "테스트 / Test runner"),
     ("demo", "pillow", "README GIF 조립 / Assembles the README GIFs"),
     ("demo", "websocket-client", "헤드리스 Chrome 조종(DevTools 프로토콜) / Talks to headless Chrome over the DevTools protocol"),

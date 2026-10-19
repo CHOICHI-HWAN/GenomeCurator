@@ -16,6 +16,7 @@ Versions are the ones **this project was tested with**; the allowed ranges live 
 | `httpx` | 0.28.1 | BSD-3-Clause | NCBI·BV-BRC·Pathoplexus 호출(재시도·시간제한) / HTTP client for all source requests |
 | `apscheduler` | 3.11.3 | MIT | 매일 확인·스키마 점검 스케줄러 / Scheduler for the daily checks |
 | `python-multipart` | 0.0.32 | Apache-2.0 | 웹 폼(승인·적용 등) 해석 / Parses web form posts |
+| `openpyxl` | 3.1.5 | MIT | 비공개 유전체 스프레드시트(.xlsx) 업로드·템플릿 / Spreadsheet (.xlsx) upload and template for private genomes |
 
 ## 개발·테스트 / Development (`.[dev]`)
 
@@ -69,7 +70,7 @@ The data come from public services; check each service's data-use policy before 
 
 ## 간접 의존성 (실행) / Transitive runtime dependencies
 
-<details><summary>실행에 함께 설치되는 패키지 16개 / 16 packages installed with the runtime libraries</summary>
+<details><summary>실행에 함께 설치되는 패키지 17개 / 17 packages installed with the runtime libraries</summary>
 
 | 패키지 / Package | 버전 / Version | 라이선스 / Licence |
 |---|---|---|
@@ -78,6 +79,7 @@ The data come from public services; check each service's data-use policy before 
 | `anyio` | 4.15.1 | MIT |
 | `certifi` | 2025.4.26 | MPL-2.0 |
 | `click` | 8.5.0 | BSD-3-Clause |
+| `et-xmlfile` | 2.0.0 | MIT |
 | `h11` | 0.16.0 | MIT |
 | `httpcore` | 1.0.9 | BSD-3-Clause |
 | `idna` | 3.10 | BSD License |

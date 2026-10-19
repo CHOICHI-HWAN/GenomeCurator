@@ -23,7 +23,7 @@
 8. **작업 탭.** 오래 걸리는 작업은 서버에서 돌고 상태·진행률·로그·오류가 남으며, 다른 메뉴로 가거나 서버를 재시작해도 기록이 유지됩니다.
 9. **서열 QC.** 모든 유전체의 서열 통계(길이, N·모호 염기, GC)와, Nextclade 데이터셋이 있는 바이러스(mpox, 에볼라 종들, 홍역, 뎅기 등)는 [Nextclade](https://github.com/nextstrain/nextclade)의 clade/lineage와 품질 점수. 소스와 다른 clade는 덮어쓰지 않고 검토 화면으로 보내며, 데이터셋은 버튼으로 업데이트합니다.
 10. **다른 프로그램으로 내보내기.** 탭·CLI·내부 API에서 정렬된 `metadata.tsv` + `sequences.fasta`(체크섬이 든 manifest 포함)를 만들며, [Nextstrain mpox](https://github.com/nextstrain/mpox) 워크플로의 입력 열에 맞춘 형식이 있습니다.
-11. **비공개 저장소.** 공개되지 않은 로컬 유전체를 공개 세트와 분리된 저장소에 가져오고(dry-run 먼저), Nextstrain 워크플로 자체의 `private_metadata` / `private_sequences`에 연결되는 *별도 파일*로 내보내므로, 둘을 섞지 않고 최종 분석용 데이터세트를 만들 수 있습니다.
+11. **비공개 저장소.** 공개되지 않은 로컬 유전체를 하나씩 또는 스프레드시트(템플릿 제공)로 올려(올릴 때마다 버전 기록, dry-run 먼저) 공개 세트와 분리된 저장소에 두고, Nextstrain 워크플로 자체의 `private_metadata` / `private_sequences`에 연결되는 *별도 파일*로 내보내므로, 둘을 섞지 않고 최종 분석용 데이터세트를 만들 수 있습니다.
 12. **Apache Superset 분석**(선택, 읽기 전용)과 GitHub Pages용 **읽기 전용 정적 페이지**.
 
 ## 화면

@@ -1143,8 +1143,10 @@ def test_private_store_is_separate_and_exported_only_on_request(tmp_path, monkey
     files = _priv_files([{"PPX_accession": "LAB_001", "strain": "s1", "date": "2024-03-05", "country": "Uganda", "division": "Kampala", "host": "Homo sapiens"},
                          {"PPX_accession": "LAB_002", "strain": "s2", "date": "2024", "country": "Germany", "clade": "IIb"}],
                         {"LAB_001": "ACGT" * 50, "LAB_002": "ACGT" * 40 + "N" * 8})
-    assert private.import_texts(1, *files, source_name="batch1.tsv") == {"new": 2, "update": 0, "warnings": private.check(1, *files)["warnings"]}
-    assert private.import_texts(1, *files)["update"] == 2                                        # same ids again: updated, not duplicated
+    r0 = private.import_texts(1, *files, source_name="batch1.tsv")
+    assert (r0["new"], r0["update"], r0["unchanged"]) == (2, 0, 2 - 2) and r0["versions"]["LAB_001"] == {"status": "new", "version": 1}
+    r1 = private.import_texts(1, *files)
+    assert (r1["new"], r1["update"], r1["unchanged"]) == (0, 0, 2)                              # the same content again: nothing changes, no new version
     # nothing leaks into the public side
     con = connect()
     assert con.execute("SELECT COUNT(*) FROM genome WHERE accession LIKE 'LAB_%'").fetchone()[0] == 0
@@ -1227,13 +1229,14 @@ def test_backup_keeps_private_data_out_unless_asked(tmp_path, monkeypatch):
     assert plain["contains_private"] is False and "private_genome" not in plain["tables"]
     assert not [n for n in zipfile.ZipFile(tmp_path / "plain.zip").namelist() if n.startswith("private/")]
     full = backup.export_backup(tmp_path / "full.zip", with_private=True)
-    assert full["contains_private"] is True and full["tables"]["private_genome"] == 1 and full["private_files"] == 1
+    assert full["contains_private"] is True and full["tables"]["private_genome"] == 1 and full["tables"]["private_version"] == 1 and full["private_files"] == 2     # current file + its version copy
     dst = tmp_path / "dst"
     dst.mkdir()
     monkeypatch.setattr(config, "DATA_DIR", dst)
     monkeypatch.setattr(config, "DB_PATH", dst / "g.db")
     backup.restore_backup(tmp_path / "full.zip")
     assert [r["id"] for r in private.list_rows(1)] == ["LAB_B1"] and (dst / "private" / "Mpox" / "LAB_B1.fna").exists()
+    assert [h["version"] for h in private.history(1, "LAB_B1")] == [1] and (dst / "private" / "Mpox" / "_versions" / "LAB_B1.v1.fna").exists()
 
 
 def test_check_drops_genomes_below_the_coverage_floor(tmp_path, monkeypatch):
@@ -1269,3 +1272,125 @@ def test_check_drops_genomes_below_the_coverage_floor(tmp_path, monkeypatch):
     # off switch
     monkeypatch.setattr(config, "MIN_COVERAGE_PCT", 0.0)
     assert curate._below_coverage(connect(), 1, {"ncbi": ncbi}) == {}
+
+
+def _xlsx(rows, cols=("PPX_accession", "strain", "date", "country", "clade")):
+    import io
+    from openpyxl import Workbook
+    wb = Workbook()
+    ws = wb.active
+    ws.title = "genomes"
+    ws.append(list(cols))
+    for r in rows:
+        ws.append([r.get(c, "") for c in cols])
+    ws.append([None] * len(cols))                       # an empty row at the end is ignored
+    wb.create_sheet("예시").append(["not", "read"])
+    b = io.BytesIO()
+    wb.save(b)
+    return b.getvalue()
+
+
+def test_private_spreadsheet_template_and_xlsx_upload(tmp_path, monkeypatch):
+    import datetime
+    from genomecurator import private
+    _qc_env(tmp_path, monkeypatch)
+    from openpyxl import load_workbook
+    import io
+    wb = load_workbook(io.BytesIO(private.template_xlsx("Mpox", "Orthopoxvirus monkeypox")))
+    assert wb.sheetnames == ["genomes", "열 설명", "예시"]
+    assert [c.value for c in wb["genomes"][1]] == [c[0] for c in private.COLUMNS]
+    assert wb["genomes"].data_validations.dataValidation and "Ib" in wb["genomes"].data_validations.dataValidation[0].formula1      # clade drop-down for mpox
+    assert [r[0].value for r in wb["열 설명"].iter_rows(min_row=2, max_row=4)] == ["PPX_accession", "strain", "date"]
+    # a filled spreadsheet: real Excel dates become ISO text, numbers stay readable, the example / explanation sheets are not read
+    data = _xlsx([{"PPX_accession": "XL_1", "strain": "s1", "date": datetime.date(2025, 3, 14), "country": "Uganda"},
+                  {"PPX_accession": "XL_2", "strain": "s2", "date": "2025-04", "country": "Kenya", "clade": "IIb"}])
+    fa = ">XL_1\n" + "ACGT" * 30 + "\n>XL_2\n" + "ACGT" * 20 + "\n"
+    rep = private.check(1, data, fa, defaults={"clade": "Ib"}, filename="batch.xlsx")
+    assert rep["ok"] and rep["new"] == 2
+    rows = {r["_id"]: r for r in rep["rows"]}
+    assert rows["XL_1"]["date"] == "2025-03-14" and rows["XL_1"]["clade"] == "Ib"             # blank clade -> the batch default
+    assert rows["XL_2"]["date"] == "2025-04-XX" and rows["XL_2"]["clade"] == "IIb"            # a supplied clade is never overwritten by the default
+    assert private.import_texts(1, data, fa, "batch.xlsx", defaults={"clade": "Ib"})["new"] == 2
+    csvtext = "PPX_accession,strain,date,country\nCS_1,s,2025-01-02,Peru\n"                  # comma separated text works too
+    assert private.check(1, csvtext, ">CS_1\n" + "ACGT" * 10 + "\n")["ok"]
+
+
+def test_private_one_by_one_and_versions(tmp_path, monkeypatch):
+    import pytest
+    from genomecurator import private
+    _qc_env(tmp_path, monkeypatch)
+    fields = {"PPX_accession": "ONE_1", "strain": "a", "date": "2025-05-06", "country": "Uganda", "division": "Kampala"}
+    seq = "ACGT" * 40
+    assert private.one(1, fields, seq, dry_run=True)["new"] == 1 and private.list_rows(1) == []     # a check stores nothing
+    r = private.one(1, fields, ">ONE_1 pasted\n" + seq + "\n", note="first")                         # FASTA text or a bare sequence
+    assert r["new"] == 1 and r["versions"]["ONE_1"] == {"status": "new", "version": 1}
+    assert private.one(1, fields, seq)["unchanged"] == 1 and len(private.history(1, "ONE_1")) == 1  # same content: no new version
+    r2 = private.one(1, {**fields, "division": "Wakiso", "host": "Homo sapiens"}, seq, note="fix place")
+    assert r2["update"] == 1 and r2["versions"]["ONE_1"]["version"] == 2
+    r3 = private.one(1, {**fields, "division": "Wakiso", "host": "Homo sapiens"}, "ACGT" * 41, note="resequenced")
+    assert r3["versions"]["ONE_1"]["version"] == 3
+    h = private.history(1, "ONE_1")
+    assert [x["version"] for x in h] == [3, 2, 1] and [x["current"] for x in h] == [True, False, False]
+    assert h[1]["changes"] == ["division", "host"] and not h[1]["sequence_changed"] and h[1]["note"] == "fix place"
+    assert h[0]["sequence_changed"] and h[2]["new"]
+    row = private.list_rows(1)[0]
+    assert row["version"] == 3 and row["length"] == 164
+    files = sorted(p.name for p in (tmp_path / "private" / "Mpox" / "_versions").iterdir())
+    assert files == ["ONE_1.v1.fna", "ONE_1.v3.fna"]                                                 # v2 shares v1's sequence, v3 has its own
+    # restore: the old version comes back as a NEW version, history is never rewritten
+    rr = private.restore(1, "ONE_1", 1)
+    assert rr["version"] == 4 and private.list_rows(1)[0]["length"] == 160
+    assert [x["version"] for x in private.history(1, "ONE_1")][:2] == [4, 3] and private.history(1, "ONE_1")[0]["note"] == "버전 1 복원"
+    # delete keeps the history; the genome can be brought back
+    assert private.delete(1, "ONE_1") and private.list_rows(1) == []
+    hh = private.history(1, "ONE_1")
+    assert hh[0]["deleted"] and hh[0]["version"] == 5
+    assert private.restore(1, "ONE_1", 3)["version"] == 6 and private.list_rows(1)[0]["length"] == 164
+    with pytest.raises(ValueError):
+        private.one(1, fields, ">a\nACGT\n>b\nACGT\n")                                              # one sequence only
+    with pytest.raises(ValueError):
+        private.restore(1, "ONE_1", 99)
+
+
+def test_private_import_respects_the_coverage_floor(tmp_path, monkeypatch):
+    from genomecurator import private
+    _qc_env(tmp_path, monkeypatch)
+    from genomecurator.db import connect
+    con = connect()
+    con.execute("UPDATE genome SET refseq_accessions='NC_1', genome_length=1000 WHERE accession='A1'")      # a reference of 1,000 bp
+    con.commit()
+    con.close()
+    short = private.one(1, {"PPX_accession": "SHORT_1", "strain": "s", "date": "2025", "country": "Uganda"}, "ACGT" * 150, dry_run=True)   # 600 bp = 60%
+    assert not short["ok"] and any("커버리지 하한" in e and "60.0%" in e for e in short["errors"])
+    good = private.one(1, {"PPX_accession": "GOOD_1", "strain": "s", "date": "2025", "country": "Uganda"}, "ACGT" * 230, dry_run=True)      # 920 bp
+    assert good["ok"]
+    monkeypatch.setattr(__import__("genomecurator.config", fromlist=["x"]), "MIN_COVERAGE_PCT", 0.0)
+    assert private.one(1, {"PPX_accession": "SHORT_1", "strain": "s", "date": "2025", "country": "Uganda"}, "ACGT" * 150, dry_run=True)["ok"]
+
+
+def test_private_api_one_template_and_history(tmp_path, monkeypatch):
+    from fastapi.testclient import TestClient
+    from genomecurator import web
+    _qc_env(tmp_path, monkeypatch)
+    c = TestClient(web.create_app(scheduler=False))
+    t = c.get("/api/private/template.xlsx?watch=1")
+    assert t.status_code == 200 and t.content[:2] == b"PK" and "spreadsheetml" in t.headers["content-type"]
+    assert c.get("/api/private/template.tsv").text.startswith("PPX_accession\tstrain\tdate")
+    form = {"PPX_accession": "API_1", "strain": "s", "date": "2025-02", "country": "Brazil", "sequence": "ACGT" * 30, "note": "via form", "default_clade": "Ib"}
+    r = c.post("/api/private/1/one?dry_run=1", data=form).json()
+    assert r["ok"] and r["new"] == 1 and c.get("/api/private/1").json() == []
+    r = c.post("/api/private/1/one", data=form).json()
+    assert r["new"] == 1 and r["versions"]["API_1"]["version"] == 1
+    assert c.get("/api/private/1").json()[0]["clade"] == "Ib" and c.get("/api/private/1").json()[0]["version"] == 1
+    r = c.post("/api/private/1/one", data={**form, "country": "Peru"}).json()
+    assert r["update"] == 1
+    h = c.get("/api/private/1/history?id=API_1").json()
+    assert [x["version"] for x in h] == [2, 1] and h[0]["changes"] == ["country"]
+    assert c.post("/api/private/1/API_1/restore?version=1").json()["version"] == 3
+    assert c.post("/api/private/1/API_1/restore?version=99").status_code == 400
+    assert c.post("/api/private/1/one", data={"strain": "x", "sequence": "ACGT"}).status_code == 400                # no id
+    # a spreadsheet through the API
+    data = _xlsx([{"PPX_accession": "API_2", "strain": "s", "date": "2025", "country": "Peru"}])
+    r = c.post("/api/private/1/check", files={"metadata": ("b.xlsx", data), "fasta": ("f.fa", ">API_2\n" + "ACGT" * 20 + "\n")}, data={"default_clade": "Ib"}).json()
+    assert r["ok"] and r["new"] == 1
+    assert "비공개" in c.get("/private?watch=1").text and "API_1" in c.get("/private?watch=1").text

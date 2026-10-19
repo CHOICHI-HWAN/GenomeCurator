@@ -534,44 +534,98 @@ def create_app(scheduler: bool = True) -> FastAPI:
     def private_page(request: Request, watch: int = 0):
         watches = _rows("SELECT id, name FROM watchlist ORDER BY name")
         wid = watch or (watches[0]["id"] if watches else 0)
-        return render(request, "private.html", nav="priv", watches=watches, wid=wid, rows=private.list_rows(wid) if wid else [])
+        tx = _rows("SELECT taxon FROM watchlist WHERE id=?", wid)
+        return render(request, "private.html", nav="priv", watches=watches, wid=wid, rows=private.list_rows(wid) if wid else [],
+                      hist=private.history(wid) if wid else [], taxon=(tx[0]["taxon"] if tx else ""), clades=private.CLADE_CHOICES.get((tx[0]["taxon"] if tx else "").lower(), []),
+                      columns=private.COLUMNS, min_cov=config.MIN_COVERAGE_PCT)
+
+    async def _private_form(request: Request):
+        form = await request.form()
+        return form
 
     async def _private_files(request: Request):
+        """-> (metadata bytes, fasta text, filename, defaults, note) from the multipart form; metadata may be .xlsx / .tsv / .csv."""
         form = await request.form()
         m, f = form.get("metadata"), form.get("fasta")
         if m is None or f is None or not hasattr(m, "read"):
-            return None, None, ""
-        return (await m.read()).decode("utf-8", "replace"), (await f.read()).decode("utf-8", "replace"), getattr(m, "filename", "") or ""
+            return None, None, "", {}, ""
+        defaults = {"clade": str(form.get("default_clade") or "").strip()}
+        return await m.read(), (await f.read()).decode("utf-8", "replace"), getattr(m, "filename", "") or "", defaults, str(form.get("note") or "").strip()
+
+    @app.get("/api/private/template.xlsx")
+    def api_private_template(watch: int = 0):
+        w = _rows("SELECT name, taxon FROM watchlist WHERE id=?", watch)
+        try:
+            data = private.template_xlsx(w[0]["name"] if w else None, w[0]["taxon"] if w else None)
+        except ValueError as e:
+            return JSONResponse({"error": str(e)}, 500)
+        return Response(data, media_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+                        headers={"Content-Disposition": 'attachment; filename="private_genomes_template.xlsx"'})
+
+    @app.get("/api/private/template.tsv")
+    def api_private_template_tsv():
+        return Response(private.template_tsv(), media_type="text/tab-separated-values; charset=utf-8",
+                        headers={"Content-Disposition": 'attachment; filename="private_genomes_template.tsv"'})
 
     @app.post("/api/private/{watch}/check")
     async def api_private_check(request: Request, watch: int):
-        """Dry run of an import: multipart fields `metadata` (TSV) and `fasta`. Nothing is stored."""
+        """Dry run of an upload: multipart `metadata` (.xlsx / .tsv / .csv) and `fasta`, optional `default_clade`. Nothing is stored."""
         if not _same_origin(request):
             return JSONResponse({"error": "cross-site request refused"}, 403)
-        mt, fa, _ = await _private_files(request)
+        mt, fa, name, dflt, _ = await _private_files(request)
         if mt is None:
             return JSONResponse({"error": "metadata와 fasta 파일이 필요합니다."}, 400)
         try:
-            rep = private.check(watch, mt, fa)
+            rep = private.check(watch, mt, fa, None, dflt, name)
         except ValueError as e:
-            return JSONResponse({"error": str(e)}, 404)
-        return {k: rep[k] for k in ("ok", "n", "new", "update", "id_column", "errors", "warnings")}
+            return JSONResponse({"error": str(e)}, 404 if "찾을 수 없" in str(e) else 400)
+        return {k: rep[k] for k in ("ok", "n", "new", "update", "unchanged", "id_column", "errors", "warnings")}
 
     @app.post("/api/private/{watch}/import")
     async def api_private_import(request: Request, watch: int):
         if not _same_origin(request):
             return JSONResponse({"error": "cross-site request refused"}, 403)
-        mt, fa, name = await _private_files(request)
+        mt, fa, name, dflt, note = await _private_files(request)
         if mt is None:
             return JSONResponse({"error": "metadata와 fasta 파일이 필요합니다."}, 400)
         try:
-            return private.import_texts(watch, mt, fa, name)
+            return private.import_texts(watch, mt, fa, name, None, dflt, note)
+        except ValueError as e:
+            return JSONResponse({"error": str(e)}, 400)
+
+    @app.post("/api/private/{watch}/one")
+    async def api_private_one(request: Request, watch: int, dry_run: int = 0):
+        """One genome: form fields (PPX_accession, strain, date, country, ...) plus `sequence` (text) or `fasta` (file). dry_run=1 only checks."""
+        if not _same_origin(request):
+            return JSONResponse({"error": "cross-site request refused"}, 403)
+        form = await request.form()
+        seq = str(form.get("sequence") or "")
+        f = form.get("fasta")
+        if f is not None and hasattr(f, "read"):
+            seq = (await f.read()).decode("utf-8", "replace") or seq
+        skip = {"sequence", "fasta", "default_clade", "note"}
+        fields = {k: str(v) for k, v in form.items() if k not in skip and not hasattr(v, "read")}
+        try:
+            return private.one(watch, fields, seq, "(하나씩 입력)", bool(dry_run), {"clade": str(form.get("default_clade") or "").strip()}, str(form.get("note") or "").strip())
         except ValueError as e:
             return JSONResponse({"error": str(e)}, 400)
 
     @app.get("/api/private/{watch}")
     def api_private_list(watch: int):
         return private.list_rows(watch)
+
+    @app.get("/api/private/{watch}/history")
+    def api_private_history(watch: int, id: str = ""):
+        return private.history(watch, id or None)
+
+    @app.post("/api/private/{watch}/{pid}/restore")
+    def api_private_restore(request: Request, watch: int, pid: str, version: int):
+        if not _same_origin(request):
+            return JSONResponse({"error": "cross-site request refused"}, 403)
+        try:
+            return private.restore(watch, pid, version)
+        except ValueError as e:
+            return JSONResponse({"error": str(e)}, 400)
 
     @app.delete("/api/private/{watch}/{pid}")
     def api_private_delete(request: Request, watch: int, pid: str):
