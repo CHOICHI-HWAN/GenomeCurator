@@ -13,25 +13,26 @@
   <label>메모(이 업로드 버전에 남김)<br><input id="nt" style="width:260px" placeholder="예: 2025-10 캄팔라 배치"></label>
  </div>
  <div style="margin-top:12px;display:flex;gap:8px;flex-wrap:wrap">
-  <button type="button" id="tab1" class="p" onclick="tab(1)">하나씩 올리기</button>
-  <button type="button" id="tab2" onclick="tab(2)">스프레드시트로 한꺼번에</button>
+  <button type="button" id="tab1" class="p" onclick="tab(1)">표로 입력 (엑셀처럼)</button>
+  <button type="button" id="tab2" onclick="tab(2)">스프레드시트 파일(.xlsx)로 올리기</button>
  </div>
 
  <div id="p1" style="margin-top:12px">
-  <div style="display:grid;grid-template-columns:repeat(auto-fill,minmax(210px,1fr));gap:8px 14px">
-  {% for name, required, meaning, example, _ in columns if name not in ('date_released',) %}
-   <label title="{{ meaning }}">{{ name }}{% if required %} <b style="color:var(--bad)">*</b>{% endif %}<br>
-    {% if name == 'clade' and clades %}<select data-f="{{ name }}"><option value="">(기본값 사용)</option>{% for c in clades %}<option>{{ c }}</option>{% endfor %}</select>
-    {% else %}<input data-f="{{ name }}" placeholder="{{ example }}" style="width:100%">{% endif %}</label>
-  {% endfor %}
-  </div>
-  <div style="margin-top:10px;display:flex;gap:14px;flex-wrap:wrap;align-items:start">
-   <label>서열 파일(FASTA) <input type="file" id="f1" accept=".fasta,.fa,.fna,.txt"></label>
-   <label style="flex:1;min-width:280px">또는 서열 붙여넣기<br><textarea id="s1" rows="3" style="width:100%;font:12px monospace" placeholder="ACGT…  (FASTA 형식으로 붙여넣어도 됩니다)"></textarea></label>
-  </div>
-  <div style="margin-top:8px;display:flex;gap:8px"><button type="button" onclick="one(1)">검사 (dry-run)</button><button type="button" class="p" id="bo" onclick="one(0)" disabled>올리기</button></div>
+  <div class="mut" style="font-size:12.5px;margin-bottom:6px">한 줄이 유전체 하나입니다. 한 건만 올리려면 한 줄만 쓰세요. <b>엑셀·구글 시트에서 복사해 셀에 붙여넣으면</b> 여러 줄·여러 칸이 한꺼번에 들어갑니다.
+   서열은 줄마다 <b>서열</b> 버튼으로 붙여넣거나 파일을 고르고, 여러 건이면 <b>FASTA로 서열 채우기</b>로 id가 같은 줄에 한꺼번에 넣습니다. 입력 중인 내용은 이 브라우저에 임시 저장됩니다.</div>
+  <div style="display:flex;gap:8px;flex-wrap:wrap;margin-bottom:8px">
+   <button type="button" onclick="gAdd()">+ 줄 추가</button><button type="button" onclick="gCol()">+ 열 추가</button>
+   <button type="button" onclick="document.getElementById('gf').click()">FASTA로 서열 채우기</button><input type="file" id="gf" accept=".fasta,.fa,.fna,.txt" style="display:none" onchange="gFasta(this)">
+   <button type="button" onclick="gClear()">모두 지우기</button>
+   <span style="flex:1"></span><button type="button" onclick="gSubmit(1)">검사 (dry-run)</button><button type="button" class="p" id="bo" onclick="gSubmit(0)" disabled>올리기</button></div>
+  <div style="overflow:auto;max-height:55vh;border:1px solid var(--bd);border-radius:4px"><table id="grid" style="border:0;font-size:12.5px"></table></div>
  </div>
-
+ <div id="sqm" style="display:none;position:fixed;inset:0;background:rgba(10,15,20,.55);z-index:100;align-items:center;justify-content:center"><div style="width:min(720px,94vw);background:var(--card);border:1px solid var(--bd);border-radius:6px;padding:16px 20px">
+  <b id="sqt">서열</b>
+  <div class="mut" style="font-size:12.5px;margin:4px 0">서열을 붙여넣거나(FASTA 형식도 됩니다) 파일을 고르세요. 헤더가 있고 id 칸이 비어 있으면 헤더가 id가 됩니다.</div>
+  <textarea id="sqa" rows="9" style="width:100%;font:12px monospace" placeholder="ACGT…"></textarea>
+  <div style="display:flex;gap:8px;align-items:center;margin-top:8px"><input type="file" id="sqf" accept=".fasta,.fa,.fna,.txt"><span id="sqn" class="mut"></span><span style="flex:1"></span>
+   <button type="button" onclick="document.getElementById('sqm').style.display='none'">취소</button><button type="button" class="p" onclick="sqOk()">확인</button></div></div></div>
  <div id="p2" style="margin-top:12px;display:none">
   <div style="margin-bottom:8px">① 템플릿을 받아 채웁니다: <a href="/api/private/template.xlsx?watch={{ wid }}"><b>스프레드시트(.xlsx) 템플릿</b></a> · <a href="/api/private/template.tsv">TSV 머리글</a>
    <span class="mut">(시트 <code>genomes</code>에 한 줄에 유전체 하나, <code>열 설명</code> 시트에 열별 설명, 필수 열은 노란색)</span></div>
@@ -77,15 +78,72 @@ function show(r,done){const el=document.getElementById('rep');let h='';
  if((r.errors||[]).length)h+='<div style="color:var(--bad)"><b>오류 (고쳐야 올릴 수 있음)</b><ul>'+r.errors.slice(0,30).map(x=>'<li>'+esc(x)+'</li>').join('')+'</ul></div>';
  if((r.warnings||[]).length)h+='<details><summary>경고 '+r.warnings.length+'건 (자동으로 맞췄거나 비워 둔 것)</summary><ul>'+r.warnings.slice(0,200).map(x=>'<li>'+esc(x)+'</li>').join('')+'</ul></details>';
  el.innerHTML=h}
-// ---- one genome
-function fd1(){const d=new FormData();document.querySelectorAll('[data-f]').forEach(i=>{if(i.value.trim())d.append(i.dataset.f,i.value.trim())});
- const f=document.getElementById('f1').files[0];if(f)d.append('fasta',f);d.append('sequence',document.getElementById('s1').value);d.append('default_clade',DC());d.append('note',NT());return d}
-async function one(dry){const d=fd1();const id=d.get('PPX_accession');if(!id){alert('PPX_accession(id)를 입력하세요.');return}
- if(!document.getElementById('f1').files[0]&&!document.getElementById('s1').value.trim()){alert('서열 파일을 고르거나 서열을 붙여넣으세요.');return}
- const r=await (await fetch('/api/private/'+W()+'/one?dry_run='+dry,{method:'POST',body:d})).json();
- if(dry){show(r,false);document.getElementById('bo').disabled=!(r.ok&&((r.new||0)+(r.update||0)>0));return}
- show(r,true);if(!r.error)setTimeout(()=>location.reload(),1200)}
-document.querySelectorAll('[data-f],#f1,#s1').forEach(x=>x.addEventListener('input',()=>document.getElementById('bo').disabled=true));
+// ---- grid (one genome per line; paste from a spreadsheet)
+const BASE=[{% for name, required, meaning, example, _ in columns if name != 'date_released' %}{n:{{ name|tojson }},req:{{ 'true' if required else 'false' }},tip:{{ meaning|tojson }},ex:{{ example|tojson }}},{% endfor %}];
+const CLADES={{ clades|tojson }};
+const KEY='gcPrivGrid_'+W();let G={cols:BASE.map(c=>c.n),rows:[{}]};
+try{const d=JSON.parse(localStorage.getItem(KEY)||'null');if(d&&d.cols&&d.rows&&d.rows.length)G=d}catch(e){}
+const save=()=>{try{localStorage.setItem(KEY,JSON.stringify(G))}catch(e){}};
+const meta=n=>BASE.find(c=>c.n===n)||{n,req:false,tip:'직접 추가한 열 (Nextstrain에 그대로 전달됩니다)',ex:''};
+const seqLen=r=>r._seq?r._seq.length:0;
+function gRender(focus){const t=document.getElementById('grid');let h='<thead><tr><th style="position:sticky;top:0;background:var(--th)">#</th>'+G.cols.map(c=>{const m=meta(c);return '<th style="position:sticky;top:0;background:var(--th);white-space:nowrap" title="'+esc(m.tip)+'">'+esc(c)+(m.req?' <span style="color:var(--bad)">*</span>':'')+'</th>'}).join('')+'<th style="position:sticky;top:0;background:var(--th)">서열</th><th style="position:sticky;top:0;background:var(--th)"></th></tr></thead><tbody>';
+ G.rows.forEach((r,i)=>{h+='<tr data-r="'+i+'"><td class="mut">'+(i+1)+'</td>'+G.cols.map((c,j)=>{const v=r[c]||'';
+  const inp=(c==='clade'&&CLADES.length)?'<select data-r="'+i+'" data-c="'+esc(c)+'" style="width:100%"><option value=""></option>'+CLADES.map(x=>'<option '+(x===v?'selected':'')+'>'+x+'</option>').join('')+'</select>'
+   :'<input data-r="'+i+'" data-c="'+esc(c)+'" value="'+esc(v).replace(/"/g,'&quot;')+'" placeholder="'+(i===0?esc(meta(c).ex):'')+'" style="width:'+(c==='strain'||c==='institution'||c==='PPX_accession'?'150px':'110px')+';height:26px">';
+  return '<td style="padding:2px">'+inp+'</td>'}).join('')+
+  '<td style="padding:2px;white-space:nowrap"><button type="button" onclick="sqOpen('+i+')" style="height:26px">'+(seqLen(r)?'✔ '+seqLen(r).toLocaleString()+' bp':'붙여넣기/파일')+'</button></td><td style="padding:2px"><button type="button" onclick="gDel('+i+')" style="height:26px" title="이 줄 삭제">✕</button></td></tr>'});
+ t.innerHTML=h+'</tbody>';if(focus){const e=t.querySelector('[data-r="'+focus[0]+'"][data-c="'+focus[1]+'"]');if(e)e.focus()}}
+function gAdd(){G.rows.push({});save();gRender([G.rows.length-1,G.cols[0]])}
+function gDel(i){G.rows.splice(i,1);if(!G.rows.length)G.rows=[{}];save();gRender()}
+function gClear(){if(!confirm('입력한 내용을 모두 지울까요?'))return;G.rows=[{}];save();gRender();document.getElementById('rep').innerHTML=''}
+function gCol(){const n=(prompt('추가할 열 이름 (예: sample_type)')||'').trim();if(!n)return;if(G.cols.includes(n)){alert('이미 있는 열입니다.');return}G.cols.push(n);save();gRender()}
+document.getElementById('grid').addEventListener('input',e=>{const t=e.target,i=+t.dataset.r,c=t.dataset.c;if(c===undefined)return;G.rows[i][c]=t.value;save();document.getElementById('bo').disabled=true});
+document.getElementById('grid').addEventListener('keydown',e=>{const t=e.target;if(t.dataset.c===undefined||e.key!=='Enter')return;e.preventDefault();
+ const i=+t.dataset.r,j=G.cols.indexOf(t.dataset.c);if(e.shiftKey){if(i>0)document.querySelector('[data-r="'+(i-1)+'"][data-c="'+t.dataset.c+'"]').focus();return}
+ if(i===G.rows.length-1){G.rows.push({});save();gRender([i+1,t.dataset.c])}else{document.querySelector('[data-r="'+(i+1)+'"][data-c="'+t.dataset.c+'"]').focus()}});
+// paste from a spreadsheet: rows on lines, cells on tabs, starting at the cell that has the focus
+document.getElementById('grid').addEventListener('paste',e=>{const t=e.target,c=t.dataset.c;if(c===undefined)return;const tx=(e.clipboardData||window.clipboardData).getData('text');
+ if(!/[\t\n]/.test(tx.replace(/\n$/,'')))return;                       // a single value pastes normally
+ e.preventDefault();const lines=tx.replace(/\r/g,'').replace(/\n$/,'').split('\n').map(l=>l.split('\t'));const i0=+t.dataset.r,j0=G.cols.indexOf(c);
+ lines.forEach((cells,di)=>{const i=i0+di;while(G.rows.length<=i)G.rows.push({});cells.forEach((v,dj)=>{const j=j0+dj;if(j<G.cols.length)G.rows[i][G.cols[j]]=v.trim()})});
+ save();gRender();document.getElementById('bo').disabled=true});
+// sequences
+let sqRow=-1;
+function sqOpen(i){sqRow=i;document.getElementById('sqt').textContent='서열 — '+(G.rows[i].PPX_accession||('줄 '+(i+1)));document.getElementById('sqa').value=G.rows[i]._seq||'';document.getElementById('sqf').value='';document.getElementById('sqn').textContent='';document.getElementById('sqm').style.display='flex'}
+document.getElementById('sqf').addEventListener('change',async e=>{const f=e.target.files[0];if(f){document.getElementById('sqa').value=await f.text()}});
+document.getElementById('sqa').addEventListener('input',e=>{const r=parseFa(e.target.value);document.getElementById('sqn').textContent=r.length?r[0].s.length.toLocaleString()+' bp':''});
+function parseFa(t){t=t.trim();if(!t)return[];if(!t.startsWith('>'))return[{id:'',s:t.replace(/\s+/g,'').toUpperCase()}];const out=[];let cur=null;
+ t.split(/\r?\n/).forEach(l=>{if(l.startsWith('>')){cur={id:(l.slice(1).trim().split(/\s+/)[0])||'',s:''};out.push(cur)}else if(cur)cur.s+=l.trim().toUpperCase()});return out}
+function sqOk(){const r=parseFa(document.getElementById('sqa').value);const row=G.rows[sqRow];
+ if(r.length>1){alert('한 줄에는 서열 한 개만 넣을 수 있습니다. 여러 개는 "FASTA로 서열 채우기"를 쓰세요.');return}
+ if(!r.length){delete row._seq}else{row._seq=r[0].s;if(r[0].id&&!row.PPX_accession)row.PPX_accession=r[0].id}
+ document.getElementById('sqm').style.display='none';save();gRender();document.getElementById('bo').disabled=true}
+async function gFasta(inp){const f=inp.files[0];inp.value='';if(!f)return;const recs=parseFa(await f.text()).filter(x=>x.id);if(!recs.length){alert('id가 있는 FASTA 서열을 찾지 못했습니다.');return}
+ let filled=0,added=0;recs.forEach(x=>{let row=G.rows.find(r=>(r.PPX_accession||'').trim()===x.id);
+  if(!row){row=G.rows.find(r=>!r.PPX_accession&&!r._seq&&!Object.values(r).some(v=>v));if(!row){row={};G.rows.push(row)}row.PPX_accession=x.id;added++}else filled++;row._seq=x.s});
+ G.rows=G.rows.filter((r,i)=>Object.values(r).some(v=>v)||i===0||G.rows.length===1);if(!G.rows.length)G.rows=[{}];save();gRender();
+ document.getElementById('rep').innerHTML='<div class="msg" style="border-left-color:var(--ok)">FASTA '+recs.length+'건: 기존 줄에 '+filled+'건, 새 줄 '+added+'건 (새 줄은 나머지 칸을 채우세요)</div>';document.getElementById('bo').disabled=true}
+// submit: the grid becomes a metadata TSV + a FASTA, sent to the same check / import as a file upload
+let lastRows=[];
+function gBuild(){const cols=G.cols.filter(c=>G.rows.some(r=>(r[c]||'').trim()));const rows=G.rows.filter(r=>Object.values(r).some(v=>v&&String(v).trim()));
+ if(!rows.length){alert('입력한 줄이 없습니다.');return null}
+ if(!cols.includes('PPX_accession'))cols.unshift('PPX_accession');
+ const clean=v=>String(v??'').replace(/[\t\r\n]+/g,' ').trim();
+ const tsv=cols.join('\t')+'\n'+rows.map(r=>cols.map(c=>clean(r[c])).join('\t')).join('\n')+'\n';
+ const fa=rows.filter(r=>r._seq&&r.PPX_accession).map(r=>'>'+clean(r.PPX_accession)+'\n'+r._seq+'\n').join('');
+ lastRows=rows;const d=new FormData();d.append('metadata',new Blob([tsv],{type:'text/tab-separated-values'}),'(표 입력).tsv');d.append('fasta',new Blob([fa],{type:'text/plain'}),'grid.fa');d.append('default_clade',DC());d.append('note',NT());return d}
+function mark(r){document.querySelectorAll('#grid tbody tr').forEach(tr=>tr.style.background='');
+ const lines=n=>(String(n).match(/^(\d+)행:/)||[])[1];const hit=(arr,col)=>(arr||[]).forEach(m=>{const n=lines(m);if(!n)return;const idx=G.rows.indexOf(lastRows[n-2]);const tr=document.querySelector('#grid tbody tr[data-r="'+idx+'"]');if(tr&&!tr.style.background)tr.style.background=col});
+ hit(r.warnings,'rgba(210,153,34,.15)');hit(r.errors,'rgba(248,81,73,.18)')}
+const fixMsg=m=>String(m).replace(/^(\d+)행:/,(_,n)=>'표의 '+(n-1)+'번째 줄:');
+async function gSubmit(dry){const d=gBuild();if(!d)return;
+ const r=await (await fetch('/api/private/'+W()+(dry?'/check':'/import'),{method:'POST',body:d})).json();
+ if(r.error){show({error:r.error},false);return}
+ r.errors=(r.errors||[]).map(fixMsg);r.warnings=(r.warnings||[]).map(fixMsg);
+ if(dry){show(r,false);mark(Object.assign({},r,{errors:(r.errors||[]).map(m=>m.replace(/^표의 (\d+)번째 줄:/,(_,n)=>(+n+1)+'행:')),warnings:(r.warnings||[]).map(m=>m.replace(/^표의 (\d+)번째 줄:/,(_,n)=>(+n+1)+'행:'))}));
+  document.getElementById('bo').disabled=!(r.ok&&((r.new||0)+(r.update||0)>0));return}
+ show(r,true);try{localStorage.removeItem(KEY)}catch(e){}setTimeout(()=>location.reload(),1500)}
+gRender();
 // ---- spreadsheet
 function fd2(){const m=document.getElementById('fm').files[0],f=document.getElementById('ff').files[0];if(!m||!f){alert('스프레드시트와 FASTA를 모두 고르세요.');return null}
  const d=new FormData();d.append('metadata',m);d.append('fasta',f);d.append('default_clade',DC());d.append('note',NT());return d}
