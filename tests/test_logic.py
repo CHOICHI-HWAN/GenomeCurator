@@ -2386,4 +2386,4 @@ def test_gene_hotspots_use_independent_events_not_inherited_sums():
     import math
     from genomecurator import outbreak
     assert abs(outbreak._pois_sf(0, 3) - 1) < 1e-12 and abs(outbreak._pois_sf(1, 3) - (1 - math.exp(-3))) < 1e-12
-    assert abs(outbreak._pois_sf(10, 1.7) - 1.1e-6 * 1) < 5e-6 and outbreak._pois_sf(10, 1.7) < 1e-4 and outbreak._pois_sf(3, 17) > 0.99      # 10 events where 1.7 are expected: a hotspot; 3 where 17 are expected: not
+    assert abs(outbreak._pois_sf(10, 1.7) - 1.19728e-5) < 1e-9 and outbreak._pois_sf(10, 1.7) < 1e-4 and outbreak._pois_sf(3, 17) > 0.99      # 10 events where 1.7 are expected: a hotspot; 3 where 17 are expected: not
