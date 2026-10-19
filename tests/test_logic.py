@@ -2368,3 +2368,15 @@ def test_itr_mask_unknown_bases_and_within_lineage_trend(tmp_path, monkeypatch):
     assert abs(w["slope_per_year"]) < 1e-6 and w["lineages"] == 2                                                             # within lineages: none
     rows2 = [{"t": 2024.0 + i * 0.1, "apobec_var": 10 + 6 * i * 0.1, "lineage": "X"} for i in range(10)]
     assert abs(outbreak.within_lineage_trend(rows2)["slope_per_year"] - 6) < 0.01
+
+
+def test_origin_classes_opportunities_and_enrichment():
+    from genomecurator import insight
+    seq = "CCTCAGAGTT"                                   # 1-based: 1 C, 2 C, 3 T, 4 C (after T), 5 A, 6 G (before A), 7 A, 8 G, 9 T, 10 T
+    assert insight._classes("C", "T", 4, seq) == "apobec_TC" and insight._classes("G", "A", 6, seq) == "apobec_GA"
+    assert insight._classes("C", "T", 2, seq) == "other_CT_GA" and insight._classes("A", "G", 5, seq) == "other_transition" and insight._classes("C", "A", 1, seq) == "transversion"
+    opp = insight._opportunities(seq, 1, 10)
+    assert opp["C_apobec"] == 1 and opp["C_other"] == 2 and opp["G_apobec"] == 1 and opp["G_other"] == 1 and opp["all"] == 10
+    e = insight._enrichment(80, 20, 100, 400)           # 80 % of the C>T/G>A changes in APOBEC contexts that hold 20 % of the C/G sites
+    assert e["expected_share"] == 0.2 and e["enrichment"] == 4.0 and e["rate_ratio"] == 16.0 and e["attributable"] == 75       # 80 observed - 20 * 0.25 / ... : background rate 20/400 * 100 sites = 5
+    assert insight._enrichment(0, 0, 100, 400) == {} and insight._enrichment(5, 5, 0, 10) == {}

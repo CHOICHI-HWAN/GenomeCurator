@@ -136,6 +136,125 @@ def apobec_by_branches(run: dict) -> dict | None:
     return {"tree": runs[0]["name"], **plain, "variants": variants, "homoplastic_mutations": sum(1 for v in per_branch.values() if v > 1), "mutations": len(per_branch)}
 
 
+# ------------------------------------------------------------------------------------------------ how much is APOBEC3, how much is background
+def _classes(ref: str, alt: str, pos: int, seq: str) -> str:
+    """APOBEC3-type (GA>AA = G>A before an A, TC>TT = C>T after a T), other C>T / G>A (a different context), other transitions, transversions."""
+    if _apo_branch(ref, alt, pos, seq):
+        return "apobec_GA" if ref == "G" else "apobec_TC"
+    if (ref, alt) in (("C", "T"), ("G", "A")):
+        return "other_CT_GA"
+    if (ref, alt) in (("A", "G"), ("T", "C")):
+        return "other_transition"
+    return "transversion"
+
+
+def _opportunities(seq: str, lo: int, hi: int) -> dict:
+    """How many positions of the interior could give an APOBEC3-type change (G before A: GA>AA; C after T: TC>TT) and how many C / G there are in other contexts."""
+    c = Counter()
+    for i in range(lo - 1, hi):
+        b = seq[i]
+        if b == "G":
+            c["G_apobec" if i + 1 < len(seq) and seq[i + 1] == "A" else "G_other"] += 1
+        elif b == "C":
+            c["C_apobec" if i > 0 and seq[i - 1] == "T" else "C_other"] += 1
+        c["all"] += b in "ACGT"
+    return dict(c)
+
+
+def _enrichment(observed_apo: int, observed_other: int, opp_apo: int, opp_other: int) -> dict:
+    """Among C>T / G>A changes: the share in an APOBEC3 context against the share of C / G sites that are in that context (what chance would give), and the part of the APOBEC3-context
+    changes beyond the background rate of the other contexts."""
+    n = observed_apo + observed_other
+    if n == 0 or opp_apo + opp_other == 0 or opp_other == 0 or opp_apo == 0:
+        return {}
+    exp_share = opp_apo / (opp_apo + opp_other)
+    bg_rate = observed_other / opp_other                     # changes per site in the other contexts
+    background_in_apo = bg_rate * opp_apo
+    attributable = max(0.0, observed_apo - background_in_apo)
+    tst = chi2_2x2(observed_apo, observed_other, round(exp_share * n), n - round(exp_share * n))
+    return {"observed_share": round(observed_apo / n, 4), "expected_share": round(exp_share, 4), "enrichment": round((observed_apo / n) / exp_share, 2), "rate_apobec_context": round(observed_apo / opp_apo, 5),
+            "rate_other_context": round(bg_rate, 5), "rate_ratio": round((observed_apo / opp_apo) / bg_rate, 1) if bg_rate else None,
+            "attributable": round(attributable), "attributable_share_of_ctgt": round(attributable / n, 3)}
+
+
+def origin(run: dict, max_n: float | None = None) -> dict:
+    """How much of the observed change is APOBEC3-type and how much is the rest (background errors of the polymerase, other deaminases, recombination ...).
+    By **mutation events on the tree's branches** (each event once: independent of how many genomes inherit it; ITRs left out) - internal branches (inherited) and terminal branches
+    (private to one genome) - and by **genome** (new mutations per genome, the sites nearly every genome has left out, genomes with at most `max_n` N)."""
+    out: dict = {"max_n": max_n}
+    b = _tree_branches(run)
+    if b:
+        root, L, muts = b
+        lo, hi = mutprofile.ITR_BP + 1, L - mutprofile.ITR_BP
+        opp = _opportunities(root, lo, hi)
+        groups = {"all": Counter(), "internal": Counter(), "terminal": Counter()}
+        for internal, (ref, pos, alt) in muts:
+            k = _classes(ref, alt, pos, root)
+            for g in ("all", "internal" if internal else "terminal"):
+                groups[g][k] += 1
+                groups[g]["n"] += 1
+        res = {}
+        for g, c in groups.items():
+            ct = c["apobec_GA"] + c["apobec_TC"]
+            res[g] = {"n": c["n"], "apobec": ct, "apobec_GA": c["apobec_GA"], "apobec_TC": c["apobec_TC"], "other_CT_GA": c["other_CT_GA"], "other_transition": c["other_transition"], "transversion": c["transversion"],
+                      "apobec_share": round(ct / c["n"], 4) if c["n"] else None, "background_share": round(1 - ct / c["n"], 4) if c["n"] else None,
+                      "enrichment_C": _enrichment(c["apobec_TC"], sum(1 for _i, (r, p, a) in muts if r == "C" and a == "T" and not _apo_branch(r, a, p, root) and (g == "all" or (g == "internal") == _i)),
+                                                  opp.get("C_apobec", 0), opp.get("C_other", 0)),
+                      "enrichment_G": _enrichment(c["apobec_GA"], sum(1 for _i, (r, p, a) in muts if r == "G" and a == "A" and not _apo_branch(r, a, p, root) and (g == "all" or (g == "internal") == _i)),
+                                                  opp.get("G_apobec", 0), opp.get("G_other", 0)),
+                      "enrichment": _enrichment(ct, c["other_CT_GA"], opp.get("C_apobec", 0) + opp.get("G_apobec", 0), opp.get("C_other", 0) + opp.get("G_other", 0))}
+        out["branches"] = {"opportunities": opp, "groups": res}
+    # mutations private to one genome (carried by no other genome of the dataset): each is one independent event - unlike a per-genome tally, where one ancestral mutation is counted
+    # once per descendant. Against the run's reference, ITRs left out, genomes with at most `max_n` N.
+    rows = _mutations(run, max_n)
+    carriers: dict[tuple, set] = defaultdict(set)
+    for r in rows:
+        carriers[(int(r["pos"]), r["alt"])].add(r["sample"])
+    gs = {g["id"]: g for g in lineages._genomes(run)}
+    cls = lambda r: "apobec" if _is_apo(r) else "other_CT_GA" if (r["ref"], r["alt"]) in (("C", "T"), ("G", "A")) else "other_transition" if (r["ref"], r["alt"]) in (("A", "G"), ("T", "C")) else "transversion"
+    tot, by_year = Counter(), defaultdict(Counter)
+    for r in rows:
+        if len(carriers[(int(r["pos"]), r["alt"])]) != 1:
+            continue
+        k = cls(r)
+        tot[k] += 1
+        tot["n"] += 1
+        g = gs.get(r["sample"])
+        kind, _w, _m, shown = lineages.parse_date(g["date"]) if g else ("", 0, 0, "")
+        if kind:
+            by_year[int(shown[:4])][k] += 1
+            by_year[int(shown[:4])]["n"] += 1
+    out["private"] = {"reference": mutprofile.summary(run).get("reference", ""), "genomes": len({r["sample"] for r in rows}), "events": tot["n"], "apobec": tot["apobec"],
+                      "apobec_share": round(tot["apobec"] / tot["n"], 4) if tot["n"] else None,
+                      "classes": {k: tot[k] for k in ("apobec", "other_CT_GA", "other_transition", "transversion")},
+                      "by_year": [{"year": y, "n": c["n"], "apobec_share": round(c["apobec"] / c["n"], 4) if c["n"] else None} for y, c in sorted(by_year.items())]}
+    return out
+
+
+def _tree_branches(run: dict):
+    """(root sequence, its length, [(is_internal, (ref, pos, alt))]) of the dataset's newest Nextstrain tree, ITRs left out; None without a tree."""
+    import re
+    runs = [r for r in nextstrain.list_runs(run["dataset_id"]) if r["tool"] == "nextstrain" and r["status"] == "done" and r["auspice_file"]]
+    if not runs:
+        return None
+    f = nextstrain.auspice_dir() / runs[0]["auspice_file"]
+    rootf = nextstrain.auspice_dir() / runs[0]["auspice_file"].replace(".json", "_root-sequence.json")
+    if not f.exists() or not rootf.exists():
+        return None
+    tree = json.loads(f.read_text(encoding="utf-8"))["tree"]
+    root = json.loads(rootf.read_text(encoding="utf-8")).get("nuc", "")
+    L, muts, stack = len(root), [], [tree]
+    while stack:
+        n = stack.pop()
+        kids = n.get("children") or []
+        stack.extend(kids)
+        for m in (n.get("branch_attrs", {}).get("mutations", {}) or {}).get("nuc", []):
+            g = re.fullmatch(r"([ACGT])(\d+)([ACGT])", m)
+            if g and not mutprofile.in_itr(int(g[2]), L):
+                muts.append((bool(kids), (g[1], int(g[2]), g[3])))
+    return root, L, muts
+
+
 # ------------------------------------------------------------------------------------------------ new mutations
 def _to_date(s: str):
     try:
@@ -284,7 +403,7 @@ def signatures(run: dict, min_n: int = 5, inside: float = 0.9, outside: float = 
 def insight(run: dict, **kw) -> dict:
     mn = kw.get("max_n")
     return {"apobec_sites": apobec_by_sites(run, mn), "apobec_branches": apobec_by_branches(run), "emerging": emerging(run, **{k: v for k, v in kw.items() if k in ("window_days", "min_carriers", "skip_apobec", "max_n")}),
-            "signatures": signatures(run, max_n=mn), "max_n": mn, "n_filtered": _n_filtered(run, mn)}
+            "signatures": signatures(run, max_n=mn), "origin": origin(run, mn), "max_n": mn, "n_filtered": _n_filtered(run, mn)}
 
 
 def _n_filtered(run: dict, max_n: float | None) -> dict:
