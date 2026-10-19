@@ -1005,6 +1005,7 @@ def test_export_writes_aligned_metadata_and_fasta(tmp_path, monkeypatch):
     con = connect()
     con.execute("UPDATE genome SET isolation_country='USA', geographic_location='USA, NY, New York City', collection_date='2023-06', host_name='Homo sapiens', "
                 "submitter='Lab X', accession_version=1, pathoplexus_accession='PP_000TEST.2', release_date='2024-01-02T03:04:05Z' WHERE accession='A1'")
+    con.execute("UPDATE genome SET pathoplexus_accession='PP_000TX2.1' WHERE accession='X2'")
     con.commit()
     con.close()
     qc.dataset_update("nextstrain/mpox/all-clades")
@@ -1016,9 +1017,10 @@ def test_export_writes_aligned_metadata_and_fasta(tmp_path, monkeypatch):
     cols = lines[0].split("\t")
     assert cols == export.NEXTSTRAIN_COLUMNS
     rows = [dict(zip(cols, ln.split("\t"))) for ln in lines[1:]]
-    ids = [x["INSDC_accession_version"] for x in rows]
+    ids = [x["PPX_accession"] for x in rows]
     fa_ids = [ln[1:] for ln in (out / "sequences.fasta").read_text(encoding="utf-8").splitlines() if ln.startswith(">")]
-    assert ids == fa_ids == ["A1.1", "X2"]                                   # same ids, same order
+    assert ids == fa_ids == ["PP_000TEST", "PP_000TX2"]                      # same ids, same order; the id is the PPX accession the workflow keys on
+    assert rows[0]["INSDC_accession_version"] == "A1.1" and rows[1]["INSDC_accession_version"] == "X2"
     a = rows[0]
     assert (a["date"], a["country"], a["region"], a["division"], a["location"], a["host"], a["date_released"]) == \
         ("2023-06-XX", "USA", "North America", "NY", "New York City", "Homo sapiens", "2024-01-02")
@@ -1028,13 +1030,34 @@ def test_export_writes_aligned_metadata_and_fasta(tmp_path, monkeypatch):
     mf = json.loads((out / "manifest.json").read_text(encoding="utf-8"))
     assert mf["files"]["metadata.tsv"]["sha256"] == hashlib.sha256((out / "metadata.tsv").read_bytes()).hexdigest()
     assert mf["files"]["sequences.fasta"]["sha256"] == hashlib.sha256((out / "sequences.fasta").read_bytes()).hexdigest()
-    assert mf["nextclade"]["datasets"] and "strain_id_field: \"INSDC_accession_version\"" in (out / "nextstrain-config.yaml").read_text(encoding="utf-8")
+    cfg = (out / "nextstrain-config.yaml").read_text(encoding="utf-8")
+    assert mf["nextclade"]["datasets"] and "use_remote_files: false" in cfg and "strain_id_field" not in cfg        # the workflow's default id is PPX_accession
+    assert "--configfile defaults/mpxv/config.yaml" in cfg and 'metadata: "' in cfg
     seq = "".join(ln for ln in (out / "sequences.fasta").read_text(encoding="utf-8").splitlines()[1:] if not ln.startswith(">"))
     assert seq.startswith("ACGT" * 10)
     # filters
-    assert [x["INSDC_accession_version"] for x in export.table(1, "nextstrain", qc_not=["bad"])[1]] == ["A1.1"]         # X2's Nextclade QC is bad
+    assert [x["PPX_accession"] for x in export.table(1, "nextstrain", qc_not=["bad"])[1]] == ["PP_000TEST"]             # X2's Nextclade QC is bad
     assert export.table(1, "nextstrain", min_length=201)[1] == []
     assert len(export.table(1, "plain")[1]) == 2 and "nextclade_clade" in export.table(1, "plain")[0]
+    # a genome without a Pathoplexus accession cannot be identified for the workflow: it is left out and the preview says so
+    con = connect()
+    con.execute("UPDATE genome SET pathoplexus_accession=NULL WHERE accession='X2'")
+    con.commit()
+    con.close()
+    pv = export.preview(1, "nextstrain")
+    assert pv["selected"] == 1 and pv["left_out_no_id"] == 1 and any("PPX_accession" in w for w in pv["warnings"])
+    assert export.preview(1, "plain")["selected"] == 2
+    # straight into a nextstrain/mpox checkout: relative paths (they also work inside the Docker runtime)
+    ph = tmp_path / "mpox" / "phylogenetic"
+    ph.mkdir(parents=True)
+    (ph / "Snakefile").write_text("")
+    r2 = export.write(1, None, "nextstrain", nextstrain_dir=ph)
+    assert (ph / "data" / "genomecurator" / "metadata.tsv").exists() and r2["rows"] == 1
+    cfg2 = (ph / "build-configs" / "genomecurator" / "config.yaml").read_text(encoding="utf-8")
+    assert 'metadata: "data/genomecurator/metadata.tsv"' in cfg2 and "build-configs/genomecurator/config.yaml" in cfg2
+    import pytest
+    with pytest.raises(ValueError):
+        export.write(1, None, "nextstrain", nextstrain_dir=tmp_path)
 
 
 def test_export_api(tmp_path, monkeypatch):
@@ -1042,6 +1065,12 @@ def test_export_api(tmp_path, monkeypatch):
     from fastapi.testclient import TestClient
     from genomecurator import qc, web
     _qc_env(tmp_path, monkeypatch)
+    from genomecurator.db import connect
+    con = connect()
+    con.execute("UPDATE genome SET pathoplexus_accession='PP_A1.1' WHERE accession='A1'")
+    con.execute("UPDATE genome SET pathoplexus_accession='PP_X2.1' WHERE accession='X2'")
+    con.commit()
+    con.close()
     qc.dataset_update("nextstrain/mpox/all-clades")
     qc.run(1)
     c = TestClient(web.create_app(scheduler=False))
@@ -1051,7 +1080,7 @@ def test_export_api(tmp_path, monkeypatch):
     t = c.get("/api/export/1/metadata.tsv?profile=nextstrain")
     f = c.get("/api/export/1/sequences.fasta?profile=nextstrain")
     assert t.status_code == 200 and f.status_code == 200 and "tab-separated" in t.headers["content-type"]
-    assert [ln.split("\t")[5] for ln in t.text.splitlines()[1:]] == [ln[1:] for ln in f.text.splitlines() if ln.startswith(">")]
+    assert [ln.split("\t")[0] for ln in t.text.splitlines()[1:]] == [ln[1:] for ln in f.text.splitlines() if ln.startswith(">")] == ["PP_A1", "PP_X2"]
     assert c.get("/api/export/1/metadata.tsv?profile=nope").status_code == 400 and c.get("/api/export/99/preview").status_code == 404
     jid = c.post("/api/export/1/build?profile=nextstrain").json()["job"]
     for _ in range(100):

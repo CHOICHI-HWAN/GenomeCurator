@@ -31,10 +31,12 @@ region/country/division, host, clade/lineage/outbreak, Nextclade QC 열)을 맞�
 
 <h3>Nextstrain mpox와 쓰는 법</h3>
 <ol style="line-height:1.7">
- <li>QC 탭에서 mpox의 <b>QC 실행</b>을 합니다 (Nextclade QC 열이 채워집니다. 없으면 워크플로의 기본 필터가 그 행들을 걸러냅니다).</li>
- <li>위에서 <b>서버 폴더에 만들기</b> → <code>metadata.tsv</code>, <code>sequences.fasta</code>, <code>manifest.json</code>, <code>nextstrain-config.yaml</code>이 생깁니다.</li>
- <li><code>git clone https://github.com/nextstrain/mpox</code> 후 <code>cd mpox/phylogenetic && nextstrain build . --configfile &lt;만든 폴더&gt;/nextstrain-config.yaml</code></li>
+ <li>QC 탭에서 mpox의 <b>QC 실행</b> (Nextclade QC 열이 채워집니다. 없으면 워크플로의 기본 필터가 그 행들을 걸러냅니다).</li>
+ <li><code>git clone https://github.com/nextstrain/mpox</code> 후, 체크아웃 안으로 바로 내보내기:<br><code>python -m genomecurator export "Orthopoxvirus monkeypox" --nextstrain-dir ~/mpox/phylogenetic</code></li>
+ <li><code>cd ~/mpox/phylogenetic &amp;&amp; nextstrain build . --configfile defaults/mpxv/config.yaml build-configs/genomecurator/config.yaml</code><br>
+  <span class="mut">config를 <b>두 개</b>(워크플로 기본값 + 우리 overlay) 줘야 합니다. overlay는 <code>inputs</code>를 로컬 파일로 바꾸고 <code>use_remote_files: false</code>로 웹 다운로드를 끕니다. 워크플로 id는 <code>PPX_accession</code>입니다.</span></li>
 </ol>
+<p class="mut" style="font-size:12.5px">위의 "서버 폴더에 만들기"는 <code>data/exports/</code>에 절대 경로 설정과 함께 만듭니다(Docker 런타임에서는 파일이 보이지 않으니 <code>--nextstrain-dir</code>를 쓰세요).</p>
 <h3>내부 API</h3>
 <pre style="background:var(--stripe);padding:8px 10px;border-radius:4px;overflow:auto">GET  /api/export/profiles
 GET  /api/export/{virus_id}/preview?profile=nextstrain&amp;min_length=100000&amp;completeness=Complete,Near%20complete&amp;qc_not=bad

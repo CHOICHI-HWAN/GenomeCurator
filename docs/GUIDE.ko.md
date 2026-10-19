@@ -239,13 +239,21 @@ FASTA 실제 길이·md5가 기록과 맞는지, 날짜가 미래가 아닌지, 
 
 큐레이션한 유전체를 **내보내기** 탭(또는 `python -m genomecurator export`, 내부 API)으로 넘깁니다. 같은 id·같은 순서의 `metadata.tsv`와 `sequences.fasta`, 그리고 `manifest.json`(건수·경고·SHA-256·Nextclade 데이터셋 버전)과 `nextstrain-config.yaml`이 한 폴더(기본 `data/exports/<바이러스>/<시각>/`)에 만들어집니다.
 
-* **형식 `nextstrain`**: [nextstrain/mpox](https://github.com/nextstrain/mpox)의 `phylogenetic/` 워크플로가 읽는 열에 맞춥니다. id는 `INSDC_accession_version`(FASTA 헤더와 같음, 설정 `strain_id_field`), 날짜는 `YYYY-MM-DD`에 모르는 부분은 `XX`(`2023-XX-XX`), `region`(대륙)·`country`·`division`·`location`은 국가·`geographic_location`에서 만들고, `clade/lineage/outbreak`는 큐레이션 값이 우선이며 없으면 Nextclade 값, `coverage`·`QC_rare_mutations` 등 Nextclade QC 열은 QC 탭의 결과입니다. **QC를 먼저 실행하세요**: 워크플로의 기본 필터가 `QC_rare_mutations`를 보기 때문에 값이 없는 행은 걸러집니다(미리보기에서 경고로 알려 줍니다).
+* **형식 `nextstrain`**: [nextstrain/mpox](https://github.com/nextstrain/mpox)의 `phylogenetic/` 워크플로가 읽는 열에 맞춥니다. id는 **`PPX_accession`**(FASTA 헤더와 같음; 워크플로가 포함·제외 목록을 PPX accession으로 바꿔 `augur filter --exclude`와 맞추므로 INSDC id를 쓰면 제외가 조용히 무시됩니다. Pathoplexus accession이 없는 유전체는 빠지고 미리보기가 건수를 알려 줍니다), 날짜는 `YYYY-MM-DD`에 모르는 부분은 `XX`(`2023-XX-XX`), `region`(대륙)·`country`·`division`·`location`은 국가·`geographic_location`에서 만들고, `clade/lineage/outbreak`는 큐레이션 값이 우선이며 없으면 Nextclade 값, `coverage`·`QC_rare_mutations` 등 Nextclade QC 열은 QC 탭의 결과입니다. **QC를 먼저 실행하세요**: 워크플로의 기본 필터가 `QC_rare_mutations`를 보기 때문에 값이 없는 행은 걸러집니다(미리보기에서 경고로 알려 줍니다).
 * **형식 `plain`**: `genome` 표의 모든 열과 QC 열을 이름 그대로 줍니다.
 * **필터**: 최소 길이, 완성도(Complete/Near complete/Partial), QC 불량·오류 제외, clade, 서열이 있는 것만(기본).
 * **공개(Open) 데이터만** 나갑니다. 수집 대상이 NCBI(INSDC) accession으로 정해지므로 Pathoplexus 제한 사용 데이터는 들어 있지 않고, `dataUseTerms`는 `OPEN`으로 적힙니다.
 * **내부 API**: `GET /api/export/{바이러스id}/metadata.tsv`, `.../sequences.fasta`, `.../preview`, `POST .../build`(서버 작업), `GET /api/exports`. 다른 프로그램에서는 `curl`로 바로 받을 수 있습니다.
-* **쓰는 법(mpox)**: QC 탭에서 QC 실행 → 내보내기에서 폴더 만들기 → `git clone https://github.com/nextstrain/mpox` → `cd mpox/phylogenetic && nextstrain build . --configfile <폴더>/nextstrain-config.yaml`.
-* 한계: 열 이름과 형식은 Nextstrain mpox 저장소의 `ingest` 설정과 예제 데이터에서 맞춘 것이며, 워크플로 전체(`nextstrain build`)를 이 도구에서 직접 돌려 확인하지는 않았습니다. 워크플로 설정이 바뀌면 열이 달라질 수 있습니다.
+* **쓰는 법(mpox)**: QC 탭에서 QC 실행 → `git clone https://github.com/nextstrain/mpox` → 체크아웃 안으로 바로 내보내기:
+  ```bash
+  python -m genomecurator export "Orthopoxvirus monkeypox" --nextstrain-dir ~/mpox/phylogenetic
+  cd ~/mpox/phylogenetic
+  nextstrain build . --configfile defaults/mpxv/config.yaml build-configs/genomecurator/config.yaml   # 전체 clade
+  ```
+  * **config를 두 개** 줘야 합니다. 워크플로의 `Snakefile`은 `defaults/*/config.yaml`을 *config가 비어 있을 때만* 읽으므로, 우리 overlay만 주면 `build_name`이 없다는 `KeyError`가 납니다(확인함). overlay는 `inputs`(로컬 파일)와 `use_remote_files: false`만 덮어씁니다. 다른 빌드는 `defaults/hmpxv1/config.yaml`(clade IIb), `defaults/clade-i/config.yaml`.
+  * 기본 입력이 매번 웹(`data.nextstrain.org`)에서 받는 URL이라 로컬 데이터를 쓰려면 이 `inputs` 교체가 필요하고, 워크플로 코드(`path_or_url`)는 로컬 경로를 그대로 쓰므로 **규칙을 고칠 필요는 없습니다**.
+  * 파일은 체크아웃의 `data/genomecurator/`에, 설정은 `build-configs/genomecurator/config.yaml`에 상대 경로로 써집니다. `--nextstrain-dir` 없이 `--out`을 쓰면 절대 경로라 Docker 런타임(`nextstrain build --docker`)에서는 파일이 보이지 않으니 `--ambient`/`--conda`로 돌리세요.
+* 확인한 것: 위 내보내기로 만든 파일에 Nextstrain mpox 저장소의 `scripts/map_accessions.py`(실제 `exclude.txt`), `augur filter`(기본 쿼리), Snakemake의 `decompress`·`map_accessions`·`filter` 규칙을 실제로 돌렸고, 전체 DAG(19단계)가 원격 입력 없이 풀리는 것까지 봤습니다. 정렬·트리 구축(`align`~`export`)은 서열이 충분해야 의미가 있어 돌려 보지 않았습니다. 워크플로 설정이 바뀌면 열이 달라질 수 있습니다.
 
 ## 명령어 모음 (Cheat sheet)
 

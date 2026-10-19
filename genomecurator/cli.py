@@ -50,6 +50,7 @@ def _main(argv=None):
     ex.add_argument("name", help="the registered virus")
     ex.add_argument("--profile", default="nextstrain", help="nextstrain (default) or plain")
     ex.add_argument("--out", help="folder to write (default: <data>/exports/<virus>/<timestamp>)")
+    ex.add_argument("--nextstrain-dir", help="the phylogenetic/ folder of a nextstrain/mpox checkout: write the files into <it>/data/genomecurator/ and a config overlay into <it>/build-configs/genomecurator/")
     ex.add_argument("--min-length", type=int)
     ex.add_argument("--completeness", help="comma list, e.g. 'Complete,Near complete'")
     ex.add_argument("--exclude-qc", help="comma list of QC statuses to leave out, e.g. 'bad,error'")
@@ -128,7 +129,7 @@ def _main(argv=None):
         else:
             from . import export
             csv_ = lambda s: [x.strip() for x in s.split(",") if x.strip()] if s else None
-            r = export.write(w["id"], Path(args.out) if args.out else None, args.profile, pr, require_sequence=not args.with_missing_sequences,
+            r = export.write(w["id"], Path(args.out) if args.out else None, args.profile, pr, nextstrain_dir=args.nextstrain_dir, require_sequence=not args.with_missing_sequences,
                              min_length=args.min_length, completeness_in=csv_(args.completeness), qc_not=csv_(args.exclude_qc), clade=args.clade)
             print(json.dumps(r, ensure_ascii=False, indent=2))
     elif args.cmd == "backup":

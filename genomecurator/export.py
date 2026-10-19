@@ -1,10 +1,12 @@
 """Hand the curated genomes to other programs: a metadata table and a FASTA file that line up row for row.
 
 Profiles (what the columns look like):
-* `nextstrain` - the columns the Nextstrain mpox workflow (github.com/nextstrain/mpox) works with: `INSDC_accession_version` as the id,
-  standardised dates (`2023-XX-XX`), region / country / division / location, host, clade / lineage / outbreak and the Nextclade QC columns
-  (`QC_rare_mutations`, ...) that its default filter reads. Point the workflow at the two files and set `strain_id_field`
-  (see the generated `nextstrain-config.yaml`).
+* `nextstrain` - the columns the Nextstrain mpox workflow (github.com/nextstrain/mpox) works with: `PPX_accession` as the id (its
+  include/exclude lists are mapped to PPX accessions and `augur filter --exclude` compares them with the id column, so an INSDC id would
+  silently skip the exclusions), standardised dates (`2023-XX-XX`), region / country / division / location, host, clade / lineage /
+  outbreak and the Nextclade QC columns (`QC_rare_mutations`, ...) that its default filter reads. Genomes without a Pathoplexus accession
+  cannot be identified that way and are left out (counted in the manifest). The generated config only overrides `inputs`: pass it after
+  the workflow's own defaults/<build>/config.yaml (the Snakefile loads those defaults only when no config is given).
 * `plain` - every curated column of the `genome` table plus the QC columns, nothing renamed.
 
 Only open data leaves here: the curated set is defined by NCBI (INSDC) accessions, so Pathoplexus restricted-use records are never in it.
@@ -206,33 +208,58 @@ def plain_row(r: dict) -> dict:
 
 
 PROFILES = {
-    "nextstrain": {"label": "Nextstrain (mpox 워크플로 형식)", "columns": NEXTSTRAIN_COLUMNS, "row": nextstrain_row, "id": "INSDC_accession_version"},
+    "nextstrain": {"label": "Nextstrain (mpox 워크플로 형식)", "columns": NEXTSTRAIN_COLUMNS, "row": nextstrain_row, "id": "PPX_accession"},
     "plain": {"label": "일반 (genome 표 전체 + QC)", "columns": None, "row": plain_row, "id": "INSDC_accession_version"},
 }
 
 
+def _keep_identified(profile: str, sel: list[dict], out: list[dict]) -> tuple[list[dict], dict[str, dict], int, int]:
+    """Rows need a unique, non-empty id (the profile's id column) to line up with the FASTA; the others are left out and counted."""
+    idc = PROFILES[profile]["id"]
+    kept, by_id, no_id, dup = [], {}, 0, 0
+    for g, row in zip(sel, out):
+        k = str(row.get(idc) or "")
+        if not k:
+            no_id += 1
+        elif k in by_id:
+            dup += 1
+        else:
+            kept.append(row)
+            by_id[k] = g
+    return kept, by_id, no_id, dup
+
+
 def table(watch_id: int, profile: str = "nextstrain", **filters) -> tuple[list[str], list[dict], dict, dict]:
-    """(columns, rows, selected genome rows by id, watch)."""
+    """(columns, rows, selected genome rows keyed by the id column, watch)."""
     if profile not in PROFILES:
         raise ValueError(f"알 수 없는 형식입니다: {profile} (가능: {', '.join(PROFILES)})")
     w, rows = _load(watch_id)
     sel = select(rows, **filters)
     prof = PROFILES[profile]
     out = [prof["row"](r) for r in sel]
+    out, by_id, _, _ = _keep_identified(profile, sel, out)
     cols = prof["columns"] or (list(out[0]) if out else ["INSDC_accession_version"])
-    return cols, out, {_id(r): r for r in sel}, w
+    return cols, out, by_id, w
 
 
 def preview(watch_id: int, profile: str = "nextstrain", **filters) -> dict:
     """Counts and warnings, without writing anything."""
+    if profile not in PROFILES:
+        raise ValueError(f"알 수 없는 형식입니다: {profile} (가능: {', '.join(PROFILES)})")
     w, rows = _load(watch_id)
     sel = select(rows, **filters)
-    out = [nextstrain_row(r) for r in sel] if profile == "nextstrain" else []
-    n = len(sel)
+    out_all = [PROFILES[profile]["row"](r) for r in sel]
+    out, by_id, no_id, dup = _keep_identified(profile, sel, out_all)
+    n = len(out)
     warn = []
     no_seq = sum(1 for r in rows if not (r.get("file_path") and config.data_path(r["file_path"]).exists()))
     if filters.get("require_sequence", True) and no_seq:
         warn.append(f"서열 파일이 없는 유전체 {no_seq:,}건은 제외됩니다 (유전체 화면의 Get FASTA로 받으면 포함됩니다).")
+    idc = PROFILES[profile]["id"]
+    if no_id:
+        warn.append(f"`{idc}` 값이 없는 {no_id:,}건은 제외됩니다" + (" (Nextstrain mpox 워크플로는 Pathoplexus accession을 id로 쓰고 포함·제외 목록도 그것으로 맞춥니다)." if profile == "nextstrain" else "."))
+    if dup:
+        warn.append(f"`{idc}`가 겹치는 {dup:,}건은 제외됩니다 (id는 유일해야 합니다).")
     if profile == "nextstrain" and n:
         miss_qc = sum(1 for r in out if not r["QC_rare_mutations"])
         if miss_qc:
@@ -241,7 +268,7 @@ def preview(watch_id: int, profile: str = "nextstrain", **filters) -> dict:
             m = sum(1 for r in out if not r[col])
             if m:
                 warn.append(f"{label}이(가) 비었거나 형식이 맞지 않는 {m:,}건 (Nextstrain에서는 빈 값으로 처리됩니다).")
-    return {"virus": w["name"], "profile": profile, "genomes": len(rows), "selected": n, "warnings": warn}
+    return {"virus": w["name"], "profile": profile, "genomes": len(rows), "selected": n, "left_out_no_id": no_id, "left_out_duplicate": dup, "warnings": warn}
 
 
 # ------------------------------------------------------------------------------------------------ writing
@@ -285,13 +312,18 @@ def exports_dir() -> Path:
     return config.DATA_DIR / "exports"
 
 
-def write(watch_id: int, out_dir: Path | None = None, profile: str = "nextstrain", progress=None, **filters) -> dict:
-    """Write metadata.tsv, sequences.fasta, manifest.json and nextstrain-config.yaml. Default folder: data/exports/<virus>/<timestamp>/."""
+def write(watch_id: int, out_dir: Path | None = None, profile: str = "nextstrain", progress=None, nextstrain_dir: Path | None = None, **filters) -> dict:
+    """Write metadata.tsv, sequences.fasta, manifest.json and nextstrain-config.yaml. Default folder: data/exports/<virus>/<timestamp>/.
+    With nextstrain_dir (the `phylogenetic/` folder of a nextstrain/mpox checkout) the files go to <it>/data/genomecurator/ and the config to
+    <it>/build-configs/genomecurator/config.yaml with paths relative to that folder - the form that also works inside the Docker runtime."""
     p = progress or (lambda *a: None)
     p(5, "선택한 유전체와 QC 결과를 모으는 중…")
     cols, rows, sel, w = table(watch_id, profile, **filters)
     stamp = datetime.now().strftime("%Y%m%d-%H%M%S")
-    out = Path(out_dir) if out_dir else exports_dir() / slug(w["name"]) / stamp
+    ns = Path(nextstrain_dir).expanduser() if nextstrain_dir else None
+    if ns and not (ns / "Snakefile").exists():
+        raise ValueError(f"{ns}에 Snakefile이 없습니다. nextstrain/mpox 저장소의 phylogenetic/ 폴더를 지정하세요.")
+    out = (ns / "data" / "genomecurator") if ns else (Path(out_dir) if out_dir else exports_dir() / slug(w["name"]) / stamp)
     out.mkdir(parents=True, exist_ok=True)
     meta, fa = out / "metadata.tsv", out / "sequences.fasta"
     h_meta, h_fa = hashlib.sha256(), hashlib.sha256()
@@ -324,8 +356,14 @@ def write(watch_id: int, out_dir: Path | None = None, profile: str = "nextstrain
                 "data_use": "Open data only: the curated set is defined by INSDC (NCBI) accessions, so Pathoplexus restricted-use records are not included. "
                             "Cite the original submitters and sources (NCBI, Pathoplexus, BV-BRC); see docs/LICENSES.md."}
     (out / "manifest.json").write_text(json.dumps(manifest, indent=2, ensure_ascii=False) + "\n", encoding="utf-8")
-    cfg = nextstrain_config(out, profile)
-    (out / "nextstrain-config.yaml").write_text(cfg, encoding="utf-8")
+    if ns:
+        cfg_path = ns / "build-configs" / "genomecurator" / "config.yaml"
+        cfg_path.parent.mkdir(parents=True, exist_ok=True)
+        cfg = nextstrain_config(out, profile, relative_to=ns)
+    else:
+        cfg_path = out / "nextstrain-config.yaml"
+        cfg = nextstrain_config(out, profile)
+    cfg_path.write_text(cfg, encoding="utf-8")
     con = connect()
     try:
         db.audit(con, "export", f"{w['name']}: {len(rows)}행, 서열 {n_seq}건 -> {out} ({profile})")
@@ -334,15 +372,28 @@ def write(watch_id: int, out_dir: Path | None = None, profile: str = "nextstrain
         con.close()
     p(100, "내보내기 완료")
     _log.info("export %r profile=%s rows=%d sequences=%d -> %s", w["name"], profile, len(rows), n_seq, out)
-    return {"dir": str(out), "rows": len(rows), "sequences": n_seq, "warnings": pv["warnings"], "files": ["metadata.tsv", "sequences.fasta", "manifest.json", "nextstrain-config.yaml"]}
+    return {"dir": str(out), "rows": len(rows), "sequences": n_seq, "warnings": pv["warnings"], "config": str(cfg_path),
+            "files": ["metadata.tsv", "sequences.fasta", "manifest.json"] + ([] if ns else ["nextstrain-config.yaml"])}
 
 
-def nextstrain_config(out: Path, profile: str = "nextstrain") -> str:
-    return (f"# Use with github.com/nextstrain/mpox (phylogenetic/): pass this file with --configfile, e.g.\n"
-            f"#   cd phylogenetic && nextstrain build . --configfile {out / 'nextstrain-config.yaml'}\n"
-            f"# The default inputs (data.nextstrain.org) are replaced by the two local files below.\n"
-            f"inputs:\n  - name: genomecurator\n    metadata: \"{(out / 'metadata.tsv').as_posix()}\"\n    sequences: \"{(out / 'sequences.fasta').as_posix()}\"\n"
-            f"strain_id_field: \"{PROFILES[profile]['id']}\"\n")
+def nextstrain_config(out: Path, profile: str = "nextstrain", relative_to: Path | None = None) -> str:
+    """A config *overlay* for the Nextstrain mpox workflow: only `inputs` (local files instead of data.nextstrain.org) and use_remote_files.
+    The workflow's Snakefile loads its own defaults/<build>/config.yaml only when no config is given, so pass the build's defaults first."""
+    def path(name: str) -> str:
+        f = out / name
+        return (f.relative_to(relative_to) if relative_to else f).as_posix()
+    cfgp = "build-configs/genomecurator/config.yaml" if relative_to else str(out / "nextstrain-config.yaml")
+    idc = PROFILES[profile]["id"]
+    return (f"# Overlay for github.com/nextstrain/mpox (phylogenetic/). Run with the build's own defaults FIRST, then this file:\n"
+            f"#   cd phylogenetic\n"
+            f"#   nextstrain build . --configfile defaults/mpxv/config.yaml {cfgp}        # all clades\n"
+            f"#   nextstrain build . --configfile defaults/hmpxv1/config.yaml {cfgp}      # clade IIb   (or defaults/clade-i/config.yaml)\n"
+            f"# (the Snakefile only loads defaults/*/config.yaml when no config is given, so this file alone is not a complete config)\n"
+            f"# Inputs replace the default URLs; local paths are used as they are, nothing is downloaded.\n"
+            f"{'' if relative_to else '# Absolute paths do not exist inside the Docker runtime: use --nextstrain-dir to write into the checkout, or run with --ambient/--conda.' + chr(10)}"
+            f"use_remote_files: false\n"
+            f"inputs:\n  - name: genomecurator\n    metadata: \"{path('metadata.tsv')}\"\n    sequences: \"{path('sequences.fasta')}\"\n"
+            + (f"strain_id_field: \"{idc}\"\n" if idc != "PPX_accession" else ""))
 
 
 def list_exports(watch_name: str | None = None, limit: int = 20) -> list[dict]:
