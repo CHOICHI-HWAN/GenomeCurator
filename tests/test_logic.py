@@ -832,3 +832,23 @@ def test_resolve_auto_api_takes_selected_items(tmp_path, monkeypatch):
     assert pv["items"] == 1 and pv["fields"] >= 1
     assert c.post("/changeset/1/resolve_auto", json={"items": [item + 1000], "minimum": "low"}).json()["applied"] == 0
     assert c.post("/changeset/1/resolve_auto", json={"items": [item], "minimum": "low"}).json()["applied"] == pv["fields"]
+
+
+def test_schema_traffic_light_per_source(tmp_path, monkeypatch):
+    import json
+    from genomecurator import config, schema_check
+    from genomecurator.db import connect
+    monkeypatch.setattr(config, "DATA_DIR", tmp_path)
+    monkeypatch.setattr(config, "DB_PATH", tmp_path / "g.db")
+    t = schema_check.traffic()
+    assert {s["status"] for s in t["sources"].values()} == {"unknown"} and list(t["sources"]) == ["ncbi", "pathoplexus", "bvbrc"]
+    rep = {"mode": "daily", "checked_at": "2026-10-19T03:00:00", "verdict": "update", "findings": [
+        {"source": "bvbrc", "severity": "warn", "path": "a", "detail": "x"}, {"source": "pathoplexus", "severity": "fail", "path": "b", "detail": "gone"},
+        {"source": "pathoplexus", "severity": "warn", "path": "c", "detail": "y"}, {"source": "local", "severity": "fail", "path": "-", "detail": "z"}]}
+    con = connect()
+    con.execute("INSERT INTO schema_report(checked_at, report_json) VALUES(?,?)", (rep["checked_at"], json.dumps(rep)))
+    con.commit()
+    con.close()
+    t = schema_check.traffic()
+    assert {k: v["status"] for k, v in t["sources"].items()} == {"ncbi": "ok", "pathoplexus": "fail", "bvbrc": "warn"}
+    assert t["sources"]["pathoplexus"]["fail"] == 1 and "gone" in t["sources"]["pathoplexus"]["msg"]

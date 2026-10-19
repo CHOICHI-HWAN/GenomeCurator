@@ -12,6 +12,7 @@ re-pinned (the full list with licences is in [docs/DEPENDENCIES.md](docs/DEPENDE
 ## [Unreleased]
 
 ### Added
+- **Source traffic light** in the page header: NCBI — Pathoplexus — BV-BRC connected by a line, each with a light from the newest schema check (blue = no change, yellow = needs a look, red = source code update needed, grey = never checked). Hover for the reason; click to open the Schema tab.
 - **Batch suggestions for selected rows**: in the review screen, select rows (checkboxes, **drag the mouse over rows**, **Shift+click** for a range, or filter by integrity and *Select all*) and press *Apply suggestions to selection*. A dialog shows the confidence breakdown and lets you take *medium and above* (recommended) or *everything, including low*. The whole-changeset button is now labelled *Auto-pick (all)*.
 - **Analysis tab**: start and stop Apache Superset from the app (it stays a separate program in its own conda env), see whether it is installed/running, open it. `serve --superset` starts it together with the app; a Superset started by the app goes down with it.
 - `Dockerfile` (multi-arch: linux/amd64 and linux/arm64, built from `environment.yml`), a `docker` workflow that builds both architectures and publishes to GHCR on version tags, and an ARM job in CI.

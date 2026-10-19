@@ -648,6 +648,29 @@ def alert() -> dict | None:
     return rep if rep and rep.get("verdict") in ("update", "review") else None
 
 
+TRAFFIC_ORDER = ("ncbi", "pathoplexus", "bvbrc")
+
+
+def traffic() -> dict:
+    """Per-source status of the newest schema check (full or daily) for the traffic light in the page header:
+    ok / warn / fail per source, or unknown when nothing has been checked yet."""
+    rep = _latest_of(("full", "daily", "full-baseline"))
+    out = {"checked_at": rep["checked_at"] if rep else None, "mode": (rep.get("mode", "full") if rep else None), "sources": {}}
+    for src in TRAFFIC_ORDER:
+        if not rep:
+            out["sources"][src] = {"label": LABEL[src], "status": "unknown", "fail": 0, "warn": 0, "msg": "아직 점검한 적이 없습니다"}
+            continue
+        fs = [f for f in rep.get("findings", []) if f.get("source") == src]
+        nf, nw = sum(f["severity"] == "fail" for f in fs), sum(f["severity"] == "warn" for f in fs)
+        top = next((f for f in fs if f["severity"] == ("fail" if nf else "warn")), None)
+        status = "fail" if nf else ("warn" if nw else "ok")
+        msg = {"ok": "구조 변화 없음", "warn": f"확인 필요 {nw}건", "fail": f"소스 코드 업데이트 필요 {nf}건"}[status]
+        if top:
+            msg += f" — {top.get('path', '')}: {top.get('detail', '')}"[:200]
+        out["sources"][src] = {"label": LABEL[src], "status": status, "fail": nf, "warn": nw, "msg": msg}
+    return out
+
+
 def upgrade_report(rep: dict) -> dict:
     """Reports are history and must keep rendering after the code grows: fill in what a report written by older code lacks
     (e.g. the column grouping of the simple view was added after the first boards were saved)."""

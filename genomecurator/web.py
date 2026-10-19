@@ -193,14 +193,14 @@ def create_app(scheduler: bool = True) -> FastAPI:
             try:
                 from . import schema_check
                 a = schema_check.alert()
-                _alert_cache.update(t=time.time(), v={"verdict": a["verdict"], "at": a["checked_at"]} if a else None)
+                _alert_cache.update(t=time.time(), v={"verdict": a["verdict"], "at": a["checked_at"]} if a else None, tl=schema_check.traffic())
             except Exception:
                 _log.warning("could not read the schema alert", exc_info=True)
-                _alert_cache.update(t=time.time(), v=None)
+                _alert_cache.update(t=time.time(), v=None, tl=None)
         return _alert_cache["v"]
 
     def render(request, name, **ctx):
-        resp = T.TemplateResponse(request, name, {"badge": pending_count(), "schema_alert": schema_alert(), "app_version": __version__, "watch": ctx.get("watch") or request.cookies.get("gc_watch", ""), **ctx})
+        resp = T.TemplateResponse(request, name, {"badge": pending_count(), "schema_alert": schema_alert(), "traffic": _alert_cache.get("tl"), "app_version": __version__, "watch": ctx.get("watch") or request.cookies.get("gc_watch", ""), **ctx})
         if ctx.get("watch"):
             resp.set_cookie("gc_watch", str(ctx["watch"]), max_age=86400 * 365, samesite="lax")
         return resp
@@ -424,6 +424,11 @@ def create_app(scheduler: bool = True) -> FastAPI:
             return JSONResponse({"error": str(e)}, 400)
         finally:
             con.close()
+
+    @app.get("/api/schema/traffic")
+    def api_schema_traffic():
+        from . import schema_check
+        return schema_check.traffic()
 
     @app.get("/api/job/{jid}")
     def job(jid: str):
