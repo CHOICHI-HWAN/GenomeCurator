@@ -81,6 +81,39 @@ def tool_versions() -> dict:
     return {"squirrel": version(), "iqtree": iq}
 
 
+def data_dir() -> Path | None:
+    """Squirrel's bundled data (its references and gene tables), inside its conda environment."""
+    pre = env_prefix()
+    found = sorted((pre / "lib").glob("python3*/site-packages/squirrel/data")) if pre else []
+    return found[0] if found else None
+
+
+def alignment_reference(ds: dict) -> str | None:
+    """The reference Squirrel aligns the dataset to: PX667572 for clade I, NC_063383 for clade II; None for `split` (one alignment per clade) or unknown."""
+    c = effective(ds).get("clade", "")
+    return "PX667572" if c in ("cladei", "cladeia", "cladeib") else "NC_063383" if c in ("cladeii", "cladeiia", "cladeiib") else None
+
+
+def reference_fasta(acc: str) -> Path | None:
+    d = data_dir()
+    f = d / f"{acc}.fasta" if d else None
+    return f if f and f.exists() else None
+
+
+def align_run(ds: dict, cores: int | None = None, progress=None) -> dict:
+    """A Squirrel run that only aligns (no tree), for analyses that need the alignment of *every* genome: nothing is left out for QC (the two-pass tree run drops what QC flags).
+    An identical finished run (same members, content, version, settings) is reused. -> the run row; the alignment is `<run_dir>/squirrel/alignment.aln.fasta.gz`."""
+    import json as _json
+    base = effective(ds)
+    ds2 = {**ds, "squirrel_json": _json.dumps({**base, "run_phylo": False, "apobec3": False, "include_background": False, "seq_qc": True, "extra_args": base.get("extra_args", "")})}
+    return run(ds2, cores, False, "정렬만 (변이 프로파일용)", progress)
+
+
+def alignment_path(run_row: dict) -> Path | None:
+    f = Path(run_row.get("run_dir") or "") / "squirrel" / "alignment.aln.fasta.gz"
+    return f if f.exists() else None
+
+
 def status() -> dict:
     pre = env_prefix()
     return {"name": env_name(), "ok": bool(pre), "prefix": str(pre) if pre else "", "version": version() if pre else "",

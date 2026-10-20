@@ -14,7 +14,7 @@ from datetime import datetime
 from pathlib import Path
 from urllib.parse import unquote
 
-from . import datasets, export, log, nextstrain, squirrel
+from . import aligned, datasets, export, log, nextstrain, squirrel
 from .db import audit, connect
 
 _log = log.get("mutprofile")
@@ -47,7 +47,7 @@ def status() -> dict:
 
 # ------------------------------------------------------------------------------------------------ settings
 def defaults_for(ds: dict) -> dict:
-    return {"before": 5, "after": 5, "profiles": "GA>AA,TC>TT", "reference": "auto", "mask_itr": True, "itr_bp": ITR_BP}
+    return {"before": 5, "after": 5, "profiles": "GA>AA,TC>TT", "reference": "auto", "mask_itr": True, "itr_bp": ITR_BP, "aligner": "auto"}
 
 
 def parse_settings(text) -> dict:
@@ -62,7 +62,7 @@ def parse_settings(text) -> dict:
             raise ValueError(f"설정(JSON)을 읽을 수 없습니다: {e}") from None
     if not isinstance(d, dict):
         raise ValueError("설정은 JSON 객체여야 합니다.")
-    unknown = sorted(set(d) - {"before", "after", "profiles", "reference", "mask_itr", "itr_bp"})
+    unknown = sorted(set(d) - {"before", "after", "profiles", "reference", "mask_itr", "itr_bp", "aligner"})
     if unknown:
         raise ValueError(f"알 수 없는 설정: {', '.join(unknown)}")
     out = {}
@@ -71,6 +71,10 @@ def parse_settings(text) -> dict:
             if not str(d[k]).isdigit() or not 0 <= int(d[k]) <= 50:
                 raise ValueError(f"{k}는 0~50의 정수입니다.")
             out[k] = int(d[k])
+    if d.get("aligner") not in (None, ""):
+        if d["aligner"] not in ("auto", "squirrel", "minimap2"):
+            raise ValueError("aligner는 auto, squirrel, minimap2 중 하나입니다.")
+        out["aligner"] = d["aligner"]
     if "mask_itr" in d:
         out["mask_itr"] = bool(d["mask_itr"])
     if str(d.get("itr_bp", "")).strip() != "":
@@ -93,8 +97,27 @@ def effective(ds: dict) -> dict:
     return {**defaults_for(ds), **parse_settings(ds.get("mutprofile_json", ""))}
 
 
+def aligner_choice(ds: dict) -> str:
+    """Which alignment the SNVs come from: **Squirrel's** for monkeypox (Nextclade's alignment has errors for it and the app's own per-genome minimap2 alignment calls false variants at
+    repeat / error-prone sites that Squirrel masks), minimap2 for other viruses, for clade `split` (one alignment per clade) or when the Squirrel environment is missing."""
+    want = effective(ds).get("aligner", "auto")
+    can = bool(squirrel.status()["ok"] and squirrel.alignment_reference(ds) and squirrel.reference_fasta(squirrel.alignment_reference(ds)))
+    if want == "minimap2":
+        return "minimap2"
+    if want == "squirrel":
+        if not can:
+            raise RuntimeError("Squirrel 정렬을 쓸 수 없습니다 (환경이 없거나 clade 설정이 split입니다). aligner를 minimap2로 바꾸거나 Squirrel 설정을 확인하세요.")
+        return "squirrel"
+    from . import pathoplexus
+    return "squirrel" if can and ds.get("watch_id") and pathoplexus.organism_for(ds["watch_id"]) == "mpox" else "minimap2"
+
+
 def settings_sha(ds: dict) -> str:
-    return hashlib.sha256(json.dumps({**effective(ds), "reference": reference_choice(ds)}, sort_keys=True).encode()).hexdigest()[:16]
+    try:
+        al = aligner_choice(ds)
+    except RuntimeError:
+        al = "unavailable"
+    return hashlib.sha256(json.dumps({**effective(ds), "reference": reference_choice(ds), "aligner": al}, sort_keys=True).encode()).hexdigest()[:16]
 
 
 # ------------------------------------------------------------------------------------------------ reference + annotation
@@ -301,7 +324,8 @@ def run(ds: dict, cores: int | None = None, force: bool = False, note: str = "",
     rdir = nextstrain.runs_dir() / export.slug(virus) / name
     (rdir / "mutprofile").mkdir(parents=True, exist_ok=True)
     out, logp = rdir / "mutprofile", rdir / "run.log"
-    versions = {"mutation-profile": ver, "minimap2": "", "reference": refname, "annotation": gff.name if gff else ""}
+    aligner = aligner_choice(ds)
+    versions = {"mutation-profile": ver, "minimap2": "", "reference": refname, "annotation": gff.name if gff else "", "aligner": aligner}
     try:
         versions["minimap2"] = subprocess.run([_bin("minimap2"), "--version"], capture_output=True, text=True, timeout=30).stdout.strip()
     except Exception:
@@ -328,24 +352,43 @@ def run(ds: dict, cores: int | None = None, force: bool = False, note: str = "",
             con.close()
     logf = open(logp, "w", encoding="utf-8")
     try:
-        p(5, "서열을 모으는 중…")
         fasta = rdir / "input.fasta"
-        squirrel.write_input(ds, fasta)
+        paf = rdir / "aln.paf"
         (rdir / "members.txt").write_text("\n".join(members) + "\n", encoding="utf-8")
         env = tool_env()
-        cmd = [_bin("minimap2"), "-x", "asm5", "-c", "--cs", "--secondary=no", "-t", str(cores or 4), str(ref_fa), str(fasta)]
-        logf.write("$ " + " ".join(cmd) + "\n")
-        p(10, "참조 서열에 정렬하는 중 (minimap2)…")
-        paf = rdir / "aln.paf"
-        with open(paf, "w") as pf:
-            r = subprocess.run(cmd, stdout=pf, stderr=subprocess.PIPE, text=True, env=env)
-        logf.write(r.stderr[-3000:])
-        if r.returncode != 0:
-            raise RuntimeError(f"minimap2가 실패했습니다 (코드 {r.returncode}):\n{r.stderr[-800:]}")
-        p(45, "SNP를 읽는 중…")
-        snps = list(snvs_from_paf(open(paf, encoding="utf-8")))
-        with_snps = len({q for q, *_ in snps})
-        n_seq = sum(1 for line in open(fasta, encoding="utf-8") if line.startswith(">"))
+        extra_summary: dict = {"aligner": aligner}
+        if aligner == "squirrel":
+            sref = squirrel.alignment_reference(ds)
+            aref_fa = squirrel.reference_fasta(sref)
+            p(5, "Squirrel로 정렬하는 중…")
+            arun = squirrel.align_run(ds, cores, lambda pct, m: p(6 + float(pct) * 0.38, "[Squirrel 정렬] " + str(m)))
+            aln = squirrel.alignment_path(arun)
+            if not aln:
+                raise RuntimeError("Squirrel 정렬 파일(alignment.aln.fasta.gz)을 찾을 수 없습니다.")
+            p(45, "정렬에서 SNV를 읽는 중…")
+            ids = {m.split(":", 1)[1] if m.startswith("private:") else m for m in members}
+            res = aligned.snvs_vs_target(aln, aref_fa, ref_fa, ids)
+            snps = res["snvs"]
+            n_seq = res["n"]
+            logf.write(f"Squirrel 정렬 {aln} (Squirrel 참조 {sref} → 분석 참조 {refname}, 열 대응 {res['covered']:.1%}), 서열 {n_seq:,}건\n")
+            versions.update({"squirrel": squirrel.version(), "alignment_run": arun.get("id"), "squirrel_reference": sref})
+            extra_summary.update({"alignment": str(aln), "alignment_run": arun.get("id"), "squirrel_reference": sref})
+            with_snps = len({q for q, *_ in snps})
+        else:
+            p(5, "서열을 모으는 중…")
+            squirrel.write_input(ds, fasta)
+            cmd = [_bin("minimap2"), "-x", "asm5", "-c", "--cs", "--secondary=no", "-t", str(cores or 4), str(ref_fa), str(fasta)]
+            logf.write("$ " + " ".join(cmd) + "\n")
+            p(10, "참조 서열에 정렬하는 중 (minimap2)…")
+            with open(paf, "w") as pf:
+                r = subprocess.run(cmd, stdout=pf, stderr=subprocess.PIPE, text=True, env=env)
+            logf.write(r.stderr[-3000:])
+            if r.returncode != 0:
+                raise RuntimeError(f"minimap2가 실패했습니다 (코드 {r.returncode}):\n{r.stderr[-800:]}")
+            p(45, "SNP를 읽는 중…")
+            snps = list(snvs_from_paf(open(paf, encoding="utf-8")))
+            with_snps = len({q for q, *_ in snps})
+            n_seq = sum(1 for line in open(fasta, encoding="utf-8") if line.startswith(">"))
         if settings.get("mask_itr", True) and settings.get("itr_bp", ITR_BP):
             before = len(snps)
             snps = [s_ for s_ in snps if not in_itr(s_[1], len(refseq), settings.get("itr_bp", ITR_BP))]
@@ -393,7 +436,7 @@ def run(ds: dict, cores: int | None = None, force: bool = False, note: str = "",
             for gname, c in sorted(genes.items(), key=lambda x: -x[1]["total"]):
                 w.writerow([gname, c["total"], c["nonsynonymous"], c["synonymous"], c["stop_gained"], c["intergenic"], c["poi"]])
         summary = {"snps": len(snps), "samples_with_snps": with_snps, "samples": n_seq, "distinct_sites": len(sites), "genes_hit": len([g for g in genes if g != "(intergenic)"]),
-                   "profile_of_interest": sum(c["poi"] for c in genes.values()), "settings": settings, "reference": refname, "reference_length": len(refseq)}
+                   "profile_of_interest": sum(c["poi"] for c in genes.values()), "settings": settings, "reference": refname, "reference_length": len(refseq), **extra_summary}
         (out / "summary.json").write_text(json.dumps(summary, indent=2, ensure_ascii=False), encoding="utf-8")
         logf.write("\n" + json.dumps(summary, ensure_ascii=False) + "\n")
         logf.close()

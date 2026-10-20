@@ -228,6 +228,21 @@ def _nc_snps(run: dict) -> dict[str, dict[int, str]]:
     has no usable base)."""
     out = Path(run["run_dir"]) / "mutprofile"
     f = out / "snps_nc063383.tsv"
+    sm = mutprofile.summary(run)
+    if not (f.exists() and (out / "nc_gaps.tsv").exists()) and sm.get("aligner") == "squirrel" and sm.get("alignment") and Path(sm["alignment"]).exists():
+        from . import aligned      # the run's SNVs came from Squirrel's alignment: read this table from the same alignment (no second, different alignment)
+        nc_fa = nextstrain.workflow_dir() / "defaults" / "reference.fasta"
+        ids = {m.split(":", 1)[1] if m.startswith("private:") else m for m in nextstrain.run_members(run)}
+        res = aligned.snvs_vs_target(sm["alignment"], squirrel.reference_fasta(sm["squirrel_reference"]), nc_fa, ids)
+        with open(f, "w", encoding="utf-8", newline="") as fo:
+            w = csv.writer(fo, delimiter="\t", lineterminator="\n")
+            w.writerow(["ID", "POS", "REF", "ALT"])
+            w.writerows(res["snvs"])
+        with open(out / "nc_gaps.tsv", "w", encoding="utf-8", newline="") as fo:
+            w = csv.writer(fo, delimiter="\t", lineterminator="\n")
+            w.writerow(["ID", "START", "END"])
+            for q_, iv in res["gaps"].items():
+                w.writerows((q_, a, b) for a, b in iv)
     if not (f.exists() and (out / "nc_gaps.tsv").exists()):
         ds = datasets.get(run["dataset_id"])
         members = set(nextstrain.run_members(run))

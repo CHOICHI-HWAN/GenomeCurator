@@ -2541,3 +2541,49 @@ def test_page_scripts_have_no_syntax_errors_and_help_is_collapsible(tmp_path, mo
             assert r.returncode == 0, f"{name} script {k}: {r.stderr[:300]}"
     base = (tdir / "base.html").read_text(encoding="utf-8")
     assert "function gcSyncN" in base.split("</head>")[0] and "function gcHelp" in base                           # the helpers the page scripts call are defined before them
+
+
+def test_snvs_from_a_squirrel_alignment_and_the_aligner_choice(tmp_path, monkeypatch):
+    import gzip
+    from genomecurator import aligned, lineages, mutprofile, squirrel
+    # target reference T (14 bp) and Squirrel's own reference A (the same sequence with 2 extra bases at the start, so columns are shifted by 2)
+    T = "ACGTACGTACGTAC"
+    A = "GG" + T
+    tfa, afa = tmp_path / "t.fasta", tmp_path / "a.fasta"
+    tfa.write_text(">T\n" + T + "\n", encoding="utf-8")
+    afa.write_text(">A\n" + A + "\n", encoding="utf-8")
+    monkeypatch.setattr(lineages, "liftover", lambda q, t: {i: i - 2 for i in range(3, len(A) + 1)})          # column i of A is position i-2 of T
+    rows = {"s1": A, "s2": A[:6] + "G" + A[7:], "s3": A[:8] + "NN" + A[10:], "s4": A[:3] + "T" + A[4:]}      # s2: T pos 5 (A) -> G; s3: two N's; s4: T pos 2 (C) -> T
+    aln = tmp_path / "aln.fasta.gz"
+    with gzip.open(aln, "wt") as f:
+        for k, v in rows.items():
+            f.write(f">{k} description\n{v}\n")
+    r = aligned.snvs_vs_target(aln, afa, tfa, ids={"s1", "s2", "s3", "s4"})
+    got = {(n, p, ref, alt) for n, p, ref, alt in r["snvs"]}
+    assert ("s2", 5, "A", "G") in got and ("s4", 2, "C", "T") in got and not [x for x in got if x[0] in ("s1", "s3")]       # identical genome: none; N is never a difference
+    assert any(a <= 7 <= b for a, b in r["gaps"]["s3"]) and any(a <= 8 <= b for a, b in r["gaps"]["s3"])                    # its N columns are unknown ...
+    assert r["gaps"]["s1"] == []                                                                                         # a clean genome with every reference position covered has none
+    assert r["n"] == 4 and sorted(aligned.read_alignment(aln))[0][0] == "s1"
+    assert [x for x in aligned.snvs_vs_target(aln, afa, tfa, ids={"s2"})["snvs"]] == [("s2", 5, "A", "G")]                  # only the requested genomes
+    with __import__("pytest").raises(ValueError):                                                                           # a row of the wrong length is refused
+        bad = tmp_path / "bad.fasta"
+        bad.write_text(">x\nACGT\n", encoding="utf-8")
+        aligned.snvs_vs_target(bad, afa, tfa)
+    # which alignment is used
+    monkeypatch.setattr(squirrel, "status", lambda: {"ok": True})
+    monkeypatch.setattr(squirrel, "reference_fasta", lambda acc: afa)
+    from genomecurator import pathoplexus
+    monkeypatch.setattr(pathoplexus, "organism_for", lambda w: "mpox" if w == 1 else "")
+    ds = {"watch_id": 1, "build": "clade-i", "squirrel_json": ""}
+    assert mutprofile.aligner_choice(ds) == "squirrel" and squirrel.alignment_reference(ds) == "PX667572"
+    assert mutprofile.aligner_choice({**ds, "watch_id": 2}) == "minimap2"                                                    # other viruses keep minimap2
+    assert mutprofile.aligner_choice({**ds, "mutprofile_json": '{"aligner": "minimap2"}'}) == "minimap2"
+    assert mutprofile.settings_sha({**ds, "mutprofile_json": '{"aligner": "minimap2"}'}) != mutprofile.settings_sha({**ds, "mutprofile_json": '{"aligner": "auto"}'})   # another aligner is another analysis
+    assert mutprofile.aligner_choice({"watch_id": 2, "build": "", "mutprofile_json": '{"aligner": "squirrel"}', "squirrel_json": '{"clade": "cladeii"}'}) == "squirrel"
+    assert squirrel.alignment_reference({"build": "", "squirrel_json": '{"clade": "cladeiib"}'}) == "NC_063383" and squirrel.alignment_reference({"build": "", "squirrel_json": '{"clade": "split"}'}) is None
+    monkeypatch.setattr(squirrel, "reference_fasta", lambda acc: None)
+    with __import__("pytest").raises(RuntimeError):
+        mutprofile.aligner_choice({**ds, "mutprofile_json": '{"aligner": "squirrel"}'})
+    assert mutprofile.parse_settings({"aligner": "squirrel"}) == {"aligner": "squirrel"}
+    with __import__("pytest").raises(ValueError):
+        mutprofile.parse_settings({"aligner": "mafft"})
