@@ -55,7 +55,17 @@ def dataset_for(taxon: str | None) -> str | None:
 
 # ------------------------------------------------------------------------------------------------ tool and dataset management
 def nextclade_bin() -> str | None:
-    return shutil.which("nextclade")
+    """Nextclade on PATH, else next to the running Python (the app's own environment, even when it was not activated), else in the Nextstrain environment."""
+    import sys
+    w = shutil.which("nextclade")
+    if w:
+        return w
+    own = Path(sys.prefix) / "bin" / "nextclade"
+    if own.exists():
+        return str(own)
+    from . import nextstrain
+    pre = nextstrain.find_env(os.environ.get("GC_NEXTSTRAIN_ENV", "gc-nextstrain"), "nextclade")
+    return str(pre / "bin" / "nextclade") if pre else None
 
 
 def nextclade_version() -> str | None:
