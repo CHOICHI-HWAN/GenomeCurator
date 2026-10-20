@@ -36,13 +36,15 @@ def normalize(rules: dict | None) -> dict:
         v = r.get(k)
         out[k] = int(v) if str(v or "").strip().lstrip("-").isdigit() else None
     out["require_sequence"] = bool(r.get("require_sequence", True))
+    out["only_manual"] = bool(r.get("only_manual"))          # a dataset made from a selection in the genome table: exactly the genomes listed in manual_include
     return out
 
 
 def describe(rules: dict) -> str:
     r = normalize(rules)
     names = {"clade": "clade", "lineage": "lineage", "outbreak": "outbreak", "region": "대륙", "country": "국가", "host": "숙주", "completeness": "완성도", "qc_not": "QC 제외"}
-    parts = [f"{names[k]} {'/'.join(r[k])}" for k in RULE_LISTS if r[k]]
+    parts = ["고른 유전체만"] if r.get("only_manual") else []
+    parts += [f"{names[k]} {'/'.join(r[k])}" for k in RULE_LISTS if r[k]]
     if r["year_min"] or r["year_max"]:
         parts.append(f"수집연도 {r['year_min'] or ''}–{r['year_max'] or ''}")
     if r["min_length"] or r["max_length"]:
@@ -66,6 +68,8 @@ def matches(ds: dict, row: dict, genome: dict | None = None, key: str = "") -> b
     if ids & set(ds.get("manual_include") or []):
         return True
     r = normalize(ds.get("rules"))
+    if r["only_manual"]:
+        return False
     for k, field in (("clade", "clade"), ("lineage", "lineage"), ("outbreak", "outbreak"), ("region", "region"), ("country", "country"), ("host", "host")):
         if r[k] and str(row.get(field) or "") not in r[k]:
             return False

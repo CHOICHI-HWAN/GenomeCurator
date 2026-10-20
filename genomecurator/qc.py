@@ -245,6 +245,77 @@ def _run_nextclade(ds_dir: Path, items: list[tuple[str, Path]]) -> dict[str, dic
         return parse_nextclade_tsv(tsv)
 
 
+# ------------------------------------------------------------------------------------------------ CheckV (genome completeness and contamination)
+CHECKV_QUALITY = {"Complete": "good", "High-quality": "good", "Medium-quality": "mediocre", "Low-quality": "bad", "Not-determined": "mediocre"}
+
+
+def checkv_env_prefix() -> Path | None:
+    from . import nextstrain
+    return nextstrain.find_env(os.environ.get("GC_CHECKV_ENV", "gc-checkv"), "checkv")
+
+
+def checkv_db() -> Path | None:
+    """The CheckV database folder: GC_CHECKV_DB, else the newest `checkv-db-v*` under <data>/checkv/ (what `checkv download_database <data>/checkv` creates)."""
+    env = os.environ.get("GC_CHECKV_DB")
+    if env and (Path(env) / "genome_db").exists():
+        return Path(env)
+    base = config.DATA_DIR / "checkv"
+    found = sorted(base.glob("checkv-db-v*")) if base.exists() else []
+    found = [d for d in found if (d / "genome_db").exists()]
+    return found[-1] if found else None
+
+
+def checkv_status() -> dict:
+    pre = checkv_env_prefix()
+    db = checkv_db()
+    ver = ""
+    if pre:
+        try:
+            ver = subprocess.run([str(pre / "bin" / "checkv"), "--version"], capture_output=True, text=True, timeout=60).stdout.strip().split()[-1]
+        except Exception:
+            ver = ""
+    return {"ok": bool(pre and db), "env": bool(pre), "db": str(db) if db else "", "version": ver,
+            "how": "mamba create -n gc-checkv -c conda-forge -c bioconda checkv   then   " + f"{pre / 'bin' / 'checkv' if pre else 'checkv'} download_database {config.DATA_DIR / 'checkv'}   (about 1.5 GB)"}
+
+
+def parse_checkv_summary(path: Path) -> dict[str, dict]:
+    """{contig id: result} of CheckV's quality_summary.tsv. status: Complete / High-quality -> good, Medium-quality and Not-determined -> mediocre, Low-quality -> bad."""
+    import csv
+    out = {}
+    for r in csv.DictReader(open(path, encoding="utf-8"), delimiter="\t"):
+        q = r.get("checkv_quality", "Not-determined")
+        comp, cont = _num(r.get("aai_completeness") if r.get("completeness") in (None, "", "NA") else r.get("completeness")), _num(r.get("contamination"))
+        reasons = []
+        if q in ("Low-quality", "Medium-quality", "Not-determined"):
+            reasons.append(f"CheckV: {q}" + (f" (completeness {comp:.0f}%)" if comp is not None else ""))
+        if cont not in (None, 0.0):
+            reasons.append(f"contamination {cont:.1f}%")
+        if r.get("warnings"):
+            reasons.append(r["warnings"])
+        out[r["contig_id"]] = {"status": CHECKV_QUALITY.get(q, "mediocre"), "score": comp, "reasons": reasons,
+                               "metrics": {"checkv_quality": q, "completeness": comp, "completeness_method": r.get("completeness_method"), "contamination": cont, "viral_genes": _num(r.get("viral_genes")),
+                                           "host_genes": _num(r.get("host_genes")), "warnings": r.get("warnings") or ""}}
+    return out
+
+
+def _run_checkv(items: list[tuple[str, Path]], threads: int | None = None) -> dict[str, dict]:
+    pre, db = checkv_env_prefix(), checkv_db()
+    from . import nextstrain
+    with tempfile.TemporaryDirectory(prefix="gccv-") as td:
+        fa, out = Path(td) / "in.fa", Path(td) / "out"
+        with open(fa, "w", encoding="utf-8") as w:
+            for acc, p in items:
+                for _, s in _read_fasta(p):
+                    w.write(f">{acc}\n{s}\n")
+                    break
+        r = subprocess.run([str(pre / "bin" / "checkv"), "end_to_end", str(fa), str(out), "-d", str(db), "-t", str(threads or os.cpu_count() or 4)], capture_output=True, text=True, timeout=7200,
+                           env=nextstrain.tool_env(pre))
+        qs = out / "quality_summary.tsv"
+        if r.returncode != 0 or not qs.exists():
+            raise RuntimeError(f"CheckV 실행 실패: {(r.stderr or r.stdout).strip()[-400:]}")
+        return parse_checkv_summary(qs)
+
+
 # ------------------------------------------------------------------------------------------------ the QC run
 def _store(con, acc, tool, watch_id, res, version, dataset, tag, md5):
     con.execute("INSERT OR REPLACE INTO qc_result(accession,tool,watch_id,status,score,clade,lineage,metrics_json,version,dataset,dataset_tag,seq_md5,checked_at)"
@@ -330,9 +401,35 @@ def run(watch_id: int, progress=None, force: bool = False, accessions=None) -> d
                 con.commit()
             finally:
                 con.close()
+    # 3) CheckV (needs its environment and database; skipped with a note when they are missing)
+    summary["checkv"] = 0
+    cv = checkv_status()
+    if cv["ok"]:
+        pend = [(r, f) for r, f in todo if force or have.get((r["accession"], "checkv"), (None, None, None))[:2] != (r["md5"], cv["version"])]
+        for k in range(0, len(pend), 300):
+            chunk = pend[k:k + 300]
+            p(70 + 22 * k / max(1, len(pend)), f"CheckV {k:,}/{len(pend):,}")
+            res = _run_checkv([(r["accession"], f) for r, f in chunk])
+            con = connect()
+            try:
+                for r, _ in chunk:
+                    x = res.get(r["accession"]) or {"status": "error", "score": None, "error": "CheckV 결과에 없음", "metrics": {}}
+                    _store(con, r["accession"], "checkv", watch_id, x, cv["version"], None, None, r["md5"])
+                    summary["checkv"] += 1
+                con.commit()
+            finally:
+                con.close()
+    elif cv["env"]:
+        summary["notes"].append("CheckV 데이터베이스가 없어 CheckV는 건너뛰었습니다: " + cv["how"])
+    # 4) Squirrel's sequence QC is read from the latest finished Squirrel run
+    try:
+        summary["squirrel"] = sync_squirrel(watch_id, [r["accession"] for r, _ in todo])
+    except Exception:
+        _log.warning("Squirrel QC could not be stored", exc_info=True)
+        summary["squirrel"] = 0
     con = connect()
     try:
-        audit(con, "qc", f"{w['name']}: 통계 {summary['stats']}건, Nextclade {summary['nextclade']}건, 건너뜀 {summary['skipped']}건")
+        audit(con, "qc", f"{w['name']}: 통계 {summary['stats']}건, Nextclade {summary['nextclade']}건, CheckV {summary['checkv']}건, Squirrel {summary['squirrel']}건, 건너뜀 {summary['skipped']}건")
         con.commit()
     finally:
         con.close()
@@ -494,22 +591,24 @@ def per_genome(watch_id: int) -> dict[str, dict]:
                 d["qc"] = r["status"]
             if r["tool"] == "nextclade":
                 d.update(nc_status=r["status"], nc_clade=r["clade"], nc_lineage=r["lineage"])
-            else:
+            elif r["tool"] == "seqstats":
                 d["stats_status"] = r["status"]
+            else:                                                    # squirrel, checkv: counted in the worst status above, kept apart for the detail panel
+                d[r["tool"] + "_status"] = r["status"]
         return out
     finally:
         con.close()
 
 
 # ------------------------------------------------------------------------------------------------ Squirrel's sequence QC (next to Nextclade's)
-def squirrel_qc(watch_id: int) -> dict:
+def squirrel_qc(watch_id: int, detail: bool = False) -> dict:
     """What the latest finished Squirrel run says about the genomes of this virus, laid next to the Nextclade QC. Squirrel names a genome by its Pathoplexus accession without version
     (the INSDC accession when there is none), the way the export does. `suggested_to_exclude.csv` = whole-genome flags (e.g. N content), `alignment.suggested_mask.csv` = sites it suggests
     to mask (clustered SNPs, ...) per genome. Nothing is removed or changed from this; it is information, like the other QC."""
     import csv
     con = connect()
     try:
-        run = con.execute("SELECT id, run_dir, finished, dataset_id FROM analysis_run WHERE tool='squirrel' AND status='done' AND watch_id=? ORDER BY id DESC LIMIT 1", (watch_id,)).fetchone()
+        run = con.execute("SELECT id, run_dir, finished, dataset_id, versions_json FROM analysis_run WHERE tool='squirrel' AND status='done' AND watch_id=? ORDER BY id DESC LIMIT 1", (watch_id,)).fetchone()
         if not run:
             return {"available": False}
         d = Path(run["run_dir"]) / "squirrel"
@@ -532,6 +631,7 @@ def squirrel_qc(watch_id: int) -> dict:
         for r in con.execute("SELECT g.accession, g.pathoplexus_accession ppx, q.status FROM genome g LEFT JOIN qc_result q ON q.accession=g.accession AND q.watch_id=g.watch_id AND q.tool='nextclade' WHERE g.watch_id=?", (watch_id,)):
             ids[(r["ppx"] or "").split(".")[0] or r["accession"]] = r["accession"]
             nc[(r["ppx"] or "").split(".")[0] or r["accession"]] = r["status"]
+        pids = {r[0] for r in con.execute("SELECT id FROM private_genome WHERE watch_id=?", (watch_id,))}
     finally:
         con.close()
     judged = set()
@@ -547,8 +647,44 @@ def squirrel_qc(watch_id: int) -> dict:
     site_notes = Counter()
     for g in mine:
         site_notes.update(sites.get(g, {}))
-    return {"available": True, "run": run["id"], "finished": run["finished"], "judged": len(mine), "flagged": len(sq_bad), "notes": dict(notes.most_common(8)),
+    per_genome = {}
+    if detail:                                                     # one verdict per genome, to be stored beside the other QC tools (sync_squirrel)
+        for g in judged:
+            acc = ids.get(g) or (f"private:{g}" if g in pids else None)
+            if not acc:
+                continue
+            st = sites.get(g, {})
+            reasons = ([f"Squirrel suggests excluding it: {flag[g]}"] if g in flag else []) + ([f"Squirrel suggests masking sites: " + ", ".join(f"{k} x{v}" for k, v in st.items())] if st else [])
+            per_genome[acc] = {"status": "bad" if g in flag else "mediocre" if st else "good", "score": None, "reasons": reasons,
+                               "metrics": {"exclude_note": flag.get(g, ""), "site_notes": dict(st)}}
+        try:
+            ver = json.loads(run["versions_json"] or "{}").get("squirrel") or json.loads(run["versions_json"] or "{}").get("tools", {}).get("squirrel", "")
+        except ValueError:
+            ver = ""
+    return {"available": True, "run": run["id"], "finished": run["finished"], **({"per_genome": per_genome, "version": ver} if detail else {}), "judged": len(mine), "flagged": len(sq_bad), "notes": dict(notes.most_common(8)),
             "genomes_with_site_notes": sum(1 for g in mine if g in sites), "site_notes": dict(site_notes.most_common(8)),
             "both": len(both), "only_squirrel": len(only_sq), "only_nextclade": len(only_nc), "neither": len(mine) - len(sq_bad | nc_bad), "nextclade_mediocre": sum(1 for g in mine if nc.get(g) == "mediocre"),
             "examples": [{"accession": ids[g], "id": g, "note": flag[g], "nextclade": nc.get(g) or "-"} for g in sorted(only_sq)[:15]],
             "examples_nextclade": [{"accession": ids[g], "id": g, "note": "", "nextclade": "bad"} for g in sorted(only_nc)[:15]]}
+
+
+def sync_squirrel(watch_id: int, accessions=None) -> int:
+    """Store Squirrel's verdict per genome in the QC table (tool `squirrel`) so that it shows beside the other QC results everywhere (genome table, dataset QC): `bad` = Squirrel suggests
+    excluding the genome (e.g. N content), `mediocre` = it suggests masking sites in it, `good` = it judged the genome and found nothing. Only genomes the Squirrel run actually aligned or
+    flagged are stored. -> how many rows."""
+    q = squirrel_qc(watch_id, detail=True)
+    if not q.get("available"):
+        return 0
+    con = connect()
+    try:
+        md5 = {r["accession"]: r["md5"] for r in con.execute("SELECT g.accession, s.md5 FROM genome g LEFT JOIN genome_sequence s ON s.genome_id=g.genome_id WHERE g.watch_id=?", (watch_id,))}
+        n = 0
+        for acc, v in q["per_genome"].items():
+            if accessions is not None and acc not in accessions:
+                continue
+            _store(con, acc, "squirrel", watch_id, v, q["version"], None, f"run {q['run']}", md5.get(acc))
+            n += 1
+        con.commit()
+        return n
+    finally:
+        con.close()

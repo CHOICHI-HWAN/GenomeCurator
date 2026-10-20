@@ -8,6 +8,8 @@ Nextclade가 부른 clade/lineage는 소스 값과 <b>같으면</b> 아무 일�
 <div class="card">
  <b>도구</b>: Nextclade {% if tool_ok %}<span style="color:var(--ok)">v{{ tool_version }}</span>{% else %}<span style="color:var(--bad)">설치 안 됨</span> — <code>mamba install -c bioconda nextclade</code> (또는 environment.yml로 환경 다시 만들기). 설치 전에는 서열 통계만 돕니다.{% endif %}
  · 서열 통계: 내장
+ · CheckV {% if checkv.ok %}<span style="color:var(--ok)">v{{ checkv.version }}</span> <span class="mut">(DB {{ checkv.db.split('/')[-1] }})</span>{% elif checkv.env %}<span style="color:var(--warn)">데이터베이스 없음</span> — <code>{{ checkv.how }}</code>{% else %}<span class="mut">없음</span> — <code>mamba env create -f variantcall/checkv.yml</code> 후 데이터베이스 받기(약 1.5 GB){% endif %}
+ · Squirrel QC: 최근 끝난 Squirrel 실행의 판정을 QC 실행 때 함께 저장 (아래 카드)
 </div>
 
 <h3>바이러스별 상태</h3>
@@ -16,7 +18,7 @@ Nextclade가 부른 clade/lineage는 소스 값과 <b>같으면</b> 아무 일�
 <td><b>{{ w.name }}</b></td><td class="nw">{{ '{:,}'.format(w.n) }} · {{ '{:,}'.format(w.ns) }}</td>
 <td>{% if ds %}<code>{{ ds }}</code>{% else %}<span class="mut">없음 (서열 통계만)</span>{% endif %}</td>
 <td class="dsv nw">{% if ds %}<span class="mut">확인 중…</span>{% else %}<span class="mut">-</span>{% endif %}</td>
-<td class="nw">{% for tool, label in (('seqstats', '서열 통계'), ('nextclade', 'Nextclade')) %}{% set b = sm.by.get(tool) %}{% if b %}<div><span class="mut">{{ label }}</span>
+<td class="nw">{% for tool, label in (('seqstats', '서열 통계'), ('nextclade', 'Nextclade'), ('squirrel', 'Squirrel'), ('checkv', 'CheckV')) %}{% set b = sm.by.get(tool) %}{% if b %}<div><span class="mut">{{ label }}</span>
  <span class="qs good">양호 {{ b.get('good', 0) }}</span> · <span class="qs mediocre">주의 {{ b.get('mediocre', 0) }}</span> · <span class="qs bad">불량 {{ b.get('bad', 0) + b.get('error', 0) }}</span></div>{% endif %}{% endfor %}
  {% if not sm.by %}<span class="mut">아직 실행 안 함</span>{% endif %}</td>
 <td class="nw">{% if sm.total_nextclade %}채울 수 있는 값 <b>{{ sm.clade_fill }}</b> · 소스와 다른 값 <b style="color:{{ 'var(--bad)' if sm.clade_diff else 'var(--ok)' }}">{{ sm.clade_diff }}</b>{% else %}<span class="mut">-</span>{% endif %}</td>
@@ -34,7 +36,7 @@ Nextclade가 부른 clade/lineage는 소스 값과 <b>같으면</b> 아무 일�
 {% for c in sm.clade_examples %}<tr><td>{{ c.accession }}</td><td>{{ c.clade or '-' }}</td><td style="color:var(--warn)">{{ c.nc_clade or '-' }}</td><td>{{ c.lineage or '-' }}</td><td style="color:var(--warn)">{{ c.nc_lineage or '-' }}</td></tr>{% endfor %}</table></div>{% endif %}
 {% if sm.worst %}<div class="card"><b>주의·불량 유전체</b> (심한 순, 최대 60건)
 <table style="margin-top:6px"><tr><th>Accession</th><th>검사</th><th>상태</th><th>이유</th></tr>
-{% for x in sm.worst %}<tr><td>{{ x.accession }}</td><td>{{ '서열 통계' if x.tool == 'seqstats' else 'Nextclade' }}</td><td><span class="qs {{ x.status }}">{{ {'mediocre': '주의', 'bad': '불량', 'error': '오류'}[x.status] }}</span></td>
+{% for x in sm.worst %}<tr><td>{{ x.accession }}</td><td>{{ {'seqstats': '서열 통계', 'nextclade': 'Nextclade', 'squirrel': 'Squirrel', 'checkv': 'CheckV'}.get(x.tool, x.tool) }}</td><td><span class="qs {{ x.status }}">{{ {'mediocre': '주의', 'bad': '불량', 'error': '오류'}[x.status] }}</span></td>
 <td class="mut">{{ x.reasons|join(' · ') if x.reasons else ('점수 ' ~ x.score if x.score is not none else '') }}</td></tr>{% endfor %}</table></div>{% endif %}
 {% endif %}{% endfor %}
 

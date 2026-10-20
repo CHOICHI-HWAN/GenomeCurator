@@ -2964,3 +2964,42 @@ def test_the_page_says_when_the_code_is_newer_than_the_running_server(tmp_path, 
     monkeypatch.setitem(web._stale_cache, "t", 0.0)
     monkeypatch.setattr(web, "_STARTED", 1.0)                                       # started long ago: every file is newer
     assert "앱을 다시 시작하세요" in c.get("/").text
+
+
+def test_checkv_summary_is_read_into_qc_statuses_and_db_is_found(tmp_path, monkeypatch):
+    from genomecurator import config, qc
+    monkeypatch.setattr(config, "DATA_DIR", tmp_path)
+    monkeypatch.delenv("GC_CHECKV_DB", raising=False)
+    assert qc.checkv_db() is None
+    (tmp_path / "checkv" / "checkv-db-v1.5" / "genome_db").mkdir(parents=True)
+    assert qc.checkv_db().name == "checkv-db-v1.5"
+    head = "contig_id\tcontig_length\tprovirus\tproviral_length\tgene_count\tviral_genes\thost_genes\tcheckv_quality\tmiuvig_quality\tcompleteness\tcompleteness_method\tcontamination\tkmer_freq\twarnings\n"
+    f = tmp_path / "quality_summary.tsv"
+    f.write_text(head + "A1\t197000\tNo\tNA\t190\t180\t0\tComplete\tHigh-quality\t100.0\tAAI-based\t0.0\t1.0\t\n"
+                 "A2\t150000\tNo\tNA\t150\t140\t2\tLow-quality\tLow-quality\t61.5\tAAI-based\t3.2\t1.0\thigh kmer_freq may indicate large duplication\n"
+                 "A3\t1000\tNo\tNA\t1\t0\t0\tNot-determined\tNot-determined\tNA\tNA\tNA\tNA\tno viral genes detected\n")
+    r = qc.parse_checkv_summary(f)
+    assert r["A1"]["status"] == "good" and r["A1"]["reasons"] == [] and r["A1"]["score"] == 100.0
+    assert r["A2"]["status"] == "bad" and any("contamination 3.2%" in x for x in r["A2"]["reasons"]) and any("kmer_freq" in x for x in r["A2"]["reasons"])
+    assert r["A3"]["status"] == "mediocre" and r["A3"]["metrics"]["checkv_quality"] == "Not-determined"
+
+
+def test_dataset_made_from_a_selection_has_exactly_those_genomes(tmp_path, monkeypatch):
+    from fastapi.testclient import TestClient
+    from genomecurator import datasets, private, sources, web
+    _ds_env(tmp_path, monkeypatch)
+    monkeypatch.setattr(sources, "pathoplexus_slug_for", lambda acc: None)
+    private.import_texts(1, *_priv_files([{"PPX_accession": "LAB_V1", "strain": "kr-1", "date": "2025-02-03", "country": "Uganda", "clade": "Ib"},
+                                          {"PPX_accession": "LAB_V2", "strain": "pe-1", "date": "2025", "country": "Peru"}], {"LAB_V1": "ACGT" * 40, "LAB_V2": "ACGT" * 41}))
+    c = TestClient(web.create_app(scheduler=False))
+    body = {"watch": 1, "name": "picked", "rules": {"only_manual": True, "require_sequence": True}, "manual_include": ["A1", "LAB_V2"], "include_private": True, "build": "clade-i"}
+    ds = c.post("/api/datasets", json=body, headers={"origin": "http://testserver"}).json()
+    assert "error" not in ds and ds["rules"]["only_manual"] is True and "고른 유전체만" in datasets.describe(ds["rules"])
+    pub, priv = datasets.member_ids(1, datasets.get(ds["id"]))
+    assert pub == {"A1"} and priv == {"LAB_V2"}                                  # nothing else matches although the rules name no clade or country
+    nopriv = datasets.save(1, "picked public", {"only_manual": True}, manual_include=["A1", "LAB_V2"])               # private ones only when the dataset asks for them
+    assert datasets.member_ids(1, nopriv) == ({"A1"}, set())
+    assert datasets.member_ids(1, datasets.save(1, "all", {}))[0] >= {"A1"}      # the ordinary rules are unchanged
+    page = c.get(f"/dataset/{ds['id']}")
+    assert page.status_code == 200 and "dsAnalysis" in page.text and "makeDs" in c.get("/genomes?watch=1").text
+    assert c.get(f"/api/datasets/{ds['id']}/nextstrain").status_code == 200

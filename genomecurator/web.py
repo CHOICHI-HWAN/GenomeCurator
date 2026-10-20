@@ -729,7 +729,13 @@ def create_app(scheduler: bool = True) -> FastAPI:
                 r["files"] = mutprofile.result_files(r) if r["status"] == "done" else []
                 r["summary"] = mutprofile.summary(r) if r["status"] == "done" else {}
                 r["url"] = ""
+            elif r["tool"] == "variantflow":                          # snippy + lofreq of a mutation-profile run: has its own page, is not a Nextstrain run
+                r["cmp"], r["url"], r["files"] = None, "", []
             elif r["tool"] == "squirrel":
+                try:
+                    r["align_only"] = json.loads(r.get("params_yaml") or "{}").get("run_phylo") is False       # the alignment-only run made for the mutation profile: not the Squirrel analysis
+                except ValueError:
+                    r["align_only"] = False
                 r["cmp"] = nextstrain.compare(r, now_ids, ssha, sver, ccontent) if ssha else None
                 r["url"] = f"/api/analyses/{r['id']}/files/{r['auspice_file']}" if r["status"] == "done" and r["auspice_file"] else ""
                 r["files"] = squirrel.result_files(r) if r["status"] == "done" else []
@@ -1389,7 +1395,7 @@ def create_app(scheduler: bool = True) -> FastAPI:
     def qc_page(request: Request, watch: int = 0):
         watches = _rows("SELECT w.id, w.name, w.taxon, (SELECT COUNT(*) FROM genome g WHERE g.watch_id=w.id AND IFNULL(g.genome_status,'')!='Removed') n, "
                        "(SELECT COUNT(*) FROM genome_sequence s JOIN genome g ON g.genome_id=s.genome_id WHERE g.watch_id=w.id) ns FROM watchlist w ORDER BY w.name")
-        return render(request, "qc.html", nav="qc", watches=watches, tool_version=qc.nextclade_version(), tool_ok=qc.nextclade_bin() is not None,
+        return render(request, "qc.html", nav="qc", watches=watches, tool_version=qc.nextclade_version(), tool_ok=qc.nextclade_bin() is not None, checkv=qc.checkv_status(),
                       summary={w["id"]: qc.summary(w["id"]) for w in watches},
                       datasets_map={w["id"]: qc.dataset_for(w["taxon"]) for w in watches})
 

@@ -1,0 +1,9 @@
+# CheckV (bitbucket.org/berkeleylab/checkv, BSD-3-Clause): completeness and contamination of viral genomes - a QC tool beside Nextclade and Squirrel.
+#   mamba env create -f variantcall/checkv.yml          (the app finds it by name: GC_CHECKV_ENV, default gc-checkv)
+#   checkv download_database <data folder>/checkv        (the database, about 1.5 GB; or point GC_CHECKV_DB at an existing checkv-db-v* folder)
+name: gc-checkv
+channels:
+  - bioconda
+  - conda-forge
+dependencies:
+  - checkv

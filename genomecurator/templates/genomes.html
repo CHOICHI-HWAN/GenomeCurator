@@ -18,7 +18,9 @@
   <button type="button" class="p" onclick="dsQc(0)" style="margin-left:8px" title="이 데이터셋의 멤버만 QC합니다 (이미 한 것은 건너뜁니다)">이 데이터셋 QC 실행</button>
   <button type="button" onclick="dsQc(1)" title="이미 한 것도 다시 계산">다시 계산</button>
   <span class="mut">표의 <b>QC</b> 열·필터로 주의/불량만 골라 볼 수 있습니다.</span></div>
- <form id="dsqcf" method="post" action="/api/datasets/{{ dataset.id }}/qc" style="display:none"></form></div>{% endif %}
+ <form id="dsqcf" method="post" action="/api/datasets/{{ dataset.id }}/qc" style="display:none"></form></div>
+<div class="card" id="dsan" style="margin:6px 0;padding:8px 12px;border-left:4px solid #4e79a7"><b>분석</b> <span class="mut" style="font-size:12.5px">이 데이터셋(비공개 포함)으로 바로 실행합니다 · 서버에서 진행되고 다른 화면으로 가도 됩니다 · 진행·이력은 <a href="/jobs">작업</a> 탭</span>
+ <div id="dsan_body" class="mut" style="margin-top:6px">불러오는 중…</div><form id="dsanf" method="post" style="display:none"></form></div>{% endif %}
 {% if private_n and not dataset %}<div class="msg" style="margin:6px 0">비공개 유전체 <b>{{ private_n }}건</b>이 이 표에 함께 나옵니다 (<b>출처</b> 열이 '비공개', 위의 출처 필터로 나눌 수 있음). 비공개 유전체는 공개 데이터와 분리해 저장되며 여기서는 보기·제외 표시만 가능합니다 → <a href="/private?watch={{ watch }}">비공개 탭</a>에서 올리고 고치고, 분석에는 <a href="/datasets?watch={{ watch }}">데이터셋</a>의 <i>비공개 포함</i>을 켭니다.</div>{% endif %}
 <div id="noseq" class="msg" style="display:none;margin:6px 0"></div>
 <div class="mut" style="font-size:12px;margin:2px 0 4px" title="GC_NEAR_COMPLETE_PCT로 기준 비율을 바꿀 수 있습니다">ⓘ {{ data.ref_note }}</div>
@@ -27,6 +29,7 @@
 <form id="sqf" method="post" action="/genomes/sequences" style="display:none"><input name="ids" id="sqids"><input name="watch" value="{{ watch }}"></form>
 {% set toolbar_extra %}
 <span style="width:1px;background:var(--bd);align-self:stretch;margin:0 6px"></span>
+<button class="tbn" onclick="makeDs()" title="선택한 유전체(선택이 없으면 지금 필터에 보이는 전체)로 새 데이터셋을 만들고 그 데이터셋 화면으로 가서 바로 분석합니다"><i>📦</i>데이터셋 만들기</button>
 <button class="tbn" onclick="getSeq()" title="선택한(없으면 전체) 유전체 중 FASTA가 없는 것을 NCBI에서 받습니다"><i>🧬</i>Get FASTA</button>
 <button class="tbn" style="color:var(--warn)" onclick="exclSel(true)" title="선택한 유전체를 최종 분석 데이터셋(내보내기)에서 뺍니다. 삭제하지 않고 그대로 보관하며 언제든 풀 수 있습니다"><i>🚫</i>데이터셋에서 제외</button>
 <button class="tbn" onclick="exclSel(false)" title="선택한 유전체의 제외 표시를 풉니다"><i>↩</i>제외 해제</button>
@@ -37,6 +40,32 @@ const fmtEst=todo=>{const bp=todo.reduce((a,r)=>a+(+r.genome_length||0),0),gb=bp
 (function(){const DD=JSON.parse(document.getElementById('gdata').textContent),todo=DD.rows.filter(r=>r.has_fasta==='No');if(!todo.length)return;const e=fmtEst(todo);
  const el=document.getElementById('noseq');el.style.display='';el.innerHTML='서열(FASTA)이 아직 없는 유전체 <b>'+todo.length.toLocaleString()+'건</b> (약 '+e.gb+'). 분석·QC·내보내기에는 서열이 필요합니다. <button type="button" class="p" onclick="getSeq(true)" style="margin-left:8px">모두 받기</button>'
   +' <span class="mut" style="font-size:12px">NCBI에서 100건씩 받으며 중간에 멈춰도 이어받습니다. 끝나면 QC 탭에서 QC를 실행하세요.</span>'})();
+const GENOME_WATCH={{ watch }},THIS_DS={{ dataset.id if dataset else 0 }};
+function guessBuild(rows){const cl=new Set(rows.map(r=>r.clade).filter(Boolean));if(!cl.size)return 'mpxv';const all=(a)=>[...cl].every(c=>a.includes(c));return all(['Ia','Ib','I'])?'clade-i':all(['IIa','IIb','II'])?'hmpxv1':'mpxv'}
+async function makeDs(){const DD=JSON.parse(document.getElementById('gdata').textContent),sel=G.selected(),idx=sel.length?sel:G.filtered();
+ if(!idx.length){alert('데이터셋으로 만들 유전체가 없습니다. 표에서 선택하거나 필터를 조정하세요.');return}
+ const rows=idx.map(i=>DD.rows[i]),np=rows.filter(r=>r.is_private).length,build=guessBuild(rows);
+ const name=prompt(rows.length.toLocaleString()+'건('+(sel.length?'선택한':'지금 필터에 보이는')+' 유전체'+(np?', 🔒 비공개 '+np+'건 포함':'')+')으로 새 데이터셋을 만듭니다.\n빌드(Nextstrain 기본 설정): '+build+' (clade로 짐작, 데이터셋 화면에서 바꿀 수 있음)\n\n데이터셋 이름:','선택 '+new Date().toISOString().slice(0,16).replace('T',' '));
+ if(!name)return;
+ const body={watch:GENOME_WATCH,name,description:'유전체 표에서 '+(sel.length?'선택':'필터')+'한 '+rows.length+'건',rules:{only_manual:true,require_sequence:true},manual_include:rows.map(r=>r.accession),include_private:np>0,build};
+ const r=await (await fetch('/api/datasets',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(body)})).json();
+ if(r.error){alert(r.error);return}location.href='/dataset/'+r.id}
+function dsJob(url,msg){if(msg&&!confirm(msg))return;const f=document.getElementById('dsanf');f.action=url;runJob(f)}
+async function dsAnalysis(){if(!THIS_DS)return;const el=document.getElementById('dsan_body');if(!el)return;let I;
+ try{I=await (await fetch('/api/datasets/'+THIS_DS+'/nextstrain')).json()}catch(e){el.textContent='불러오지 못했습니다';return}
+ const esc=s=>String(s??'').replace(/[&<>"]/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c])),runs=I.runs||[];
+ const last=t=>runs.find(r=>r.tool===t&&r.status==='done'&&!r.align_only),running=t=>runs.find(r=>r.tool===t&&r.status==='running'),bad=t=>{const l=last(t),e=runs.find(r=>r.tool===t&&r.status==='error'&&(!l||r.id>l.id));return e};
+ const st=t=>{const r=last(t),run=running(t),e=bad(t);if(run)return '<span style="color:var(--warn)">● 실행 중</span>';if(!r)return '<span class="mut">● 아직 안 함</span>'+(e?' <span style="color:var(--bad)" title="'+esc(e.error||'')+'">· 마지막 시도 실패</span>':'');const c=r.cmp;return (c&&c.current?'<span style="color:var(--ok)">● 현재 데이터와 같은 입력으로 완료</span>':'<span style="color:var(--warn)">● 완료했지만 데이터·설정이 바뀜</span>')+' <span class="mut">'+esc(r.started.slice(0,16).replace('T',' '))+'</span>'};
+ const row=(label,stat,btns,note)=>'<tr><td style="white-space:nowrap;padding:3px 10px 3px 0"><b>'+label+'</b></td><td style="padding:3px 10px 3px 0">'+stat+'</td><td style="padding:3px 0;white-space:nowrap">'+btns+'</td><td class="mut" style="font-size:12px;padding:3px 0 3px 10px">'+note+'</td></tr>';
+ const mp=last('mutprofile'),vf=mp&&runs.find(r=>r.tool==='variantflow'&&r.status==='done'&&String(r.note||'').indexOf('mutprofile:'+mp.id)===0);
+ const id=THIS_DS,b=(t,u,m,cls)=>'<button type="button"'+(cls?' class="'+cls+'"':'')+' onclick="dsJob(\''+u+'\',\''+m+'\')">'+t+'</button> ';
+ el.innerHTML='<table style="border-collapse:collapse;font-size:13px">'
+  +row('① Nextstrain 트리',st('nextstrain'),b('실행','/api/datasets/'+id+'/analyze','이 데이터셋('+I.members.toLocaleString()+'건)으로 Nextstrain 분석을 시작합니다. 몇 분~몇 시간 걸릴 수 있습니다. 계속할까요?','p'),last('nextstrain')?'<a href="/nextstrain?dataset='+id+'">결과 보기·설정</a>':'<a href="/nextstrain?dataset='+id+'">설정</a>')
+  +row('② Squirrel (정렬·QC·계통수)',st('squirrel'),b('실행','/api/datasets/'+id+'/squirrel','이 데이터셋으로 Squirrel을 실행합니다. 계통수까지 만들어 서열 수에 따라 1시간 안팎 걸릴 수 있습니다. 계속할까요?','p'),last('squirrel')?'<a href="/nextstrain?dataset='+id+'">보고서·설정</a>':'<a href="/nextstrain?dataset='+id+'">설정</a>')
+  +row('③ 변이 프로파일',st('mutprofile'),b('실행','/api/datasets/'+id+'/mutprofile','이 데이터셋의 SNP를 참조 서열 기준으로 구합니다(원숭이두창은 Squirrel 정렬을 먼저 만듭니다). 계속할까요?','p'),mp?['snipit:변이 그림','heatmap:히트맵','spread:타임라인','outbreak:유행 분석','novel:신규 변이','insight:변이 분석'].map(x=>{const [k,l]=x.split(':');return '<a href="/analysis/'+mp.id+'/'+k+'" target="_blank">'+l+'</a>'}).join(' · '):'')
+  +row('④ 변이 호출 (snippy+lofreq)',mp?(vf?'<span style="color:var(--ok)">● 완료</span>':'<span class="mut">● 아직 안 함</span>'):'<span class="mut">③ 변이 프로파일 뒤에 합니다</span>',mp?b(vf?'다시 실행':'실행','/api/analyses/'+mp.id+'/variantflow','③ 변이 프로파일 결과의 모든 유전체에 snippy + lofreq를 돌립니다(이미 호출한 서열은 캐시에서 가져와 새 서열만 돌립니다). 계속할까요?',vf?'':'p'):'',mp?'<a href="/analysis/'+mp.id+'/concordance" target="_blank">호출 일치도</a>':'')
+  +'</table><div class="mut" style="font-size:12px;margin-top:6px">순서: QC → ② → ③ → ④. ②·③·④는 서로 독립이라 필요한 것만 돌려도 됩니다. 이전 결과가 있는 것은 <b>현재 데이터와 같은 입력</b>이면 다시 계산하지 않고 그 결과를 씁니다. 모든 결과·이력: <a href="/hub?dataset='+id+'">분석 허브</a></div>'}
+dsAnalysis();
 function dsQc(force){const f=document.getElementById('dsqcf');f.action='/api/datasets/{{ dataset.id if dataset else 0 }}/qc?force='+force;runJob(f)}
 async function exclSel(ex){const DD=JSON.parse(document.getElementById('gdata').textContent),sel=G.selected();
  if(!sel.length){alert((ex?'데이터셋에서 제외할':'제외 표시를 풀')+' 유전체를 표에서 먼저 선택하세요 (체크박스, 행 끌기, Shift+클릭, 또는 필터 후 Select all).');return}
