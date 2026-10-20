@@ -816,6 +816,78 @@ def create_app(scheduler: bool = True) -> FastAPI:
         finally:
             con.close()
 
+    def _vocab_scope(watch: int) -> str:
+        w = _rows("SELECT name, taxon FROM watchlist WHERE id=?", watch)
+        return vocab.scope_for(w[0]["name"], w[0]["taxon"] or "") if w else "*"
+
+    def _vocab_audit(what: str):
+        from .db import audit as _audit, connect as _connect
+        con = _connect()
+        try:
+            _audit(con, "vocab", what)
+            con.commit()
+        finally:
+            con.close()
+
+    @app.get("/api/vocab/{watch}/review")
+    def api_vocab_review(watch: int):
+        """What a person decides: per field the unmapped values (with the closest terms) and the flagged ones."""
+        if not _rows("SELECT 1 FROM watchlist WHERE id=?", watch):
+            return JSONResponse({"error": "unknown virus"}, 404)
+        from .db import connect as _connect
+        con = _connect()
+        try:
+            return {"scope": _vocab_scope(watch), "fields": vocab.review(con, watch, _vocab_scope(watch))}
+        finally:
+            con.close()
+
+    @app.get("/api/vocab/terms")
+    def api_vocab_terms(field: str, q: str = "", watch: int = 0):
+        if field not in vocab.FILES:
+            return JSONResponse({"error": "unknown field"}, 400)
+        return vocab.search_terms(field, q, _vocab_scope(watch) if watch else "*")
+
+    @app.post("/api/vocab/term")
+    async def api_vocab_term(request: Request):
+        """Add a standard term (optionally with synonyms and a flag) to the user's dictionary."""
+        b = await request.json()
+        try:
+            r = vocab.add_term(b.get("field", ""), b.get("term", ""), b.get("synonyms") or [], b.get("flag", ""), b.get("note", ""), _vocab_scope(int(b.get("watch") or 0)) if b.get("field") == "clade" else "*")
+        except (ValueError, KeyError) as e:
+            return JSONResponse({"error": str(e)}, 400)
+        _vocab_audit(f"용어 추가 {b.get('field')}: {r['term']} (동의어 {len(r['synonyms'])}개)")
+        return r
+
+    @app.post("/api/vocab/synonym")
+    async def api_vocab_synonym(request: Request):
+        b = await request.json()
+        try:
+            r = vocab.add_synonym(b.get("field", ""), b.get("raw", ""), b.get("term", ""), _vocab_scope(int(b.get("watch") or 0)) if b.get("field") == "clade" else "*")
+        except (ValueError, KeyError) as e:
+            return JSONResponse({"error": str(e)}, 400)
+        _vocab_audit(f"동의어 추가 {b.get('field')}: {b.get('raw')} → {r['term']}")
+        return r
+
+    @app.post("/api/vocab/date")
+    async def api_vocab_date(request: Request):
+        b = await request.json()
+        try:
+            r = vocab.set_date(b.get("raw", ""), b.get("standard", ""), b.get("note", ""))
+        except ValueError as e:
+            return JSONResponse({"error": str(e)}, 400)
+        _vocab_audit(f"날짜 지정: {r['raw']} → {r['standard']}")
+        return r
+
+    @app.post("/api/vocab/remove")
+    async def api_vocab_remove(request: Request):
+        b = await request.json()
+        if b.get("field") not in vocab.FILES:
+            return JSONResponse({"error": "unknown field"}, 400)
+        ok = vocab.remove_entry(b["field"], b.get("term", ""), _vocab_scope(int(b.get("watch") or 0)) if b["field"] == "clade" else "*")
+        if ok:
+            _vocab_audit(f"사용자 사전에서 삭제 {b['field']}: {b.get('term')}")
+        return {"removed": ok}
+
     @app.get("/api/world")
     def api_world():
         """Country outlines (Natural Earth 110m, public domain) for the spread map."""

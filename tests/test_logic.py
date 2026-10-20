@@ -2692,3 +2692,44 @@ def test_squirrel_alignment_reprojected_on_the_workflow_reference(tmp_path, monk
     cmap.clear()
     cmap.update({i: i for i in range(1, 4)})                                                          # positions the column map does not reach are N for every genome
     assert dict(aligned.reproject(aln, afa, tfa))["g1"] == A[:3] + "N" * 7
+
+
+def test_vocab_editing_decisions_land_in_the_user_dictionary(tmp_path, monkeypatch):
+    import pytest
+    from fastapi.testclient import TestClient
+    from genomecurator import config, vocab, web
+    monkeypatch.setattr(config, "DATA_DIR", tmp_path)
+    vocab._CACHE.clear()
+    S = vocab.standardize
+    assert S("host_name", "Mus fantasticus").status == "unmapped"
+    vocab.add_term("host_name", "Mus fantasticus", ["fantasy mouse"], extra={"taxon_id": "1"})
+    assert S("host_name", "fantasy  Mouse").value == "Mus fantasticus"
+    # a writing cannot belong to two terms
+    with pytest.raises(ValueError):
+        vocab.add_term("host_name", "Other host", ["fantasy mouse"])
+    with pytest.raises(ValueError):
+        vocab.add_synonym("host_name", "x", "No such term")
+    vocab.add_synonym("host_name", "Humans", "Homo sapiens")
+    assert S("host_name", "humans").value == "Homo sapiens"
+    # a flagged shipped term accepted as standard: its own spellings lose the flag, and removing the user's row restores the shipped state
+    assert S("host_name", "Vero E6").status == "flagged"
+    vocab.add_term("host_name", "Vero E6", [], "", "ok")
+    assert S("host_name", "Vero E6").status != "flagged"
+    assert vocab.remove_entry("host_name", "Vero E6") and S("host_name", "Vero E6").status == "flagged" and not vocab.remove_entry("host_name", "Vero E6")
+    # dates: only a valid date is accepted, and the decision is applied
+    assert vocab.standardize_date("05/06/2024").status in ("flagged", "unmapped")
+    with pytest.raises(ValueError):
+        vocab.set_date("05/06/2024", "2024-13-40")
+    vocab.set_date("05/06/2024", "2024-06-05")
+    assert vocab.standardize_date("05/06/2024").value == "2024-06-05"
+    assert [m["term"] for m in vocab.suggest("host_name", "Homo sapien")][:1] == ["Homo sapiens"] and vocab.suggest("host_name", "zzzzzz") == []
+    assert any(e["term"] == "Mus fantasticus" and e["user"] for e in vocab.search_terms("host_name", "fantasy"))
+    # the same through the web API
+    c = TestClient(web.create_app(scheduler=False))
+    r = c.post("/api/vocab/term", json={"field": "host_name", "term": "Rattus fantasticus", "synonyms": ["fantasy rat"]})
+    assert r.status_code == 200 and S("host_name", "fantasy rat").value == "Rattus fantasticus"
+    assert c.post("/api/vocab/term", json={"field": "host_name", "term": "Dup", "synonyms": ["fantasy rat"]}).status_code == 400
+    assert c.post("/api/vocab/date", json={"raw": "7/8/2023", "standard": "2023-08-07"}).status_code == 200
+    assert any(e["term"] == "Rattus fantasticus" for e in c.get("/api/vocab/terms", params={"field": "host_name", "q": "rattus"}).json())
+    assert c.post("/api/vocab/remove", json={"field": "host_name", "term": "Rattus fantasticus"}).json() == {"removed": True}
+    assert c.get("/api/vocab/terms", params={"field": "nonsense"}).status_code == 400

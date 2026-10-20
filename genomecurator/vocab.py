@@ -30,7 +30,9 @@ from . import config, log
 
 _log = log.get("vocab")
 FIELDS = ("host_name", "isolation_country", "collection_date", "clade")
-FILES = {"host_name": "host", "isolation_country": "country", "clade": "clade"}
+FILES = {"host_name": "host", "isolation_country": "country", "clade": "clade", "collection_date": "date"}
+COLUMNS = {"host_name": ["term", "synonyms", "taxon_id", "flag", "note"], "isolation_country": ["term", "synonyms", "iso3", "note"], "clade": ["scope", "term", "synonyms", "flag", "note"],
+           "collection_date": ["raw", "standard", "note"]}
 EMPTY = {"", "missing", "unknown", "unspecified", "n/a", "na", "none", "null", "nan", "not applicable", "not available", "not collected", "not provided", "not determined", "-", "--", "?"}
 MONTHS = {m: i for i, m in enumerate(["jan", "feb", "mar", "apr", "may", "jun", "jul", "aug", "sep", "oct", "nov", "dec"], 1)}
 _CACHE: dict = {}
@@ -150,8 +152,28 @@ def _one_date(s: str):
     return (None, None)
 
 
+def date_overrides() -> dict[str, dict]:
+    """{raw date string: {standard, note}} decided by a person (`<data>/vocab/date.tsv`): for the writings the rules leave alone, e.g. `05/06/2024`."""
+    out: dict = {}
+    for _d, r in _date_rows():
+        out[r["raw"].strip()] = {"standard": r["standard"].strip(), "note": (r.get("note") or "").strip()}
+    return out
+
+
+def _date_rows():
+    for d in vocab_dirs():
+        f = d / "date.tsv"
+        if f.exists():
+            for r in csv.DictReader((l for l in open(f, encoding="utf-8") if not l.startswith("#")), delimiter="\t"):
+                if (r.get("raw") or "").strip() and (r.get("standard") or "").strip():
+                    yield d, r
+
+
 def standardize_date(raw: str) -> Std:
     s = raw.strip()
+    ov = date_overrides().get(s)
+    if ov:
+        return Std(ov["standard"], "mapped", "date.decided", ov["note"] or "사용자가 정한 값")
     if s.lower() in EMPTY:
         return Std("", "empty", "date.empty", "비어 있음을 뜻하는 표기")
     if "/" in s and re.fullmatch(r"\d{4}-\d{2}(-\d{2})?/\d{4}-\d{2}(-\d{2})?", s):                  # ISO interval a/b
@@ -251,3 +273,148 @@ def preview(con, watch_id: int, scope: str = "*") -> dict:
                       "changes": sum(n for st, n in by.items() if st in ("mapped", "normalized", "empty")), "review": sum(n for st, n in by.items() if st in ("flagged", "unmapped")),
                       "distinct_after": len({i["standard"] for i in items})}
     return out
+
+
+# ------------------------------------------------------------------------------------------------ editing the user's dictionary (<data>/vocab/*.tsv)
+def user_file(field: str) -> Path:
+    return config.DATA_DIR / "vocab" / f"{FILES[field]}.tsv"
+
+
+def user_entries(field: str) -> list[dict]:
+    f = user_file(field)
+    if not f.exists():
+        return []
+    return [dict(r) for r in csv.DictReader((l for l in open(f, encoding="utf-8") if not l.startswith("#")), delimiter="\t")]
+
+
+def _write_user(field: str, rows: list[dict]) -> None:
+    f = user_file(field)
+    f.parent.mkdir(parents=True, exist_ok=True)
+    cols = COLUMNS[field]
+    tmp = f.with_suffix(".tmp")
+    with open(tmp, "w", encoding="utf-8", newline="") as fh:
+        fh.write("# 사용자 사전 — 이 앱의 용어 탭에서 더한 항목입니다. 같은 표준 용어는 앱에 들어 있는 사전을 덮어씁니다. 손으로 고쳐도 됩니다.\n")
+        w = csv.DictWriter(fh, fieldnames=cols, delimiter="\t", lineterminator="\n", extrasaction="ignore")
+        w.writeheader()
+        w.writerows(rows)
+    tmp.replace(f)
+    _CACHE.pop(field, None)
+
+
+def _owner(field: str, k: str, scope: str):
+    d = load(field)
+    return d.get((scope, k)) or d.get(("*", k))
+
+
+def add_term(field: str, term: str, synonyms=(), flag: str = "", note: str = "", scope: str = "*", extra: dict | None = None) -> dict:
+    """Add a standard term (and synonyms) to the user's dictionary, or update it. Refuses a writing that already belongs to another term, so one writing never means two things."""
+    if field not in COLUMNS or field == "collection_date":
+        raise ValueError("이 필드는 용어 사전이 아닙니다.")
+    term = " ".join(str(term).split())
+    if not term:
+        raise ValueError("표준 용어가 비었습니다.")
+    syn = [" ".join(x.split()) for x in synonyms if x and x.strip()]
+    for k in [term] + syn:
+        o = _owner(field, key(k), scope)
+        if o and o["term"] != term:
+            raise ValueError(f"'{k}'은(는) 이미 '{o['term']}'의 표기입니다. 먼저 그쪽에서 빼거나, 그 용어의 동의어로 두세요.")
+    rows = user_entries(field)
+    cur = next((r for r in rows if r["term"] == term and (r.get("scope") or "*") == scope), None)
+    if cur is None:
+        cur = {"term": term, "scope": scope}
+        rows.append(cur)
+        # a term the app's dictionary already has: the user's row replaces it for this term's own spellings, so carry those over (else its synonyms would keep the old flag)
+        cur["synonyms"] = "|".join(kk for (sc, kk), e in load(field).items() if e["term"] == term and e["scope"] == scope and kk != key(term))
+    have = [x for x in (cur.get("synonyms") or "").split("|") if x]
+    cur["synonyms"] = "|".join(dict.fromkeys(have + syn))
+    cur["flag"], cur["note"] = flag.strip(), note.strip()
+    for k, v in (extra or {}).items():
+        cur[k] = v
+    _write_user(field, rows)
+    return {"term": term, "synonyms": cur["synonyms"].split("|") if cur["synonyms"] else [], "flag": cur["flag"]}
+
+
+def add_synonym(field: str, raw: str, term: str, scope: str = "*") -> dict:
+    """The writing `raw` is another way of writing the standard term `term` (which must exist)."""
+    ts = {e["term"]: e for k, e in load(field).items() if k[0] in (scope, "*")}
+    if term not in ts:
+        raise ValueError(f"'{term}'은(는) 사전에 없는 표준 용어입니다. 먼저 새 용어로 추가하세요.")
+    e = ts[term]
+    return add_term(field, term, [raw], e.get("flag", ""), e.get("note", ""), e.get("scope", "*"), {k: e.get(k, "") for k in ("taxon_id", "iso3") if e.get(k)})
+
+
+def set_date(raw: str, standard: str, note: str = "") -> dict:
+    """Decide the standard date of one raw writing (e.g. an ambiguous `05/06/2024`): it must itself be a valid YYYY / YYYY-MM / YYYY-MM-DD."""
+    raw, standard = raw.strip(), standard.strip()
+    v, kind = _one_date(standard)
+    if kind != "exact":
+        raise ValueError("표준 날짜는 YYYY, YYYY-MM, YYYY-MM-DD 형식의 올바른 날짜여야 합니다.")
+    if not raw:
+        raise ValueError("원본 표기가 비었습니다.")
+    rows = [r for r in user_entries("collection_date") if r["raw"].strip() != raw]
+    rows.append({"raw": raw, "standard": standard, "note": note.strip()})
+    _write_user("collection_date", rows)
+    return {"raw": raw, "standard": standard}
+
+
+def remove_entry(field: str, term: str, scope: str = "*") -> bool:
+    """Remove an entry the user added (the app's own dictionary is not touched)."""
+    key_col = "raw" if field == "collection_date" else "term"
+    rows = user_entries(field)
+    keep = [r for r in rows if not (r.get(key_col) == term and (field == "collection_date" or (r.get("scope") or "*") == scope))]
+    if len(keep) == len(rows):
+        return False
+    _write_user(field, keep)
+    return True
+
+
+def suggest(field: str, raw: str, scope: str = "*", n: int = 3) -> list[dict]:
+    """The standard terms a value is most likely a writing of (closest by spelling): [{term, score}] best first, only reasonably close ones."""
+    import difflib
+    k = key(raw)
+    best: dict[str, float] = {}
+    for (sc, kk), e in load(field).items():
+        if sc not in (scope, "*") or e.get("flag"):
+            continue
+        r = difflib.SequenceMatcher(None, k, kk).ratio()
+        if r > best.get(e["term"], 0):
+            best[e["term"]] = r
+    return [{"term": t, "score": round(r, 2)} for t, r in sorted(best.items(), key=lambda x: -x[1])[:n] if r >= 0.72]
+
+
+def review(con, watch_id: int, scope: str = "*") -> dict:
+    """What a person has to decide: per field the values the dictionary does not know (`unmapped`, with the closest terms) and the ones it keeps but marks (`flagged`), with how many genomes carry them."""
+    pv = preview(con, watch_id, scope)
+    out: dict = {}
+    for f, d in pv.items():
+        un = [{"raw": i["raw"], "n": i["n"], "suggestions": suggest(f, i["raw"], scope) if f != "collection_date" else []} for i in d["items"] if i["status"] == "unmapped"]
+        fl = [{"raw": i["raw"], "standard": i["standard"], "n": i["n"], "rule": i["rule"], "note": i["note"]} for i in d["items"] if i["status"] == "flagged"]
+        out[f] = {"unmapped": un, "flagged": fl, "terms": sorted(t for t in {e["term"] for k, e in load(f).items() if k[0] in (scope, "*")}) if f != "collection_date" else []}
+    return out
+
+
+def search_terms(field: str, q: str = "", scope: str = "*", limit: int = 80) -> list[dict]:
+    """The dictionary of a field for browsing: [{term, synonyms, flag, note, user}] filtered by a text; `user` is true for entries from the user's own file."""
+    if field == "collection_date":
+        return [{"term": r["raw"], "synonyms": [r["standard"]], "flag": "", "note": r.get("note", ""), "user": True} for r in user_entries(field)]
+    users = {(r["term"], (r.get("scope") or "*")) for r in user_entries(field)}
+    by: dict = {}
+    for (sc, kk), e in load(field).items():
+        if sc not in (scope, "*"):
+            continue
+        b = by.setdefault((e["term"], e["scope"]), {"term": e["term"], "synonyms": set(), "flag": e["flag"], "note": e["note"], "user": (e["term"], e["scope"]) in users, "keys": set()})
+        b["keys"].add(kk)
+    rows = {}
+    for src in (Path(__file__).parent / "resources" / "vocab", config.DATA_DIR / "vocab"):
+        f = src / f"{FILES[field]}.tsv"
+        if f.exists():
+            for r in csv.DictReader((l for l in open(f, encoding="utf-8") if not l.startswith("#")), delimiter="\t"):
+                rows[((r.get("term") or "").strip(), (r.get("scope") or "*").strip() or "*")] = [x for x in (r.get("synonyms") or "").split("|") if x.strip()]
+    qk = key(q)
+    out = []
+    for (t, sc), b in sorted(by.items()):
+        syn = rows.get((t, sc), [])
+        if qk and qk not in key(t) and not any(qk in key(x) for x in syn):
+            continue
+        out.append({"term": t, "synonyms": syn, "flag": b["flag"], "note": b["note"], "user": b["user"], "scope": sc})
+    return out[:limit]
