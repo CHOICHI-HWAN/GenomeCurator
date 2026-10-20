@@ -2529,7 +2529,7 @@ def test_page_scripts_have_no_syntax_errors_and_help_is_collapsible(tmp_path, mo
     from pathlib import Path
     from genomecurator import web
     tdir = Path(web.__file__).parent / "templates"
-    for name in ("snipit", "heatmap", "pca", "spread", "insight", "outbreak", "novel", "hub", "vocab", "base"):
+    for name in ("snipit", "heatmap", "pca", "spread", "insight", "outbreak", "novel", "hub", "vocab", "qc", "concordance", "base"):
         html = (tdir / f"{name}.html").read_text(encoding="utf-8")
         for k, body in enumerate(re.findall(r"<script>(.*?)</script>", html, re.S)):
             if "{%" in body or "{{" in body:                    # Jinja inside: render-free check of the plain parts only
@@ -2761,3 +2761,57 @@ def test_variantcall_vcf_parsing_and_concordance(tmp_path):
     by = {r["pos"]: r for r in c["rows"]}
     assert by[10]["n"] == 2 and by[10]["of"] == 2 and by[30]["by"] == ["a"] and by[30]["of"] == 2        # genome g was judged by a and b only
     assert c["summary"]["all_agree"] == 1 and c["summary"]["only_one"] == 1
+
+
+def test_concordance_for_run_lists_only_sites_where_callers_differ(tmp_path, monkeypatch):
+    from genomecurator import mutprofile, variantcall
+    rd = tmp_path / "mutprofile"
+    rd.mkdir()
+    (rd / "mutations.tsv").write_text("sample\tpos\tref\talt\ng1\t10\tA\tG\ng1\t20\tC\tT\ng2\t10\tA\tG\n")
+    (rd / "variantcall.tsv").write_text("genome\tpos\tref\talt\tsnippy\tlofreq\tdp\taf\ng1\t10\tA\tG\t1\t1\t17\t1\ng1\t20\tC\tT\t0\t1\t17\t1\ng2\t10\tA\tG\t1\t1\t17\t1\ng2\t30\tG\tA\t1\t0\t\t\n")
+    (rd / "variantcall.genomes.txt").write_text("g1\ng2\n")
+    monkeypatch.setattr(mutprofile, "run_itr", lambda run: None)
+    monkeypatch.setattr(mutprofile, "good_samples", lambda run, mx: None)
+    c = variantcall.concordance_for_run({"run_dir": str(tmp_path)}, None)
+    assert c["summary"]["variants"] == 4 and c["summary"]["all_agree"] == 2
+    assert [(s["pos"], s["mutprofile"], s["snippy"], s["lofreq"]) for s in c["sites"]] == [(20, 1, 0, 1), (30, 0, 1, 0)]
+    assert not variantcall.available({"run_dir": str(tmp_path / "x")})
+
+
+def test_vocab_platform_and_specimen_fold_into_standard_terms(tmp_path, monkeypatch):
+    from genomecurator import config, vocab
+    monkeypatch.setattr(config, "DATA_DIR", tmp_path)
+    vocab._CACHE.clear()
+    S = vocab.standardize
+    assert S("sequencing_platform", "Illumina NovaSeq 6000").value == "Illumina" and S("sequencing_platform", "MinION").value == "Oxford Nanopore"
+    r = S("sequencing_platform", "Illumina MiSeq; Oxford Nanopore Technologies GridION")
+    assert (r.value, r.status) == ("Illumina; Oxford Nanopore", "mapped")
+    assert S("sequencing_platform", "Nanopore+Illumina").value == "Oxford Nanopore; Illumina"
+    assert S("sequencing_platform", "Illumina").status == "same" and S("sequencing_platform", "WGS").status == "flagged"
+    u = S("sequencing_platform", "Illumina; Quantum Sequencer")                                            # one unknown part: kept as it is, for a person to decide
+    assert (u.value, u.status) == ("Illumina; Quantum Sequencer", "unmapped")
+    assert S("isolation_source", "lesion swab").value == "Lesion swab" and S("isolation_source", "Skin lesion:Crust").value == "Skin lesion (crust/scab)"
+    assert S("isolation_source", "clinical").status == "unmapped"                                         # too vague to guess a specimen type
+
+
+def test_squirrel_qc_is_compared_with_nextclade_bad_only(tmp_path, monkeypatch):
+    import sqlite3
+    from genomecurator import config, db, qc
+    monkeypatch.setattr(config, "DATA_DIR", tmp_path)
+    monkeypatch.setattr(config, "DB_PATH", tmp_path / "t.db")
+    con = db.connect()
+    con.execute("INSERT INTO watchlist(id,name,taxon) VALUES(1,'V','t')")
+    for i, (acc, ppx, st) in enumerate([("A1", "PP_1.1", "bad"), ("A2", "PP_2.1", "bad"), ("A3", "PP_3.1", "mediocre"), ("A4", "", "good")]):
+        con.execute("INSERT INTO genome(genome_id,watch_id,accession,pathoplexus_accession) VALUES(?,?,?,?)", (f"g{i}", 1, acc, ppx))
+        con.execute("INSERT INTO qc_result(accession,tool,watch_id,status,score) VALUES(?,?,?,?,0)", (acc, "nextclade", 1, st))
+    rd = tmp_path / "run" / "squirrel"
+    rd.mkdir(parents=True)
+    (rd / "suggested_to_exclude.csv").write_text("name,note\nPP_1,N content is 0.3\nA4,N content is 0.4\n")
+    (rd / "alignment.suggested_mask.csv").write_text("Name,Minimum,Maximum,Length,present_in,note\n5,5,5,1,PP_1|PP_3,clustered_snps\n")
+    (rd / "alignment.aln.fasta.gz").write_bytes(__import__("gzip").compress(b">PP_1\nACGT\n>PP_2\nACGT\n>PP_3\nACGT\n>A4\nACGT\n"))
+    con.execute("INSERT INTO analysis_run(id,tool,status,watch_id,dataset_id,run_dir,finished,name,started) VALUES(1,'squirrel','done',1,1,?,'2026-01-01T00:00:00','n','2026-01-01T00:00:00')", (str(tmp_path / "run"),))
+    con.commit(); con.close()
+    q = qc.squirrel_qc(1)
+    assert q["judged"] == 4 and q["flagged"] == 2 and q["both"] == 1 and q["only_squirrel"] == 1 and q["only_nextclade"] == 1 and q["neither"] == 1
+    assert q["nextclade_mediocre"] == 1 and q["site_notes"] == {"clustered_snps": 2} and q["genomes_with_site_notes"] == 2
+    assert qc.squirrel_qc(99) == {"available": False}

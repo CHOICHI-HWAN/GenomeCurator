@@ -499,3 +499,56 @@ def per_genome(watch_id: int) -> dict[str, dict]:
         return out
     finally:
         con.close()
+
+
+# ------------------------------------------------------------------------------------------------ Squirrel's sequence QC (next to Nextclade's)
+def squirrel_qc(watch_id: int) -> dict:
+    """What the latest finished Squirrel run says about the genomes of this virus, laid next to the Nextclade QC. Squirrel names a genome by its Pathoplexus accession without version
+    (the INSDC accession when there is none), the way the export does. `suggested_to_exclude.csv` = whole-genome flags (e.g. N content), `alignment.suggested_mask.csv` = sites it suggests
+    to mask (clustered SNPs, ...) per genome. Nothing is removed or changed from this; it is information, like the other QC."""
+    import csv
+    con = connect()
+    try:
+        run = con.execute("SELECT id, run_dir, finished, dataset_id FROM analysis_run WHERE tool='squirrel' AND status='done' AND watch_id=? ORDER BY id DESC LIMIT 1", (watch_id,)).fetchone()
+        if not run:
+            return {"available": False}
+        d = Path(run["run_dir"]) / "squirrel"
+        flag, sites = {}, {}
+        f = d / "suggested_to_exclude.csv"
+        if f.exists():
+            for r in csv.DictReader(open(f, encoding="utf-8")):
+                flag[r["name"]] = r.get("note", "")
+        f = d / "alignment.suggested_mask.csv"
+        if f.exists():
+            for r in csv.DictReader(open(f, encoding="utf-8")):
+                for g in (r.get("present_in") or "").split("|"):
+                    if g:
+                        sites.setdefault(g, Counter())[r.get("note", "")] += 1
+        a = d / "alignment.aln.fasta.gz"
+        if not (flag or sites or a.exists()):
+            return {"available": False}
+        ids = {}
+        nc = {}
+        for r in con.execute("SELECT g.accession, g.pathoplexus_accession ppx, q.status FROM genome g LEFT JOIN qc_result q ON q.accession=g.accession AND q.watch_id=g.watch_id AND q.tool='nextclade' WHERE g.watch_id=?", (watch_id,)):
+            ids[(r["ppx"] or "").split(".")[0] or r["accession"]] = r["accession"]
+            nc[(r["ppx"] or "").split(".")[0] or r["accession"]] = r["status"]
+    finally:
+        con.close()
+    judged = set()
+    if a.exists():
+        from . import aligned
+        judged = {n for n, _s in aligned.read_alignment(a)}
+    judged |= set(flag)
+    mine = {g for g in judged if g in ids}
+    sq_bad = {g for g in mine if g in flag}
+    nc_bad = {g for g in mine if nc.get(g) == "bad"}              # "mediocre" is left out: Nextclade rates most of a clade I set that way (private mutations, ...), which would swamp the comparison
+    both, only_sq, only_nc = sq_bad & nc_bad, sq_bad - nc_bad, nc_bad - sq_bad
+    notes = Counter(re.sub(r"[0-9.]+", "#", n) for n in flag.values())
+    site_notes = Counter()
+    for g in mine:
+        site_notes.update(sites.get(g, {}))
+    return {"available": True, "run": run["id"], "finished": run["finished"], "judged": len(mine), "flagged": len(sq_bad), "notes": dict(notes.most_common(8)),
+            "genomes_with_site_notes": sum(1 for g in mine if g in sites), "site_notes": dict(site_notes.most_common(8)),
+            "both": len(both), "only_squirrel": len(only_sq), "only_nextclade": len(only_nc), "neither": len(mine) - len(sq_bad | nc_bad), "nextclade_mediocre": sum(1 for g in mine if nc.get(g) == "mediocre"),
+            "examples": [{"accession": ids[g], "id": g, "note": flag[g], "nextclade": nc.get(g) or "-"} for g in sorted(only_sq)[:15]],
+            "examples_nextclade": [{"accession": ids[g], "id": g, "note": "", "nextclade": "bad"} for g in sorted(only_nc)[:15]]}

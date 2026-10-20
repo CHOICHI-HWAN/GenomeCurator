@@ -11,7 +11,7 @@
 <script>
 const WID={{ wid }};
 const esc=s=>String(s??'').replace(/[&<>"]/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c]));
-const LBL={host_name:['숙주','host.tsv'],isolation_country:['나라','country.tsv'],collection_date:['수집일','(규칙)'],clade:['clade','clade.tsv']};
+const LBL={host_name:['숙주','host.tsv'],isolation_country:['나라','country.tsv'],collection_date:['수집일','(규칙)'],clade:['clade','clade.tsv'],sequencing_platform:['시퀀싱 플랫폼','platform.tsv'],isolation_source:['검체','specimen.tsv']};
 const ST={mapped:['동의어 → 표준','#2f79b5'],normalized:['형식 정리','#2f79b5'],empty:['빈 값 표기','#6b7785'],flagged:['검토 필요(그대로 둠)','#c27800'],unmapped:['사전에 없음(그대로 둠)','#c62828'],same:['이미 표준','#1a7f37']};
 const bar=(v,mx,col,txt)=>'<div style="display:flex;align-items:center;gap:6px;min-width:70px"><div style="flex:1;height:8px;background:#eef0f2;border-radius:2px"><div style="height:8px;width:'+(mx?Math.max(2,v/mx*100):0)+'%;background:'+col+';border-radius:2px"></div></div><span>'+txt+'</span></div>';
 async function load(){const d=await (await fetch('/api/vocab/'+WID+'/preview')).json();if(d.error){document.getElementById('root').innerHTML='<div class="card" style="color:var(--bad)">'+esc(d.error)+'</div>';return}

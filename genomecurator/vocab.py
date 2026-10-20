@@ -4,7 +4,7 @@ Sources spell the same thing in many ways (`Homo sapiens`, `Homosapiens`, `H. sa
 `2025-05-01/2025-05-28`, `15-May-2025`, ...). Compared as they come, such differences look like conflicts and end up as different values in the curated table. Here every incoming value of
 a standardised field is looked up in **our dictionary** and replaced by the standard term, **before** the sources are compared:
 
-    host_name, isolation_country, collection_date, clade
+    host_name, isolation_country, collection_date, clade, sequencing_platform (technology, models fold into it), isolation_source (specimen type)
 
 The dictionary lives in `resources/vocab/*.tsv` (host, country, clade: term, synonyms separated by `|`, and a flag for terms that are not what the field means, e.g. a cell line in the
 host field) and can be extended or overridden with files of the same name in `<data>/vocab/` (kept out of git, survives updates). Dates follow rules instead of a list.
@@ -29,10 +29,11 @@ from pathlib import Path
 from . import config, log
 
 _log = log.get("vocab")
-FIELDS = ("host_name", "isolation_country", "collection_date", "clade")
-FILES = {"host_name": "host", "isolation_country": "country", "clade": "clade", "collection_date": "date"}
+FIELDS = ("host_name", "isolation_country", "collection_date", "clade", "sequencing_platform", "isolation_source")
+FILES = {"host_name": "host", "isolation_country": "country", "clade": "clade", "collection_date": "date", "sequencing_platform": "platform", "isolation_source": "specimen"}
 COLUMNS = {"host_name": ["term", "synonyms", "taxon_id", "flag", "note"], "isolation_country": ["term", "synonyms", "iso3", "note"], "clade": ["scope", "term", "synonyms", "flag", "note"],
-           "collection_date": ["raw", "standard", "note"]}
+           "collection_date": ["raw", "standard", "note"], "sequencing_platform": ["term", "synonyms", "flag", "note"], "isolation_source": ["term", "synonyms", "flag", "note"]}
+MULTI = {"sequencing_platform"}        # several values in one field (`Illumina; Oxford Nanopore`): every part is looked up, the parts are joined again
 EMPTY = {"", "missing", "unknown", "unspecified", "n/a", "na", "none", "null", "nan", "not applicable", "not available", "not collected", "not provided", "not determined", "-", "--", "?"}
 MONTHS = {m: i for i, m in enumerate(["jan", "feb", "mar", "apr", "may", "jun", "jul", "aug", "sep", "oct", "nov", "dec"], 1)}
 _CACHE: dict = {}
@@ -208,6 +209,8 @@ def standardize(field: str, raw, scope: str = "*") -> Std:
     if clean.lower() in EMPTY:
         return Std("", "empty", f"{FILES.get(field, field)}.empty", "비어 있음을 뜻하는 표기") if clean else Std("", "empty")
     d = load(field)
+    if field in MULTI:
+        return _standardize_multi(field, s, clean, d)
     if field == "clade" and not any(k[0] == scope for k in d):                                       # no clade dictionary for this virus: leave it alone
         return Std(s, "nodict")
     probe = clean
@@ -227,6 +230,28 @@ def standardize(field: str, raw, scope: str = "*") -> Std:
     if clean == term:
         return Std(term, "normalized", f"{FILES[field]}.trim")
     return Std(term, "mapped", f"{FILES[field]}.synonym", note)
+
+
+def _standardize_multi(field: str, s: str, clean: str, d: dict) -> Std:
+    """A field that may hold several values (separated by `;`, `,` or `/`): each part is looked up; the standard value is the distinct standard terms in order of first appearance joined by `; `.
+    One unknown part makes the whole value `unmapped` (kept as it is), one flagged part makes it `flagged`."""
+    parts = [x.strip() for x in re.split(r"[;,/+]", clean) if x.strip()]
+    hits = []
+    whole = d.get(("*", key(clean)))
+    if whole:
+        hits = [whole]
+    else:
+        for x in parts:
+            h = d.get(("*", key(x)))
+            if not h:
+                return Std(clean if clean != s else s, "unmapped", f"{FILES[field]}.unmapped", f"사전에 없는 부분: '{x}'" if len(parts) > 1 else "사전에 없는 값 — 그대로 두고 검토 대상으로 표시")
+            hits.append(h)
+    terms = list(dict.fromkeys(h["term"] for h in hits))
+    val = "; ".join(terms)
+    bad = [h for h in hits if h["flag"]]
+    if bad:
+        return Std(val, "flagged", f"{FILES[field]}.flag:{bad[0]['flag']}", bad[0]["note"] or bad[0]["flag"])
+    return Std(val, "same" if val == s else "mapped", f"{FILES[field]}.synonym" if val != s else "")
 
 
 # ------------------------------------------------------------------------------------------------ applying it

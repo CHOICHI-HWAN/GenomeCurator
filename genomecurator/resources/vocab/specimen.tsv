@@ -1,0 +1,14 @@
+# 검체(isolation_source) 사전 — term(표준 검체 종류) · synonyms(`|`로 구분) · flag(검체 종류가 아닌 값) · note
+# 'clinical', 'patient', 'hospital'처럼 검체가 무엇인지 알 수 없는 값은 일부러 넣지 않았습니다 — '사전에 없는 값'으로 남겨 사람이 정합니다(용어 탭).
+# data/vocab/specimen.tsv에 같은 형식으로 쓰면 덮어쓰거나 보탤 수 있습니다.
+term	synonyms	flag	note
+Lesion swab	swab|lesion swab|skin lesion swab|leison swab|rash swab|lesion swabs|swab from lesion|pustule swabs|pustule swab|pustule|lesion swab specimen|vesicular fluid swab|herpes fluid swab|swab, lesion|lesion fluid swab|skin swab|dry swab|vesicle swab|rash lesion swab|swab lesion|lesion/swab|dna / swab|lesion; swab	
+Skin lesion	skin lesion|lesion|skin, lesion|skin|lesions|skin lesions|skin biopsy|skin lesion biopsy|cutaneous lesion|cutaneous|lesion biopsy|skin lesion tissue|lesion tissue|skin tissue		
+Skin lesion (vesicle/pustule)	skin lesion vesicle|skin lesion:vesicle|vesicle|vesicles|skin vesicle|blisters|blister|vesicular fluid|vesicle fluid|skin lesion pustule|skin lesion:pustule|pustules|pustule fluid		
+Skin lesion (crust/scab)	skin lesion crust|skin lesion:crust|crust|crusts|skin crust|skin lesion scab|scab|scabs|crust from crusted scab formation|lesion crust|lesion scab		
+Blood	blood|whole blood|blood sample|serum|plasma|blood serum|blood plasma		
+Oropharyngeal swab	oronasopharynx|oropharynx|oropharyngeal swab|throat swab|nasopharyngeal swab|nasopharynx|oropharyngeal|throat|saliva, oronasopharynx|oral swab|saliva|oral|oropharyngeal swabs|nasal swab|upper respiratory tract swab		
+Anogenital swab	penis: swab|penis: dry swab|penis swab|penile swab|penis|rectal swab|anal swab|anorectal swab|genital swab|anogenital swab|rectum|anus|perianal swab|penile lesion swab|genital lesion swab|vaginal swab|urethral swab|cutaneous, oropharangeal, or anorectal swab		
+Feces	feces|faeces|stool|fecal sample|stool sample|fecal		
+Tissue	tissue|biopsy|autopsy tissue		
+Cell culture isolate	cell culture|bei isolate|isolate|virus isolate|vero cell culture|culture|cell culture supernatant|passaged virus		

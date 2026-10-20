@@ -25,6 +25,7 @@ Nextclade가 부른 clade/lineage는 소스 값과 <b>같으면</b> 아무 일�
  {% if ds %}<button type="button" class="upd" style="display:none" onclick="qcDs('{{ ds }}')">데이터셋 업데이트</button>{% endif %}</td></tr>
 {% else %}<tr><td colspan="7" class="mut">등록된 바이러스가 없습니다.</td></tr>{% endfor %}</tbody></table>
 <form id="qf" method="post" style="display:none"></form>
+<div id="sqq"></div>
 
 {% for w in watches %}{% set sm = summary[w.id] %}{% if sm.worst or sm.clade_examples %}
 <h3>{{ w.name }}</h3>
@@ -38,6 +39,15 @@ Nextclade가 부른 clade/lineage는 소스 값과 <b>같으면</b> 아무 일�
 {% endif %}{% endfor %}
 
 <script>
+const WN={ {% for w in watches %}{{ w.id }}:{{ w.name|tojson }},{% endfor %} },WIDS=Object.keys(WN);
+(async()=>{let h='';for(const w of WIDS){let q;try{q=await (await fetch('/api/qc/'+w+'/squirrel')).json()}catch(e){continue}if(!q.available)continue;const L={'N content is #':'N 비율이 높음'};
+ h+='<div class="card"><b>Squirrel QC · '+WN[w]+'</b> <span class="mut" style="font-size:12.5px">(Squirrel 실행 #'+q.run+', '+(q.finished||'').slice(0,16)+') — Nextclade QC와 따로 판단한 정보입니다. 아무것도 제거하거나 바꾸지 않습니다.</span>'+
+ '<div style="margin-top:6px">판정한 유전체 <b>'+q.judged.toLocaleString()+'</b> · Squirrel이 제외를 권한 유전체 <b>'+q.flagged+'</b> '+Object.entries(q.notes).map(([k,v])=>'<span class="mut">('+(L[k]||k)+' '+v+')</span>').join(' ')+
+ ' · 변이 위치 마스킹 권고가 있는 유전체 <b>'+q.genomes_with_site_notes+'</b> '+Object.entries(q.site_notes).map(([k,v])=>'<span class="mut">('+k+' '+v+')</span>').join(' ')+'</div>'+
+ '<div style="margin-top:4px">Nextclade <b>불량</b>과 대조: 둘 다 <b>'+q.both+'</b> · Squirrel만 <b style="color:'+(q.only_squirrel?'var(--warn)':'inherit')+'">'+q.only_squirrel+'</b> · Nextclade 불량만 <b style="color:'+(q.only_nextclade?'var(--warn)':'inherit')+'">'+q.only_nextclade+'</b> · 둘 다 아님 '+q.neither+
+ ' <span class="mut">(Nextclade “주의” '+q.nextclade_mediocre+'건은 비교에서 뺐습니다 — 원숭이두창에서는 대부분이 이 등급입니다)</span></div>'+
+ ((q.examples.length||q.examples_nextclade.length)?'<details style="margin-top:6px"><summary>판정이 갈리는 유전체 예시</summary><table><tr><th>Accession</th><th>Squirrel</th><th>Nextclade</th></tr>'+q.examples.map(x=>'<tr><td>'+x.accession+'</td><td>'+(L[x.note.replace(/[0-9.]+/g,'#')]||x.note)+'</td><td>'+x.nextclade+'</td></tr>').join('')+q.examples_nextclade.map(x=>'<tr><td>'+x.accession+'</td><td>-</td><td>불량</td></tr>').join('')+'</table></details>':'')+'</div>'}
+ document.getElementById('sqq').innerHTML=h})();
 function qcRun(w,force,chk){const f=document.getElementById('qf');f.action='/api/qc/run?watch='+w+'&force='+force+'&then_check='+chk;runJob(f)}
 function qcDs(p){const f=document.getElementById('qf');f.action='/api/qc/dataset?path='+encodeURIComponent(p);runJob(f)}
 (async()=>{let d;try{d=await (await fetch('/api/qc/datasets')).json()}catch(e){return}

@@ -6,7 +6,7 @@ from fastapi import FastAPI, Form, Request
 from fastapi.responses import FileResponse, HTMLResponse, JSONResponse, RedirectResponse, Response, StreamingResponse
 from fastapi.templating import Jinja2Templates
 
-from . import __version__, analysis, completeness, datasets, exclusions, export, cooccur, geo, heatmap, vocab, insight, lineages, mutprofile, nextstrain, novel, outbreak, pathoplexus, private, qc, squirrel, config, curate, jobs, log
+from . import variantcall, __version__, analysis, completeness, datasets, exclusions, export, cooccur, geo, heatmap, vocab, insight, lineages, mutprofile, nextstrain, novel, outbreak, pathoplexus, private, qc, squirrel, config, curate, jobs, log
 from .db import audit_now, connect
 
 _log = log.get("web")
@@ -922,6 +922,36 @@ def create_app(scheduler: bool = True) -> FastAPI:
         except (ValueError, RuntimeError) as e:
             return JSONResponse({"error": str(e)}, 400)
 
+    @app.get("/analysis/{rid}/concordance")
+    def analysis_concordance_page(request: Request, rid: int):
+        r = nextstrain.get_run(rid)
+        if not r or r["tool"] != "mutprofile" or r["status"] != "done":
+            return JSONResponse({"error": "finished mutation-profile run not found"}, 404)
+        return render(request, "concordance.html", nav="res", run=r, vc=variantcall.status())
+
+    @app.get("/api/analyses/{rid}/concordance")
+    def api_analysis_concordance(rid: int, max_n: float = 0.05):
+        r = nextstrain.get_run(rid)
+        if not r or r["tool"] != "mutprofile" or r["status"] != "done":
+            return JSONResponse({"error": "finished mutation-profile run not found"}, 404)
+        return variantcall.concordance_for_run(r, min(1.0, max(0.0, max_n)))
+
+    @app.post("/api/analyses/{rid}/variantcall")
+    def api_analysis_variantcall(request: Request, rid: int):
+        """snippy + lofreq on the genomes of a finished mutation-profile run (a server job; minutes for a thousand genomes)."""
+        if not _same_origin(request):
+            return JSONResponse({"error": "cross-site request refused"}, 403)
+        r = nextstrain.get_run(rid)
+        if not r or r["tool"] != "mutprofile" or r["status"] != "done":
+            return JSONResponse({"error": "finished mutation-profile run not found"}, 404)
+        if not variantcall.status()["ok"]:
+            return JSONResponse({"error": "snippy / lofreq 환경이 없습니다 (variantcall/*.yml)"}, 400)
+
+        def work(p):
+            res = variantcall.run_for_mutprofile(r, progress=lambda i, n: p(100 * i / max(n, 1), f"{i}/{n} 유전체"))
+            return {"redirect": f"/analysis/{rid}/concordance", "result": res}
+        return start_job(work, f"변이 호출(snippy+lofreq) · {r['name']}", "variantcall")
+
     @app.get("/analysis/{rid}/insight")
     def analysis_insight_page(request: Request, rid: int):
         r = nextstrain.get_run(rid)
@@ -1311,6 +1341,11 @@ def create_app(scheduler: bool = True) -> FastAPI:
         return render(request, "qc.html", nav="qc", watches=watches, tool_version=qc.nextclade_version(), tool_ok=qc.nextclade_bin() is not None,
                       summary={w["id"]: qc.summary(w["id"]) for w in watches},
                       datasets_map={w["id"]: qc.dataset_for(w["taxon"]) for w in watches})
+
+    @app.get("/api/qc/{watch}/squirrel")
+    def api_qc_squirrel(watch: int):
+        """Squirrel's sequence QC of the latest finished Squirrel run, next to Nextclade's."""
+        return qc.squirrel_qc(watch)
 
     @app.get("/api/qc/datasets")
     def api_qc_datasets():

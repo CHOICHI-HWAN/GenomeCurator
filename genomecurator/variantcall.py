@@ -12,6 +12,8 @@ import tempfile
 from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
 
+from collections import Counter
+
 from . import log, mutprofile, nextstrain
 
 _log = log.get("variantcall")
@@ -121,3 +123,76 @@ def concordance(callers: dict[str, dict[str, set]]) -> dict:
     return {"callers": names, "rows": rows, "summary": {"genomes": len(genomes), "variants": len(rows), "all_agree": agree,
                                                          "share_all_agree": round(agree / len(rows), 4) if rows else None,
                                                          "only_one": sum(1 for r in rows if r["n"] == 1 and r["of"] > 1)}}
+
+
+# ------------------------------------------------------------------------------------------------ on a finished mutation-profile run
+def _vc_file(run: dict) -> Path:
+    return Path(run["run_dir"]) / "mutprofile" / "variantcall.tsv"
+
+
+def run_for_mutprofile(run: dict, workers: int | None = None, progress=None) -> dict:
+    """snippy + lofreq on every genome of a finished mutation-profile run, against the run's reference; the calls are kept as `mutprofile/variantcall.tsv` next to the run
+    (genome, pos, ref, alt, snippy, lofreq, dp, af). The run's own SNVs (from the Squirrel / minimap2 alignment) are not touched."""
+    from . import datasets, squirrel
+    ref = mutprofile.summary(run).get("reference", "")
+    fa, _gff = mutprofile.reference_by_name(ref)
+    ds = datasets.get(run["dataset_id"])
+    members = set(nextstrain.run_members(run))
+    tmp = Path(run["run_dir"]) / "vc_input.fasta"
+    squirrel.write_input(ds, tmp)
+    try:
+        res = call_many(tmp, fa, members, workers=workers or max(1, (os.cpu_count() or 4) // 2), progress=progress)
+    finally:
+        tmp.unlink(missing_ok=True)
+    rows = []
+    for g, r in res.items():
+        for v in sorted(set(r["snippy"]) | set(r["lofreq"])):
+            lf = r["lofreq"].get(v) or {}
+            rows.append((g, *v, int(v in r["snippy"]), int(v in r["lofreq"]), lf.get("dp") or "", lf.get("af") if lf.get("af") is not None else ""))
+    out = _vc_file(run)
+    with open(out, "w", encoding="utf-8", newline="") as f:
+        f.write("genome\tpos\tref\talt\tsnippy\tlofreq\tdp\taf\n")
+        f.write("".join("\t".join(map(str, r)) + "\n" for r in rows))
+    ids = Path(run["run_dir"]) / "mutprofile" / "variantcall.genomes.txt"
+    ids.write_text("\n".join(sorted(res)) + "\n", encoding="utf-8")
+    return {"genomes": len(res), "calls": len(rows), "reference": ref}
+
+
+def available(run: dict) -> bool:
+    return _vc_file(run).exists()
+
+
+def concordance_for_run(run: dict, max_n: float | None = 0.05, limit: int = 300) -> dict:
+    """Agreement of three callers on the SNVs of a mutation-profile run: the run's own (`aligner`, Squirrel alignment by default), snippy and lofreq. The ITR is left out like everywhere
+    else. A site is listed when the callers do not all agree; for each: how many genomes each caller called it in, and in how many of them it is called by all."""
+    if not available(run):
+        return {"available": False}
+    win = mutprofile.run_itr(run)
+    inwin = (lambda p: win[0] <= p <= win[1]) if win else (lambda p: True)
+    judged = set((Path(run["run_dir"]) / "mutprofile" / "variantcall.genomes.txt").read_text(encoding="utf-8").split())
+    ok = mutprofile.good_samples(run, max_n)
+    if ok is not None:
+        judged &= ok
+    callers: dict[str, dict[str, set]] = {"mutprofile": {g: set() for g in judged}, "snippy": {g: set() for g in judged}, "lofreq": {g: set() for g in judged}}
+    for r in mutprofile._load_mutations(run):
+        if r["sample"] in judged:
+            callers["mutprofile"][r["sample"]].add((int(r["pos"]), r["ref"].upper(), r["alt"].upper()))
+    import csv
+    for r in csv.DictReader(open(_vc_file(run), encoding="utf-8"), delimiter="\t"):
+        if r["genome"] in judged and inwin(int(r["pos"])):
+            v = (int(r["pos"]), r["ref"], r["alt"])
+            for t in ("snippy", "lofreq"):
+                if r[t] == "1":
+                    callers[t][r["genome"]].add(v)
+    c = concordance(callers)
+    by_site: dict[tuple, dict] = {}
+    for r in c["rows"]:
+        s = by_site.setdefault((r["pos"], r["ref"], r["alt"]), {"pos": r["pos"], "ref": r["ref"], "alt": r["alt"], "genomes": 0, "all": 0, **{t: 0 for t in callers}})
+        s["genomes"] += 1
+        s["all"] += r["n"] == r["of"]
+        for t in r["by"]:
+            s[t] += 1
+    sites = sorted((s for s in by_site.values() if s["all"] < s["genomes"]), key=lambda s: (-(s["genomes"] - s["all"]), s["pos"]))
+    patterns = Counter(",".join(r["by"]) for r in c["rows"])
+    return {"available": True, "genomes": len(judged), "max_n": max_n, "summary": c["summary"], "patterns": dict(patterns.most_common()), "sites_total": len(by_site),
+            "sites_disagree": len(sites), "sites": sites[:limit], "callers": list(callers)}
