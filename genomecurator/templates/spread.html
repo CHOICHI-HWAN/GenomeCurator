@@ -31,6 +31,11 @@
 </div>
 <div id="ctry" style="margin-top:10px"></div>
 <div id="fig" style="overflow:auto;background:#fff;border:1px solid var(--bd);border-radius:6px;margin-top:10px"></div>
+<div class="card" id="lcard" style="margin-top:10px">
+ <div style="display:flex;gap:12px;flex-wrap:wrap;align-items:center;font-size:13px"><b>보고된 유전체 수 추이</b>
+  <label>보기 <select id="lcm" onchange="lineChart(CUR<0?D.periods.length-1:CUR)"><option value="per">기간별</option><option value="cum">누적</option></select></label>
+  <span class="mut">위 타임라인과 가로축이 같고, 재생하면 커서까지 그려집니다 · 월까지만 있는 날짜는 포함하지 않음</span></div>
+ <div id="lchart" style="overflow:auto;margin-top:6px"></div></div>
 <form id="jf" method="post" style="display:none"></form>
 <script>
 const RID={{ run.id }};
@@ -44,14 +49,18 @@ async function load(){const q=new URLSearchParams({view:document.getElementById(
  if(!obSet){obSet=true;document.getElementById('ob').innerHTML=D.outbreaks.map(o=>'<option '+(o===D.outbreak?'selected':'')+'>'+esc(o)+'</option>').join('')}
  document.getElementById('info').textContent='유전체 '+D.genomes.toLocaleString()+'건 중 날짜가 있는 '+D.dated.toLocaleString()+'건(일 단위 '+D.day_precision.toLocaleString()+' · 월까지만 '+D.month_only.toLocaleString()+') · 날짜 없음 '+D.no_date+'건은 제외 · 시간 단위: '+(D.bin==='week'?'ISO 주':'월')+' · 정의 '+(D.definitions||'없음');
  const sl=document.getElementById('sl');sl.max=Math.max(0,D.periods.length-1);CUR=D.periods.length-1;sl.value=CUR;stop();draw();mapInit()}
+function firstIdxRow(r){let f=1e9;const mi=m=>{for(let i=0;i<D.starts.length;i++)if(D.starts[i].slice(0,7)===m)return i;return 1e9};r.countries.forEach(c=>{Object.keys(c.cells).forEach(p=>{const i=D.periods.indexOf(p);if(i>=0)f=Math.min(f,i)});Object.keys(c.monthly).forEach(m=>f=Math.min(f,mi(m)))});return f}
+function trackLayout(lim,cw){const items=[];D.rows.forEach((r,ri)=>{const f=firstIdxRow(r);if(f>lim||f>=1e9)return;const mut=D.view==='mutation';let t='';if(mut)t=r.label+(r.gene?' '+r.gene:'');else if(r.own&&r.own.length)t=r.label+' '+r.own.join(' ');else return;items.push({f,t,ri})});
+ items.sort((a,b)=>a.f-b.f);const ends=[],MAXL=7;items.forEach(it=>{const w=it.t.length*5.6+12,x=it.f*cw;let l=ends.findIndex(e=>e+4<=x);if(l<0){l=ends.length<MAXL?ends.length:-1}if(l>=0){ends[l]=x+w;it.lane=l}else it.lane=-1});return {items,h:ends.length?ends.length*12+10:0}}
 function draw(){const P=D.periods,n=P.length;if(!n){document.getElementById('fig').innerHTML='<div class="card mut">그릴 데이터가 없습니다.</div>';return}
- const lim=document.getElementById('fl').checked&&CUR>=0?CUR:n-1,LW=380,cw=Math.max(2.5,Math.min(16,1100/n)),RH=15,top=34,all=document.getElementById('ex').checked,mut=D.view==='mutation';
+ const lim=document.getElementById('fl').checked&&CUR>=0?CUR:n-1,LW=380,cw=Math.max(2.5,Math.min(16,1100/n)),RH=15,TR=trackLayout(lim,cw),top=34+TR.h,all=document.getElementById('ex').checked,mut=D.view==='mutation';
  const idx={};P.forEach((p,i)=>idx[p]=i);const mIdx={};D.starts.forEach((s,i)=>{const m=s.slice(0,7);(mIdx[m]=mIdx[m]||[]).push(i)});
  let maxc=1;D.rows.forEach(r=>r.countries.forEach(c=>Object.values(c.cells).forEach(v=>maxc=Math.max(maxc,v))));
  const rows=[];D.rows.forEach((r,ri)=>{rows.push({r,c:null,ri});if(all||open[r.key])r.countries.forEach(c=>rows.push({r,c,ri}))});
  const W=LW+n*cw+20,H=top+rows.length*RH+10;let o='<svg xmlns="http://www.w3.org/2000/svg" id="svg" width="'+W+'" height="'+H+'" font-family="Helvetica,Arial,sans-serif" font-size="10.5">';
  // axis: year starts and month ticks
  D.starts.forEach((s,i)=>{const m=s.slice(5,7);if(D.bin==='month'||s.slice(8,10)<='07'){if(m==='01'&&(D.bin==='month'||s.slice(8,10)<='07'))o+='<text x="'+(LW+i*cw)+'" y="12" font-weight="bold">'+s.slice(0,4)+'</text><line x1="'+(LW+i*cw)+'" x2="'+(LW+i*cw)+'" y1="16" y2="'+H+'" stroke="#bbb"/>';else if(cw*(D.bin==='week'?4.3:1)>=14||['04','07','10'].includes(m))o+='<text x="'+(LW+i*cw)+'" y="26" fill="#777" font-size="9">'+m+'</text>'}});
+ TR.items.forEach(it=>{const x=LW+it.f*cw,col=PAL[it.ri%PAL.length];o+='<line x1="'+x+'" x2="'+x+'" y1="'+(it.lane>=0?34+it.lane*12+3:34)+'" y2="'+(top-2)+'" stroke="'+col+'" stroke-width="1" stroke-dasharray="2 2" opacity=".8"/><circle cx="'+x+'" cy="'+(top-2)+'" r="2.5" fill="'+col+'"/>'+(it.lane>=0?'<text x="'+(x+3)+'" y="'+(34+it.lane*12+9)+'" font-size="10" font-weight="bold" fill="'+col+'" style="paint-order:stroke;stroke:#fff;stroke-width:3px">'+esc(it.t)+'</text>':'')});
  rows.forEach((x,k)=>{const y=top+k*RH,{r,c}=x,isC=!!c;if(!isC&&x.ri%2==0)o+='<rect x="0" y="'+y+'" width="'+W+'" height="'+RH+'" fill="#f6f6f6"/>';
   const first=isC?c.first:r.first,last=isC?c.last:r.last,nn=isC?c.n:r.n;
   let label;if(isC)label='<tspan fill="#555">'+esc(c.country)+'</tspan> <tspan fill="#888">('+esc(first)+' ── '+esc(last)+')</tspan> <tspan fill="#888">n='+nn+'</tspan>';
@@ -62,9 +71,20 @@ function draw(){const P=D.periods,n=P.length;if(!n){document.getElementById('fig
   const col=PAL[x.ri%PAL.length];let lo=1e9,hi=-1;
   Object.entries(mon).forEach(([m,v])=>{const ii=mIdx[m];if(!ii||ii[0]>lim)return;lo=Math.min(lo,ii[0]);hi=Math.max(hi,ii[ii.length-1]);o+='<rect x="'+(LW+ii[0]*cw)+'" y="'+(y+3)+'" width="'+(ii.length*cw)+'" height="'+(RH-6)+'" fill="'+col+'" opacity="0.18"><title>'+esc((isC?c.country:r.label)+' · '+m+' (월까지만 있는 날짜 '+v+'건)')+'</title></rect>'});
   Object.entries(agg).forEach(([p,v])=>{const i=idx[p];if(i==null||i>lim)return;lo=Math.min(lo,i);hi=Math.max(hi,i);o+='<rect x="'+(LW+i*cw)+'" y="'+(y+2)+'" width="'+cw+'" height="'+(RH-4)+'" fill="'+col+'" opacity="'+(0.35+0.65*Math.min(1,Math.log(1+v)/Math.log(1+(isC?maxc:maxc*3))))+'"><title>'+esc((isC?c.country:r.label)+' · '+p+' · '+v+'건')+'</title></rect>'});
-  if(hi>=0){o+='<line x1="'+(LW+lo*cw)+'" x2="'+(LW+(hi+1)*cw)+'" y1="'+(y+RH/2)+'" y2="'+(y+RH/2)+'" stroke="#333" stroke-width="1"/><path d="M'+(LW+lo*cw)+' '+(y+RH/2-4)+'l4 4l-4 4l-4 -4z" fill="#000"/>'}});
+  if(hi>=0){o+='<line x1="'+(LW+lo*cw)+'" x2="'+(LW+(hi+1)*cw)+'" y1="'+(y+RH/2)+'" y2="'+(y+RH/2)+'" stroke="#333" stroke-width="1"/><path d="M'+(LW+lo*cw)+' '+(y+RH/2-4)+'l4 4l-4 4l-4 -4z" fill="#000"/>';
+   const flag=mut?r.label:(r.own&&r.own.length?r.own.join(' '):'');if(flag)o+='<text x="'+(LW+lo*cw+7)+'" y="'+(y+RH-4)+'" font-size="9.5" font-weight="bold" fill="#2a6" style="paint-order:stroke;stroke:#fff;stroke-width:3px;pointer-events:none">'+esc(flag)+'</text>'}});
  if(lim<n-1)o+='<line x1="'+(LW+(lim+1)*cw)+'" x2="'+(LW+(lim+1)*cw)+'" y1="16" y2="'+H+'" stroke="#d6249f" stroke-width="2"/>';
- o+='</svg>';document.getElementById('fig').innerHTML=o;panel()}
+ o+='</svg>';document.getElementById('fig').innerHTML=o;panel();lineChart(lim)}
+function lineChart(lim){const P=D.periods,n=P.length,LW=380,cw=Math.max(2.5,Math.min(16,1100/n)),cum=document.getElementById('lcm').value==='cum',Ht=190,m={t:10,b:24},W=LW+n*cw+20;
+ const series=D.rows.map((r,ri)=>{const v=new Array(n).fill(0);r.countries.forEach(c=>Object.entries(c.cells).forEach(([p,x])=>{const i=P.indexOf(p);if(i>=0)v[i]+=x}));return {ri,label:r.label,v,tot:v.reduce((a,b)=>a+b,0)}}).filter(x=>x.tot>0).sort((a,b)=>b.tot-a.tot).slice(0,8);
+ const all=new Array(n).fill(0);series.forEach(x=>x.v.forEach((y,i)=>all[i]+=y));if(D.view==='mutation'||series.length>1)series.unshift({ri:-1,label:D.view==='mutation'?'(모든 변이 합)':'전체',v:all,tot:all.reduce((a,b)=>a+b,0)});
+ series.forEach(x=>{if(cum){let c=0;x.c=x.v.map(y=>c+=y)}else x.c=x.v});const mx=Math.max(1,...series.map(x=>Math.max(...x.c)));
+ let o='<svg xmlns="http://www.w3.org/2000/svg" width="'+W+'" height="'+Ht+'" font-family="Helvetica,Arial,sans-serif" font-size="10.5">';const y=v=>Ht-m.b-v/mx*(Ht-m.t-m.b);
+ for(let k=0;k<=4;k++){const v=mx*k/4;o+='<line x1="'+LW+'" x2="'+(LW+n*cw)+'" y1="'+y(v)+'" y2="'+y(v)+'" stroke="#eee"/><text x="'+(LW-4)+'" y="'+(y(v)+3)+'" text-anchor="end" fill="#666">'+Math.round(v)+'</text>'}
+ D.starts.forEach((s,i)=>{if(s.slice(5,7)==='01'&&(D.bin==='month'||s.slice(8,10)<='07'))o+='<text x="'+(LW+i*cw)+'" y="'+(Ht-8)+'" font-weight="bold" fill="#555">'+s.slice(0,4)+'</text><line x1="'+(LW+i*cw)+'" x2="'+(LW+i*cw)+'" y1="'+m.t+'" y2="'+(Ht-m.b)+'" stroke="#ccc"/>'});
+ series.forEach((x,k)=>{const col=x.ri<0?'#222':PAL[x.ri%PAL.length],pts=[];for(let i=0;i<=Math.min(lim,n-1);i++)pts.push((LW+i*cw+cw/2).toFixed(1)+','+y(x.c[i]).toFixed(1));if(pts.length>1)o+='<polyline fill="none" stroke="'+col+'" stroke-width="'+(x.ri<0?2.2:1.5)+'" '+(x.ri<0?'':'')+'points="'+pts.join(' ')+'"/>';const e=Math.min(lim,n-1);o+='<circle cx="'+(LW+e*cw+cw/2).toFixed(1)+'" cy="'+y(x.c[e])+'" r="2.6" fill="'+col+'"/>';o+='<g transform="translate(6 '+(14+k*14)+')"><rect width="10" height="3" y="-3" fill="'+col+'"/><text x="14" y="1" fill="#444">'+esc(x.label)+' <tspan fill="#999">'+x.tot+'</tspan></text></g>'});
+ if(lim<n-1)o+='<line x1="'+(LW+(lim+1)*cw)+'" x2="'+(LW+(lim+1)*cw)+'" y1="'+m.t+'" y2="'+(Ht-m.b)+'" stroke="#d6249f" stroke-width="2"/>';
+ document.getElementById('lchart').innerHTML=o+'</svg>'}
 function mapData(lim,row){const cs={},P=D.periods,mi=m=>{const ii=[];D.starts.forEach((st,i)=>{if(st.slice(0,7)===m)ii.push(i)});return ii};
  D.rows.forEach((r,ri)=>{if(row>=0&&ri!==row)return;r.countries.forEach(c=>{const o=cs[c.country]=cs[c.country]||{name:c.country,iso:c.iso,lon:c.lon,lat:c.lat,n:0,newn:0,by:{},first:1e9};
   Object.entries(c.cells).forEach(([p,x])=>{const i=P.indexOf(p);if(i<0)return;o.first=Math.min(o.first,i);if(i<=lim){o.n+=x;o.by[ri]=(o.by[ri]||0)+x}if(i===lim)o.newn+=x});
