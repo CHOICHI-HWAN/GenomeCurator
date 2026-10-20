@@ -2429,3 +2429,33 @@ def test_novel_variant_discovery_statuses_and_known_mutations(monkeypatch):
     assert d["candidates"][0]["status"] == "new" and d["n_novel_mutations"] == 2 and d["recent_novel_mutations"] == 1                     # new ones are listed first
     assert d["curve"][-1]["total"] == 2 and {c["month"]: c["new"] for c in d["curve"]}["2025-01"] == 1
     assert novel.discover({"dataset_id": 1}, min_size=5)["candidates"] == []          # a larger minimum size drops them
+
+
+def test_mutation_groups_and_pca_of_genomes(monkeypatch):
+    import numpy as np
+    from genomecurator import cooccur, insight, lineages, mutprofile, novel
+    d = np.array([[0, .02, .9, .9], [.02, 0, .9, .9], [.9, .9, 0, .1], [.9, .9, .1, 0]])
+    assert sorted(sorted(c) for c in cooccur._upgma(d, 0.15)) == [[0, 1], [2, 3]] and len(cooccur._upgma(d, 0.0)) == 4 and len(cooccur._upgma(d, 0.95)) == 1
+    hdr = ["sample", "pos", "ref", "alt", "gene", "aa_change", "effect", "profile_of_interest"]
+    rows = []
+    def add(pos, samples, apo="other"):
+        for s in samples:
+            rows.append({"sample": s, "pos": str(pos), "ref": "G", "alt": "A", "gene": "G1", "aa_change": "K2R", "effect": "nonsynonymous", "profile_of_interest": apo})
+    A = [f"a{i}" for i in range(6)]; B = [f"b{i}" for i in range(6)]
+    add(100, A); add(200, A); add(300, A[:5] + ["b0"])             # 100 and 200 have identical carriers, 300 almost (one genome swapped)
+    add(500, B, "GA>AA"); add(600, B)                             # a second group
+    add(900, ["a0", "b0", "a1"])                                  # a mutation that does not follow the groups
+    monkeypatch.setattr(insight, "_mutations", lambda run, mn=None: rows)
+    monkeypatch.setattr(lineages, "_genomes", lambda run: [{"id": s, "lineage": "X" if s[0] == "a" else "Y", "outbreak": "o", "clade": "", "country": "U", "date": "2025-01-01"} for s in A + B])
+    monkeypatch.setattr(mutprofile, "summary", lambda run: {"reference": "R"})
+    monkeypatch.setattr(novel, "discover", lambda *a, **k: {"available": False})
+    r = cooccur.analyse({"dataset_id": 1}, max_n=None, min_carriers=3, merge=0.3)
+    assert r["available"] and r["n_genomes"] == 12 and r["n_sites"] == 6
+    groups = {frozenset(m["label"] for m in g["mutations"]) for g in r["groups"]}
+    assert frozenset({"G100A", "G200A", "G300A"}) in groups and frozenset({"G500A", "G600A"}) in groups and frozenset({"G900A"}) in groups
+    assert r["explained"][0] > 0.4 and r["lineage_eta2"][0] > 0.8                                    # the first axis is the lineage split
+    x = {g["id"]: g["pc"][0] for g in r["genomes"]}
+    assert all(x[a] * x["b5"] < 0 for a in A[1:5])                                                    # lineages X and Y lie on opposite sides of PC1
+    strict = cooccur.analyse({"dataset_id": 1}, max_n=None, min_carriers=3, merge=0.0)
+    assert frozenset({"G100A", "G200A"}) in {frozenset(m["label"] for m in g["mutations"]) for g in strict["groups"]} and len(strict["groups"]) > len(r["groups"])
+    assert cooccur.analyse({"dataset_id": 1}, max_n=None, min_carriers=50)["available"] is False

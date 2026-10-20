@@ -6,7 +6,7 @@ from fastapi import FastAPI, Form, Request
 from fastapi.responses import FileResponse, HTMLResponse, JSONResponse, RedirectResponse, Response, StreamingResponse
 from fastapi.templating import Jinja2Templates
 
-from . import __version__, analysis, completeness, datasets, exclusions, export, geo, insight, lineages, mutprofile, nextstrain, novel, outbreak, pathoplexus, private, qc, squirrel, config, curate, jobs, log
+from . import __version__, analysis, completeness, datasets, exclusions, export, cooccur, geo, insight, lineages, mutprofile, nextstrain, novel, outbreak, pathoplexus, private, qc, squirrel, config, curate, jobs, log
 from .db import audit_now, connect
 
 _log = log.get("web")
@@ -837,6 +837,24 @@ def create_app(scheduler: bool = True) -> FastAPI:
             return JSONResponse({"error": "finished mutation-profile run not found"}, 404)
         try:
             return insight.insight(r, window_days=max(1, window_days), min_carriers=max(2, min_carriers), skip_apobec=bool(skip_apobec), max_n=min(1.0, max(0.0, max_n)))
+        except (ValueError, RuntimeError) as e:
+            return JSONResponse({"error": str(e)}, 400)
+
+    @app.get("/analysis/{rid}/pca")
+    def analysis_pca_page(request: Request, rid: int):
+        r = nextstrain.get_run(rid)
+        if not r or r["tool"] != "mutprofile" or r["status"] != "done":
+            return JSONResponse({"error": "finished mutation-profile run not found"}, 404)
+        return render(request, "pca.html", nav="ns", run=r)
+
+    @app.get("/api/analyses/{rid}/pca")
+    def api_analysis_pca(rid: int, max_n: float = 0.05, min_carriers: int = 3, merge: float = 0.15):
+        """Groups of co-occurring mutations (Jaccard clustering) and the principal components of the genomes."""
+        r = nextstrain.get_run(rid)
+        if not r or r["tool"] != "mutprofile" or r["status"] != "done":
+            return JSONResponse({"error": "finished mutation-profile run not found"}, 404)
+        try:
+            return cooccur.analyse(r, min(1.0, max(0.0, max_n)), max(2, min_carriers), 0.9, min(0.6, max(0.0, merge)))
         except (ValueError, RuntimeError) as e:
             return JSONResponse({"error": str(e)}, 400)
 

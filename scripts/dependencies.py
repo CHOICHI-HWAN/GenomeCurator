@@ -25,6 +25,7 @@ DIRECT = [
     ("runtime", "python-multipart", "웹 폼(승인·적용 등) 해석 / Parses web form posts"),
     ("runtime", "pyyaml", "Nextstrain 분석 설정(YAML) 검사·병합 / Checks and merges the YAML settings of a Nextstrain analysis"),
     ("runtime", "openpyxl", "비공개 유전체 스프레드시트(.xlsx) 업로드·템플릿 / Spreadsheet (.xlsx) upload and template for private genomes"),
+    ("runtime", "numpy", "변이 묶음(Jaccard 군집)과 유전체 주성분 분석 / Mutation groups (Jaccard clustering) and principal components of the genomes"),
     ("dev", "pytest", "테스트 / Test runner"),
     ("demo", "pillow", "README GIF 조립 / Assembles the README GIFs"),
     ("demo", "websocket-client", "헤드리스 Chrome 조종(DevTools 프로토콜) / Talks to headless Chrome over the DevTools protocol"),

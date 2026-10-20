@@ -12,6 +12,7 @@ dependencies = [
   "python-multipart>=0.0.9",
   "pyyaml>=6",          # reads / checks the YAML settings of a Nextstrain analysis
   "openpyxl>=3.1",      # private genomes can be uploaded as a spreadsheet (.xlsx); only used for that
+  "numpy>=1.26",        # mutation groups and the principal components of the genomes (cooccur.py)
 ]
 
 [project.optional-dependencies]

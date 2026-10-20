@@ -15,6 +15,7 @@ dependencies:
   - python-multipart>=0.0.9
   - pyyaml>=6
   - openpyxl>=3.1         # spreadsheet (.xlsx) upload and template for private genomes
+  - numpy>=1.26           # mutation groups and principal components of the genomes
   - nextclade>=3          # clade/lineage and sequence QC (QC tab); optional at runtime, sequence statistics work without it
   - pytest>=8
   - pip:
