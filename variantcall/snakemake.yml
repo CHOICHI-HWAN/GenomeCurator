@@ -1,0 +1,8 @@
+# Snakemake (snakemake.github.io, MIT): runs flows/variantcheck/Snakefile (snippy -> lofreq per genome) beside the direct implementation in genomecurator/variantcall.py.
+#   mamba env create -f variantcall/snakemake.yml          (the app finds it by name: GC_SNAKEMAKE_ENV, default gc-snakemake; it starts the tool environments itself, see variantcall/snippy.yml, lofreq.yml)
+name: gc-snakemake
+channels:
+  - bioconda
+  - conda-forge
+dependencies:
+  - snakemake

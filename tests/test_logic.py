@@ -2839,3 +2839,31 @@ def test_support_badges_say_what_is_built_for_which_virus(tmp_path, monkeypatch)
     monkeypatch.setattr(config, "DB_PATH", tmp_path / "t.db")
     c = TestClient(web.create_app(scheduler=False))
     assert c.get("/").status_code == 200 and c.get("/hub").status_code == 200
+
+
+def test_variantflow_parity_and_status(tmp_path, monkeypatch):
+    from genomecurator import variantflow
+    d = tmp_path / "mutprofile"
+    f = tmp_path / "variantflow"
+    d.mkdir(); f.mkdir()
+    head = "genome\tpos\tref\talt\tsnippy\tlofreq\tdp\taf\n"
+    (d / "variantcall.tsv").write_text(head + "g1\t10\tA\tG\t1\t1\t17\t1.0\ng1\t20\tC\tT\t0\t1\t17\t1.0\n")
+    run = {"run_dir": str(tmp_path)}
+    assert variantflow.parity(run) == {"available": False, "direct": True, "flow": False}
+    (f / "variantcall.tsv").write_text(head + "g1\t20\tC\tT\t0\t1\t17\t1.0\ng1\t10\tA\tG\t1\t1\t17\t1.0\n")          # same calls, other order
+    assert variantflow.parity(run)["same"] is True
+    (f / "variantcall.tsv").write_text(head + "g1\t10\tA\tG\t1\t0\t\t\ng1\t30\tG\tA\t1\t0\t\t\n")
+    p = variantflow.parity(run)
+    assert p["same"] is False and p["only_direct"] == 1 and p["only_flow"] == 1 and p["differ"] == 1
+    assert variantflow.available(run) and not variantflow.available({"run_dir": str(tmp_path / "x")})
+
+
+def test_snakefile_collects_the_same_columns_as_the_direct_implementation():
+    """The flow's scripts and variantcall.py must write the same table; a cheap structural check that the Snakefile and scripts stay in step (the real run is compared by variantflow.parity)."""
+    from pathlib import Path
+    root = Path(__file__).resolve().parent.parent / "flows" / "variantcheck"
+    assert "genome\tpos\tref\talt\tsnippy\tlofreq\tdp\taf" in (root / "scripts" / "collect.py").read_text(encoding="utf-8")
+    src = (Path(__file__).resolve().parent.parent / "genomecurator" / "variantcall.py").read_text(encoding="utf-8")
+    assert "genome\\tpos\\tref\\talt\\tsnippy\\tlofreq\\tdp\\taf" in src
+    for rule in ("one_genome", "snippy", "lofreq", "calls", "collect"):
+        assert f"rule {rule}:" in (root / "Snakefile").read_text(encoding="utf-8")

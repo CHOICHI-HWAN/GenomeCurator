@@ -6,7 +6,7 @@ from fastapi import FastAPI, Form, Request
 from fastapi.responses import FileResponse, HTMLResponse, JSONResponse, RedirectResponse, Response, StreamingResponse
 from fastapi.templating import Jinja2Templates
 
-from . import support, variantcall, __version__, analysis, completeness, datasets, exclusions, export, cooccur, geo, heatmap, vocab, insight, lineages, mutprofile, nextstrain, novel, outbreak, pathoplexus, private, qc, squirrel, config, curate, jobs, log
+from . import support, variantcall, variantflow, __version__, analysis, completeness, datasets, exclusions, export, cooccur, geo, heatmap, vocab, insight, lineages, mutprofile, nextstrain, novel, outbreak, pathoplexus, private, qc, squirrel, config, curate, jobs, log
 from .db import audit_now, connect
 
 _log = log.get("web")
@@ -930,14 +930,14 @@ def create_app(scheduler: bool = True) -> FastAPI:
         r = nextstrain.get_run(rid)
         if not r or r["tool"] != "mutprofile" or r["status"] != "done":
             return JSONResponse({"error": "finished mutation-profile run not found"}, 404)
-        return render(request, "concordance.html", nav="res", run=r, vc=variantcall.status())
+        return render(request, "concordance.html", nav="res", run=r, vc=variantcall.status(), vf=variantflow.status())
 
     @app.get("/api/analyses/{rid}/concordance")
-    def api_analysis_concordance(rid: int, max_n: float = 0.05):
+    def api_analysis_concordance(rid: int, max_n: float = 0.05, source: str = "direct"):
         r = nextstrain.get_run(rid)
         if not r or r["tool"] != "mutprofile" or r["status"] != "done":
             return JSONResponse({"error": "finished mutation-profile run not found"}, 404)
-        return variantcall.concordance_for_run(r, min(1.0, max(0.0, max_n)))
+        return {**variantcall.concordance_for_run(r, min(1.0, max(0.0, max_n)), source="flow" if source == "flow" else "direct"), "parity": variantflow.parity(r)}
 
     @app.post("/api/analyses/{rid}/variantcall")
     def api_analysis_variantcall(request: Request, rid: int):
@@ -954,6 +954,22 @@ def create_app(scheduler: bool = True) -> FastAPI:
             res = variantcall.run_for_mutprofile(r, progress=lambda i, n: p(100 * i / max(n, 1), f"{i}/{n} 유전체"))
             return {"redirect": f"/analysis/{rid}/concordance", "result": res}
         return start_job(work, f"변이 호출(snippy+lofreq) · {r['name']}", "variantcall")
+
+    @app.post("/api/analyses/{rid}/variantflow")
+    def api_analysis_variantflow(request: Request, rid: int):
+        """The same snippy + lofreq calls through the Snakemake flow (resumable); kept beside the direct implementation until the flow is complete."""
+        if not _same_origin(request):
+            return JSONResponse({"error": "cross-site request refused"}, 403)
+        r = nextstrain.get_run(rid)
+        if not r or r["tool"] != "mutprofile" or r["status"] != "done":
+            return JSONResponse({"error": "finished mutation-profile run not found"}, 404)
+        if not variantflow.status()["ok"]:
+            return JSONResponse({"error": variantflow.status()["how"]}, 400)
+
+        def work(p):
+            res = variantflow.run_for_mutprofile(r, progress=p)
+            return {"redirect": f"/analysis/{rid}/concordance", "result": res}
+        return start_job(work, f"변이 호출(Snakemake) · {r['name']}", "variantflow")
 
     @app.get("/analysis/{rid}/insight")
     def analysis_insight_page(request: Request, rid: int):

@@ -12,6 +12,8 @@ Virus Genome Metadata Curator(패키지 `genomecurator`, 이전 표시 이름 "G
 ## [Unreleased]
 
 ### 추가
+- **Snakemake 시험 적용 - 변이 호출**(`flows/variantcheck/Snakefile`, `genomecurator/variantflow.py`, 호출 일치도 화면의 *Snakemake로 실행* 버튼): snippy → lofreq 호출을 Snakemake 워크플로로 만들어 기존 직접 구현**과 나란히** 둡니다(워크플로가 완성될 때까지 둘 다 유지; `variantflow.parity()`가 두 결과가 같은지 검사 — clade I 1,142건의 호출 105,985건이 전부 같음). 중간에 끊겨도 끝난 유전체는 건너뛰고 이어서 합니다(실행을 강제 종료해서 확인), 유전체별 병렬, 도구 환경은 Snakemake가 `--use-conda`로 기존 환경을 활성화합니다. 남은 415건을 64코어로 43초에 처리. 전용 환경 `gc-snakemake`(`variantcall/snakemake.yml`).
+- **구조 정리**: `seqio.py`(FASTA 읽기, 열 대응표)로 `aligned`/`mutprofile`/`lineages` 순환 import를 끊었고, `runs.py`에 Squirrel·변이 프로파일 실행이 복사해 쓰던 실행 기록 처리를 모았습니다.
 - **플랫폼 열**: `sequencing_platform`은 *모델*을 유지하고(철자만 표준화: `Illumina NovaSeq 6000`, `Oxford Nanopore MinION` …) 새 파생 열 `platform`에 기술(`Illumina`, `Oxford Nanopore` …, 여러 개면 `; `로 연결)을 채웁니다. 둘 다 다음 확인에서 평소처럼 제안으로 올라옵니다. 모델 수준 용어와 기술 대응은 `resources/vocab/platform.tsv`에 있습니다.
 - **구현 상태 뱃지**(워치리스트·분석 허브): 바이러스마다 수집, 용어 사전, QC, 분석이 *완료 / 개발중 / 미지원*인지 표시합니다(`genomecurator/support.py`). 아직 큐레이션·검증하지 않은 나머지 바이러스는 완료로 표시하지 않고, 원숭이두창만 완료입니다.
 - **구조 점검**(`docs/ARCHITECTURE_REVIEW.ko.md`): import로 모듈 결합도를 측정(`mutprofile` 허브, 순환 의존 5쌍, 실행 틀 4벌 복사)하고 Snakemake를 검토했습니다 — 새 변이 검증 파이프라인에만 시험 적용하길 권합니다.

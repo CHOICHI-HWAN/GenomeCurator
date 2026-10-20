@@ -34,3 +34,9 @@
 3. **시험 결과를 보고 결정**: 진행률 연동과 `analysis_run` 연결이 깔끔하게 되면 `mutprofile`의 정렬·호출 단계도 옮깁니다. 아니면 1번의 정리만으로 두고 멈춥니다.
 
 한 번에 전부 옮기는 것은 권하지 않습니다. 지금 동작하는 분석이 많고(테스트 105건), 옮기는 이득이 가장 큰 곳과 위험이 가장 작은 곳이 겹치는 것이 2번입니다.
+
+
+## 진행 기록 (2026-10-20)
+- **순환 의존**: `seqio.py`를 만들어 `aligned`가 `mutprofile`·`lineages`를 더 이상 import 하지 않게 했습니다(`mutprofile↔lineages`, `datasets↔export`, `curate↔resolve`는 함수 안의 늦은 import로 남아 있습니다).
+- **실행 틀**: `runs.py`로 Squirrel·mutprofile의 재사용 판단, 실행 이름·폴더, `analysis_run` 기록을 통합했습니다. `nextstrain.py`는 자체 흐름(Auspice 파일, 워크플로 커밋)이 달라 아직 그대로입니다.
+- **Snakemake 시험(변이 호출)**: 직접 구현과 병행. 결과가 1,142건 전체에서 동일(105,985건)이고, 강제 종료 후 이어서 실행이 되는 것을 확인했습니다. 진행률은 Snakemake 로그의 `N of M steps (P%) done`을 읽어 전달합니다. 남은 숙제: `analysis_run`에는 아직 기록하지 않음(지금은 실행 폴더에만 결과가 있음), 합의 마스크와 일치도 계산 단계를 Snakefile로 옮기는 일.

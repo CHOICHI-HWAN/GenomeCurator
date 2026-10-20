@@ -126,8 +126,9 @@ def concordance(callers: dict[str, dict[str, set]]) -> dict:
 
 
 # ------------------------------------------------------------------------------------------------ on a finished mutation-profile run
-def _vc_file(run: dict) -> Path:
-    return Path(run["run_dir"]) / "mutprofile" / "variantcall.tsv"
+def _vc_file(run: dict, source: str = "direct") -> Path:
+    """The call table of a run: `direct` = this module (`mutprofile/`), `flow` = the Snakemake flow (`variantflow/`, see variantflow.py)."""
+    return Path(run["run_dir"]) / ("variantflow" if source == "flow" else "mutprofile") / "variantcall.tsv"
 
 
 def run_for_mutprofile(run: dict, workers: int | None = None, progress=None) -> dict:
@@ -158,18 +159,18 @@ def run_for_mutprofile(run: dict, workers: int | None = None, progress=None) -> 
     return {"genomes": len(res), "calls": len(rows), "reference": ref}
 
 
-def available(run: dict) -> bool:
-    return _vc_file(run).exists()
+def available(run: dict, source: str = "direct") -> bool:
+    return _vc_file(run, source).exists()
 
 
-def concordance_for_run(run: dict, max_n: float | None = 0.05, limit: int = 300) -> dict:
+def concordance_for_run(run: dict, max_n: float | None = 0.05, limit: int = 300, source: str = "direct") -> dict:
     """Agreement of three callers on the SNVs of a mutation-profile run: the run's own (`aligner`, Squirrel alignment by default), snippy and lofreq. The ITR is left out like everywhere
     else. A site is listed when the callers do not all agree; for each: how many genomes each caller called it in, and in how many of them it is called by all."""
-    if not available(run):
+    if not available(run, source):
         return {"available": False}
     win = mutprofile.run_itr(run)
     inwin = (lambda p: win[0] <= p <= win[1]) if win else (lambda p: True)
-    judged = set((Path(run["run_dir"]) / "mutprofile" / "variantcall.genomes.txt").read_text(encoding="utf-8").split())
+    judged = set(_vc_file(run, source).with_name("variantcall.genomes.txt").read_text(encoding="utf-8").split())
     ok = mutprofile.good_samples(run, max_n)
     if ok is not None:
         judged &= ok
@@ -178,7 +179,7 @@ def concordance_for_run(run: dict, max_n: float | None = 0.05, limit: int = 300)
         if r["sample"] in judged:
             callers["mutprofile"][r["sample"]].add((int(r["pos"]), r["ref"].upper(), r["alt"].upper()))
     import csv
-    for r in csv.DictReader(open(_vc_file(run), encoding="utf-8"), delimiter="\t"):
+    for r in csv.DictReader(open(_vc_file(run, source), encoding="utf-8"), delimiter="\t"):
         if r["genome"] in judged and inwin(int(r["pos"])):
             v = (int(r["pos"]), r["ref"], r["alt"])
             for t in ("snippy", "lofreq"):
