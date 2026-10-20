@@ -2862,7 +2862,7 @@ def test_snakefile_collects_the_same_columns_as_the_direct_implementation():
     """The flow's scripts and variantcall.py must write the same table; a cheap structural check that the Snakefile and scripts stay in step (the real run is compared by variantflow.parity)."""
     from pathlib import Path
     root = Path(__file__).resolve().parent.parent / "flows" / "variantcheck"
-    assert "genome\tpos\tref\talt\tsnippy\tlofreq\tdp\taf" in (root / "scripts" / "collect.py").read_text(encoding="utf-8")
+    assert "genome\\tpos\\tref\\talt\\tsnippy\\tlofreq\\tdp\\taf" in (root / "scripts" / "collect.py").read_text(encoding="utf-8")
     src = (Path(__file__).resolve().parent.parent / "genomecurator" / "variantcall.py").read_text(encoding="utf-8")
     assert "genome\\tpos\\tref\\talt\\tsnippy\\tlofreq\\tdp\\taf" in src
     for rule in ("one_genome", "snippy", "lofreq", "calls", "collect"):
