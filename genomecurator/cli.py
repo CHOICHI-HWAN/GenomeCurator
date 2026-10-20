@@ -109,6 +109,9 @@ def _main(argv=None):
     pp.add_argument("--until", default="", help="YYYY-MM-DD, for RESTRICTED (at most one year from today)")
     pp.add_argument("--group-id", default="", help="your Pathoplexus group id (written into submit.sh)")
     pp.add_argument("--list", action="store_true", help="the packages prepared so far")
+    vc = sub.add_parser("vocab", help="what the term dictionary would change in a virus's curated data (nothing is written)")
+    vc.add_argument("name", help="the registered virus")
+    vc.add_argument("--all", action="store_true", help="also list values that are already standard")
     xc = sub.add_parser("exclude", help="leave genomes out of the final analysis dataset (nothing is deleted); --undo puts them back")
     xc.add_argument("name", help="the registered virus")
     xc.add_argument("ids", nargs="*", help="accessions (or private ids with --private)")
@@ -262,6 +265,21 @@ def _main(argv=None):
                     print(json.dumps(pathoplexus.build_package(w["id"], ids, args.terms, args.until, args.group_id), ensure_ascii=False, indent=2))
         except ValueError as e:
             raise SystemExit(str(e))
+    elif args.cmd == "vocab":
+        from . import vocab
+        con = connect()
+        try:
+            w = con.execute("SELECT id, name, taxon FROM watchlist WHERE name=?", (args.name,)).fetchone()
+            if not w:
+                raise SystemExit(f"unknown watch: {args.name}")
+            pv = vocab.preview(con, w["id"], vocab.scope_for(w["name"], w["taxon"] or ""))
+        finally:
+            con.close()
+        for f, d in pv.items():
+            print(f"{f}: {d['genomes']:,} genomes, {d['distinct']} distinct -> {d['distinct_after']} | 바뀜 {d['changes']:,} | 검토 필요 {d['review']:,}")
+            for it in d["items"]:
+                if args.all or it["status"] not in ("same", "nodict"):
+                    print(f"   {it['status']:<10} {it['raw']!r} -> {it['standard']!r}  ({it['n']:,})  {it['rule']}")
     elif args.cmd == "exclude":
         from . import exclusions
         con = connect()

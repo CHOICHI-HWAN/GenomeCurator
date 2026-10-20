@@ -97,6 +97,10 @@ CREATE TABLE IF NOT EXISTS qc_result(
   PRIMARY KEY(accession, tool));
 CREATE INDEX IF NOT EXISTS ix_qc_watch ON qc_result(watch_id, tool);
 -- a person's choice between the sources' values (resolve.py); honoured by every later check
+-- what the standardisation (vocab.py) did to incoming values: the raw value, the standard value and why; the latest check of each watch (flagged / unmapped values stay until reviewed)
+CREATE TABLE IF NOT EXISTS standardization(
+  watch_id INTEGER, accession TEXT, source TEXT, field TEXT, raw TEXT, standard TEXT, status TEXT,  -- mapped|normalized|empty|flagged|unmapped
+  rule TEXT, note TEXT, checked_at TEXT, PRIMARY KEY(watch_id, accession, source, field));
 CREATE TABLE IF NOT EXISTS field_choice(
   watch_id INTEGER, accession TEXT, field TEXT, source TEXT,  -- ncbi|bvbrc|pathoplexus|custom
   value TEXT, auto INTEGER DEFAULT 0, decided_at TEXT, PRIMARY KEY(watch_id, accession, field));

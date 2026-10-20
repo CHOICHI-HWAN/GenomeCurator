@@ -19,6 +19,7 @@ It is for viruses only. Bacteria differ in record structure (multi-contig assemb
 2. **Three sources, one record.** NCBI Virus defines which accessions exist; Pathoplexus > NCBI > BV-BRC decide each field, and every value keeps a record of the source it came from.
 3. **Agreement between sources is measured.** Per field: match / notation difference (`2022-07` vs `2022-07-11`) / real conflict.
 4. **Sequence verification.** Disagreements can be settled by comparing the sequence body (SHA-256, headers removed), with a dry-run first so large downloads are avoided.
+5b. **Our own term dictionary.** Hosts, countries, collection dates and clades are standardised against the app's dictionary before the sources are compared (`Homosapiens` -> `Homo sapiens`, `Zaire` -> `Democratic Republic of the Congo`, date intervals); unknown or doubtful values are kept and flagged, and the raw value is always recorded.
 5. **Choose between sources' values**, with a suggested value, the reason and a confidence level; choices survive later checks.
 6. **Schema watch.** Detects when a source renames or removes a field your adapters read, daily and on demand.
 7. **Genome completeness classes**: Complete / Near complete (≥ 90% of the longest RefSeq genome, adjustable) / Partial.

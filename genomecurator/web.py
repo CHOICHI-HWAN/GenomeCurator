@@ -6,7 +6,7 @@ from fastapi import FastAPI, Form, Request
 from fastapi.responses import FileResponse, HTMLResponse, JSONResponse, RedirectResponse, Response, StreamingResponse
 from fastapi.templating import Jinja2Templates
 
-from . import __version__, analysis, completeness, datasets, exclusions, export, cooccur, geo, heatmap, insight, lineages, mutprofile, nextstrain, novel, outbreak, pathoplexus, private, qc, squirrel, config, curate, jobs, log
+from . import __version__, analysis, completeness, datasets, exclusions, export, cooccur, geo, heatmap, vocab, insight, lineages, mutprofile, nextstrain, novel, outbreak, pathoplexus, private, qc, squirrel, config, curate, jobs, log
 from .db import audit_now, connect
 
 _log = log.get("web")
@@ -795,6 +795,26 @@ def create_app(scheduler: bool = True) -> FastAPI:
             r = mutprofile.run(ds, cores or None, bool(force), note, p)
             return {"redirect": f"/nextstrain?dataset={dsid}", "result": {"run": r["id"], "name": r["name"], "reused": bool(r.get("reused"))}}
         return start_job(work, f"변이 프로파일 · {ds['name']}", "mutprofile")
+
+    @app.get("/vocab")
+    def vocab_page(request: Request, watch: int = 0):
+        watches = _rows("SELECT id, name FROM watchlist ORDER BY name")
+        wid = watch or int(request.cookies.get("gc_watch") or 0) or next((w["id"] for w in watches if "monkeypox" in w["name"].lower()), watches[0]["id"] if watches else 0)
+        return render(request, "vocab.html", nav="voc", watches=watches, wid=wid)
+
+    @app.get("/api/vocab/{watch}/preview")
+    def api_vocab_preview(watch: int):
+        """What the dictionary would do to the curated table as it is now (nothing is written)."""
+        w = _rows("SELECT id, name, taxon FROM watchlist WHERE id=?", watch)
+        if not w:
+            return JSONResponse({"error": "unknown virus"}, 404)
+        from .db import connect as _connect
+        con = _connect()
+        try:
+            return {"scope": vocab.scope_for(w[0]["name"], w[0]["taxon"] or ""), "fields": vocab.preview(con, watch, vocab.scope_for(w[0]["name"], w[0]["taxon"] or "")),
+                    "dirs": [str(d) for d in vocab.vocab_dirs()], "pending": [dict(r) for r in con.execute("SELECT field, status, COUNT(*) n FROM standardization WHERE watch_id=? GROUP BY field, status", (watch,))]}
+        finally:
+            con.close()
 
     @app.get("/api/world")
     def api_world():

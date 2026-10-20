@@ -3,10 +3,11 @@ import hashlib
 import json
 import os
 import shutil
+from collections import Counter
 from pathlib import Path
 from datetime import datetime
 
-from . import completeness, config, log, reconcile, resolve, seqcheck, sources
+from . import completeness, config, log, reconcile, resolve, seqcheck, sources, vocab
 from .db import audit, connect, tx
 
 GENOME_COLS = [
@@ -309,6 +310,12 @@ def _check(watch_name: str, progress=None) -> int | None:
         if ppx and ppx[0] != w["pathoplexus_organism"]:
             con.execute("UPDATE watchlist SET pathoplexus_organism=? WHERE id=?", (ppx[0], w["id"]))
         _log.info("check %r: sources %s", watch_name, {k: len(v) for k, v in per_source.items()})
+        p(73, "용어를 사전에 맞춰 표준화하는 중…")
+        std_changes, std_counts = vocab.apply_to_sources(per_source, vocab.scope_for(w["name"], w["taxon"] or ""))
+        vocab.store(con, w["id"], std_changes)
+        if std_changes:
+            c_ = Counter(c["status"] for c in std_changes)
+            notes.append(f"용어 표준화: 바뀐 값 {c_['mapped'] + c_['normalized'] + c_['empty']:,}건, 검토 필요 {c_['flagged'] + c_['unmapped']:,}건 (용어 탭)")
         p(75, "소스 간 일치 여부 대조 중…")
         rep, conflict_rows = reconcile.analyze(per_source)
         _log.info("check %r: reconcile cosmetic=%d conflict=%d, not in NCBI %s", watch_name, rep["totals"]["cosmetic"],

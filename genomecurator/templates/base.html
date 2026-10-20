@@ -72,7 +72,7 @@ function gcCtx(d){GC.set('ctx',d);gcChip()}
 function gcChip(){const c=GC.get('ctx',null),el=document.getElementById('ctx');if(!el)return;el.innerHTML=c&&c.dataset?'데이터셋 <a href="/hub?dataset='+c.dataset+'" title="분석 허브에서 열기">'+String(c.name||c.dataset).replace(/[&<>"]/g,m=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[m]))+'</a>':''}
 </script></head><body>
 {% set GROUPS = [
- ('cur', '큐레이션', [('cur', '/', '변경 검토'), ('int', '/integrity', '정합성'), ('sch', '/schema', '스키마'), ('his', '/history', '이력')]),
+ ('cur', '큐레이션', [('cur', '/', '변경 검토'), ('int', '/integrity', '정합성'), ('voc', '/vocab', '용어'), ('sch', '/schema', '스키마'), ('his', '/history', '이력')]),
  ('data', '유전체', [('gen', '/genomes', '유전체 표'), ('dash', '/dashboard', '대시보드'), ('qc', '/qc', '서열 QC'), ('priv', '/private', '비공개 저장소')]),
  ('set', '데이터셋', [('ds', '/datasets', '데이터셋'), ('exp', '/export', '내보내기')]),
  ('ana', '분석', [('hub', '/hub', '분석 허브'), ('ns', '/nextstrain', '실행·이력')]),
@@ -80,7 +80,7 @@ function gcChip(){const c=GC.get('ctx',null),el=document.getElementById('ctx');i
  ('sys', '시스템', [('job', '/jobs', '작업')])] %}
 {% set cur_nav = 'hub' if nav == 'res' else nav %}
 {% set ns_g = namespace(active='') %}{% for g in GROUPS %}{% for t in g[2] %}{% if t[0] == cur_nav %}{% set ns_g.active = g[0] %}{% endif %}{% endfor %}{% endfor %}
-{% macro href(u) %}{{ u }}{% if watch and u in ('/dashboard', '/genomes', '/integrity') %}?watch={{ watch }}{% endif %}{% endmacro %}
+{% macro href(u) %}{{ u }}{% if watch and u in ('/dashboard', '/genomes', '/integrity', '/vocab') %}?watch={{ watch }}{% endif %}{% endmacro %}
 <header><span class="logo">Virus Genome <i>Curator</i></span>
 {% for g in GROUPS %}<a href="{{ href(g[2][0][1]) | trim }}" class="{{ 'on' if g[0] == ns_g.active }}">{{ g[1] }}{% if g[0] == 'cur' and badge %}<span class="badge">{{ badge }}</span>{% endif %}{% if g[0] == 'cur' and schema_alert %}<span class="badge" style="background:{{ 'var(--bad)' if schema_alert.verdict == 'update' else 'var(--warn)' }}" title="스키마 점검에서 확인이 필요한 항목이 있습니다">!</span>{% endif %}{% if g[0] == 'sys' %}<span class="badge" id="jbadge" style="display:none"></span>{% endif %}</a>{% endfor %}
 {% if traffic %}<a href="/schema" class="tl" title="소스 스키마 점검 현황 (마지막 점검: {{ traffic.checked_at or '없음' }}) — 누르면 스키마 탭">

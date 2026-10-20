@@ -1,0 +1,24 @@
+{% extends "base.html" %}{% block body %}
+<div class="pagehead"><h2>용어 표준화</h2><span class="mut">우리 사전으로 들어오는 값을 표준 용어로 통일합니다</span></div>
+<div class="help">같은 것을 소스마다 다르게 적는 값(<code>Homosapiens</code> / <code>Homo sapiens</code>, <code>Zaire</code> / <code>Democratic Republic of the Congo</code>, 날짜 구간 등)을 <b>우리 사전</b>의 표준 용어로 바꿉니다. 소스를 가져온 직후, 서로 비교하기 <b>전에</b> 적용하므로 표기만 다른 값이 충돌로 잡히지 않고 큐레이션된 표에도 하나의 값만 들어갑니다.
+<b>원본은 지우지 않습니다</b>: 바뀐 값은 원본·표준값·이유가 <code>standardization</code> 표에 남고, 사전에 없거나 읽을 수 없는 값은 <b>바꾸지 않고 "검토 필요"로 표시</b>합니다. 아래는 <b>지금 큐레이션된 표에 적용하면 무엇이 바뀌는지</b>의 미리보기입니다(아무것도 저장하지 않음). 다음 <i>지금 확인</i>에서 이 값들이 평소처럼 <b>변경 제안</b>으로 올라오고, 승인한 것만 반영됩니다.</div>
+<div class="card" style="font-size:13px"><div style="display:flex;gap:14px;flex-wrap:wrap;align-items:end">
+ <label>바이러스<br><select onchange="location.href='/vocab?watch='+this.value">{% for w in watches %}<option value="{{ w.id }}" {{ 'selected' if w.id == wid }}>{{ w.name }}</option>{% endfor %}</select></label>
+ <span class="mut" id="meta"></span></div></div>
+<div id="root"><div class="card mut">계산하는 중…</div></div>
+<script>
+const WID={{ wid }};
+const esc=s=>String(s??'').replace(/[&<>"]/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c]));
+const LBL={host_name:['숙주','host.tsv'],isolation_country:['나라','country.tsv'],collection_date:['수집일','(규칙)'],clade:['clade','clade.tsv']};
+const ST={mapped:['동의어 → 표준','#2f79b5'],normalized:['형식 정리','#2f79b5'],empty:['빈 값 표기','#6b7785'],flagged:['검토 필요(그대로 둠)','#c27800'],unmapped:['사전에 없음(그대로 둠)','#c62828'],same:['이미 표준','#1a7f37']};
+const bar=(v,mx,col,txt)=>'<div style="display:flex;align-items:center;gap:6px;min-width:70px"><div style="flex:1;height:8px;background:#eef0f2;border-radius:2px"><div style="height:8px;width:'+(mx?Math.max(2,v/mx*100):0)+'%;background:'+col+';border-radius:2px"></div></div><span>'+txt+'</span></div>';
+async function load(){const d=await (await fetch('/api/vocab/'+WID+'/preview')).json();if(d.error){document.getElementById('root').innerHTML='<div class="card" style="color:var(--bad)">'+esc(d.error)+'</div>';return}
+ document.getElementById('meta').textContent='사전 범위: '+(d.scope==='mpox'?'원숭이두창(clade 사전 포함)':'그 밖의 바이러스(clade 사전 없음)')+' · 사전 위치: '+d.dirs.join(' , ');
+ let h='<div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(260px,1fr));gap:12px;margin-bottom:6px">'+Object.entries(d.fields).map(([f,x])=>'<div class="card" style="margin:0"><b>'+LBL[f][0]+'</b> <span class="mut" style="font-size:12px">'+LBL[f][1]+'</span><div style="margin-top:6px;font-size:13px">서로 다른 값 <b>'+x.distinct+'</b> → <b>'+x.distinct_after+'</b></div><div style="font-size:13px">바뀌는 유전체 <b>'+x.changes.toLocaleString()+'</b> / '+x.genomes.toLocaleString()+'</div><div style="font-size:13px;color:'+(x.review?'#c27800':'inherit')+'">검토 필요 <b>'+x.review.toLocaleString()+'</b></div></div>').join('')+'</div>';
+ for(const [f,x] of Object.entries(d.fields)){const rows=x.items.filter(i=>i.status!=='same'&&i.status!=='nodict');h+='<h3 style="margin-top:20px">'+LBL[f][0]+' <span class="mut" style="font-size:12.5px;font-weight:400">바뀌는 값과 검토 필요한 값 '+rows.length+'종</span></h3>';
+  h+=rows.length?'<table><tr><th>상태</th><th>원본</th><th></th><th>표준</th><th>유전체</th><th>규칙·이유</th></tr>'+rows.map(i=>'<tr><td class="nw"><span style="color:'+ST[i.status][1]+';font-weight:600">'+ST[i.status][0]+'</span></td><td><code>'+esc(i.raw)+'</code></td><td>→</td><td><b>'+(i.standard===''?'<span class="mut">(비움)</span>':esc(i.standard))+'</b></td><td>'+bar(i.n,Math.max(...rows.map(r=>r.n)),ST[i.status][1],i.n.toLocaleString())+'</td><td class="mut" style="font-size:12px">'+esc(i.rule)+(i.note?' · '+esc(i.note):'')+'</td></tr>').join('')+'</table>':'<div class="mut">바꿀 값이 없습니다 — 모두 이미 표준입니다.</div>'}
+ h+='<div class="mut" style="margin-top:14px;font-size:12.5px">사전 파일은 <code>genomecurator/resources/vocab/</code>에 있고, 같은 이름의 파일을 <code>data/vocab/</code>에 두면 덮어쓰거나 보탤 수 있습니다(형식: 표준 용어, 동의어는 <code>|</code>로 구분). 사전에 용어를 더하는 화면은 다음 단계에서 만듭니다.</div>';
+ document.getElementById('root').innerHTML=h}
+load();
+</script>
+{% endblock %}

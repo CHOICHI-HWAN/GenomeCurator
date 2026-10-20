@@ -2529,7 +2529,7 @@ def test_page_scripts_have_no_syntax_errors_and_help_is_collapsible(tmp_path, mo
     from pathlib import Path
     from genomecurator import web
     tdir = Path(web.__file__).parent / "templates"
-    for name in ("snipit", "heatmap", "pca", "spread", "insight", "outbreak", "novel", "hub", "base"):
+    for name in ("snipit", "heatmap", "pca", "spread", "insight", "outbreak", "novel", "hub", "vocab", "base"):
         html = (tdir / f"{name}.html").read_text(encoding="utf-8")
         for k, body in enumerate(re.findall(r"<script>(.*?)</script>", html, re.S)):
             if "{%" in body or "{{" in body:                    # Jinja inside: render-free check of the plain parts only
@@ -2587,3 +2587,85 @@ def test_snvs_from_a_squirrel_alignment_and_the_aligner_choice(tmp_path, monkeyp
     assert mutprofile.parse_settings({"aligner": "squirrel"}) == {"aligner": "squirrel"}
     with __import__("pytest").raises(ValueError):
         mutprofile.parse_settings({"aligner": "mafft"})
+
+
+def test_vocab_standardises_values_without_guessing(tmp_path, monkeypatch):
+    from genomecurator import config, vocab
+    monkeypatch.setattr(config, "DATA_DIR", tmp_path)
+    vocab._CACHE.clear()
+    S = vocab.standardize
+    assert vocab.key("Côte d'Ivoire") == vocab.key("Cote d’Ivoire") == "cote d ivoire" and vocab.key("H. sapiens") == "h sapiens"
+    # host: dictionary synonyms, the typo we saw, non-hosts kept and flagged, unknown kept and marked
+    h = S("host_name", "Homosapiens")
+    assert (h.value, h.status, h.rule) == ("Homo sapiens", "mapped", "host.synonym")
+    assert S("host_name", "Homo sapiens").status == "same" and S("host_name", " homo   sapiens ").value == "Homo sapiens"
+    assert S("host_name", "Patent").value == "Homo sapiens" and S("host_name", "cynomolgus monkey").value == "Macaca fascicularis"
+    v = S("host_name", "Vero e6")
+    assert v.status == "flagged" and v.value == "Vero E6" and "cell line" in v.rule
+    u = S("host_name", "Mus imaginarius")
+    assert u.status == "unmapped" and u.value == "Mus imaginarius"                                       # never replaced, never dropped
+    assert S("host_name", "missing").status == "empty" and S("host_name", "NA").value == ""
+    # country
+    assert S("isolation_country", "Zaire").value == "Democratic Republic of the Congo" and S("isolation_country", "Viet Nam").status == "same" and S("isolation_country", "Vietnam").value == "Viet Nam"
+    assert S("isolation_country", "United States").value == "USA" and S("isolation_country", "USA: NY, New York").value == "USA" and S("isolation_country", "Atlantis").status == "unmapped"
+    assert S("isolation_country", "Congo").value == "Republic of the Congo" and S("isolation_country", "DRC").value == "Democratic Republic of the Congo"        # the two Congos stay apart
+    # clade: only for mpox
+    assert S("clade", "Clade Ib", "mpox").value == "Ib" and S("clade", "Ib", "mpox").status == "same" and S("clade", "clade 2b", "mpox").value == "IIb"
+    assert S("clade", "Ib/IIb", "mpox").status == "flagged" and S("clade", "II", "mpox").status == "flagged" and S("clade", "xyz", "mpox").status == "unmapped"
+    assert S("clade", "whatever", "*").status == "nodict" and S("clade", "whatever", "*").value == "whatever"        # no clade dictionary for other viruses: untouched
+    # dates
+    D = vocab.standardize_date
+    assert D("2025-05-01").status == "same" and D("2025-05").status == "same" and D("2025").status == "same"
+    assert (D("2025-05-01/2025-05-28").value, D("2025-05-01/2025-05-28").status) == ("2025-05", "normalized") and D("2024-01-01/2024-12-09").value == "2024"
+    assert D("2023-12-01/2024-02-01").status == "flagged" and D("2023-12-01/2024-02-01").value == "2023-12-01/2024-02-01"          # across years: not reduced to one date
+    assert D("15-May-2025").value == "2025-05-15" and D("May 2025").value == "2025-05" and D("2025/05/15").value == "2025-05-15" and D("20250515").value == "2025-05-15" and D("2025-05-XX").value == "2025-05"
+    assert D("13/05/2025").value == "2025-05-13" and D("05/13/2025").value == "2025-05-13"
+    assert D("05/06/2025").status == "flagged" and D("05/06/2025").value == "05/06/2025"                                  # day / month order unknown: left alone
+    assert D("2025-02-31").status == "flagged" and D("null").status == "empty" and D("soon").status == "flagged"
+    # a user's file overrides and extends the shipped dictionary
+    (tmp_path / "vocab").mkdir()
+    (tmp_path / "vocab" / "host.tsv").write_text("term\tsynonyms\ttaxon_id\tflag\tnote\nMus imaginarius\tfake mouse\t1\t\t\nHomo sapiens\thuman being\t9606\t\t\n", encoding="utf-8")
+    vocab._CACHE.clear()
+    assert S("host_name", "fake mouse").value == "Mus imaginarius" and S("host_name", "Mus imaginarius").status == "same" and S("host_name", "human being").value == "Homo sapiens" and S("host_name", "Homosapiens").value == "Homo sapiens"
+    assert vocab.scope_for("Orthopoxvirus monkeypox", "") == "mpox" and vocab.scope_for("Henipavirus nipahense", "") == "*"
+
+
+def test_check_standardises_before_sources_are_compared_and_keeps_the_raw_value(tmp_path, monkeypatch):
+    import json
+    from genomecurator import config, curate, sources, vocab
+    from genomecurator.db import connect
+    monkeypatch.setattr(config, "DATA_DIR", tmp_path)
+    monkeypatch.setattr(config, "DB_PATH", tmp_path / "g.db")
+    monkeypatch.setattr(config, "MIN_COVERAGE_PCT", 0.0)
+    vocab._CACHE.clear()
+    con = connect()
+    con.execute("INSERT INTO watchlist(id,name,taxon,taxon_id) VALUES(1,'Orthopoxvirus monkeypox','Orthopoxvirus monkeypox',10244)")
+    con.commit()
+    con.close()
+    rec = lambda **k: {"accession_version": 1, "genome_length": 1000, "genome_status": "Complete", **k}
+    ncbi = {"A1": rec(host_name="Homosapiens", isolation_country="Zaire", collection_date="2025-05-01/2025-05-28", clade="Clade Ib"), "A2": rec(host_name="Vero e6", isolation_country="Atlantis")}
+    ppx = {"A1": {"host_name": "Homo sapiens", "isolation_country": "Democratic Republic of the Congo", "clade": "Ib"}}
+    monkeypatch.setattr(sources, "ncbi_species_scope", lambda tid: None)
+    monkeypatch.setattr(sources, "pathoplexus_resolve", lambda *a, **k: None)
+    monkeypatch.setattr(sources, "fetch_all", lambda *a, **k: ({"ncbi": json.loads(json.dumps(ncbi)), "bvbrc": {}, "pathoplexus": json.loads(json.dumps(ppx))}, []))
+    cs = curate.check("Orthopoxvirus monkeypox")
+    con = connect()
+    new = {r["accession"]: json.loads(r["record_json"] if "record_json" in r.keys() else "{}") for r in con.execute("SELECT * FROM changeset_item WHERE changeset_id=?", (cs,))}
+    std = {(r["accession"], r["source"], r["field"]): dict(r) for r in con.execute("SELECT * FROM standardization WHERE watch_id=1")}
+    con.close()
+    r = std[("A1", "ncbi", "host_name")]
+    assert (r["raw"], r["standard"], r["status"]) == ("Homosapiens", "Homo sapiens", "mapped")                          # the raw value is kept, with the reason
+    assert std[("A1", "ncbi", "isolation_country")]["raw"] == "Zaire" and std[("A1", "ncbi", "collection_date")]["standard"] == "2025-05"
+    assert std[("A1", "ncbi", "clade")]["standard"] == "Ib" and ("A1", "pathoplexus", "host_name") not in std       # already standard values are not recorded
+    assert std[("A2", "ncbi", "host_name")]["status"] == "flagged" and std[("A2", "ncbi", "isolation_country")]["status"] == "unmapped"
+    # the sources now agree: NCBI says Zaire / Homosapiens, Pathoplexus the standard names - no conflict and no notation difference is reported for A1
+    con = connect()
+    rows = [dict(x) for x in con.execute("SELECT * FROM source_conflict WHERE watch_id=1 AND accession='A1' AND field IN ('host_name','isolation_country','clade')")]
+    con.close()
+    assert rows == []
+    # the curated record carries the standard values
+    con = connect()
+    item = con.execute("SELECT * FROM changeset_item WHERE changeset_id=? AND accession='A1'", (cs,)).fetchone()
+    blob = " ".join(str(item[k]) for k in item.keys() if k.endswith("_json"))
+    con.close()
+    assert "Homo sapiens" in blob and "Democratic Republic of the Congo" in blob and "Homosapiens" not in blob and "Zaire" not in blob

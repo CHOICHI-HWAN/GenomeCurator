@@ -1,0 +1,26 @@
+# 숙주 사전 — term(표준 학명) · synonyms(`|`로 구분) · taxon_id(NCBI Taxonomy) · flag(비어 있지 않으면 '숙주가 아닌/모호한 값'으로 표시) · note
+# 사전에 없는 값은 지우지 않고 원본 그대로 두고 '검토 필요'로 보입니다. data/vocab/host.tsv에 같은 형식으로 쓰면 덮어쓰거나 보탤 수 있습니다.
+term	synonyms	taxon_id	flag	note
+Homo sapiens	human|humans|homosapiens|h. sapiens|h sapiens|homo sapien|patient|patent|man|person|human host	9606		'Patent'는 'Patient'의 오타로 보임(50건)
+Macaca fascicularis	cynomolgus monkey|cynomolgus macaque|crab-eating macaque|long-tailed macaque	9541		
+Pan troglodytes	chimpanzee|common chimpanzee	9598		
+Pan troglodytes verus	western chimpanzee	37012		
+Cercocebus atys	sooty mangabey	9531		
+Cercocebus agilis	agile mangabey	9532		
+Callithrix jacchus	common marmoset	9483		
+Canis lupus familiaris	dog|domestic dog	9615		
+Cricetomys gambianus	gambian pouched rat|gambian giant pouched rat	10061		
+Funisciurus anerythrus	thomas's rope squirrel	361490		
+Funisciurus pyrropus	fire-footed rope squirrel	361493		
+Funisciurus	rope squirrel	61673		속 수준
+Paraxerus	bush squirrel	361491		속 수준
+Cynomys	prairie dog	10003		속 수준
+Praomys jacksoni	jackson's soft-furred mouse	212418		
+Myrmecophaga tridactyla	giant anteater	9358		
+Simiiformes	simian|simians	314293		하위목 수준(종 미상의 원숭이류)
+Sciuridae	squirrel|squirrels	55153		과 수준
+Gliridae	dormouse|dormice	10179		과 수준
+Vero E6	vero e6|vero|vero cells|cell culture (grivet kidney epithelial vero)|vero e6 cells		cell line	숙주가 아닌 세포주(배양 유래 서열)
+Lab host	laboratory host|lab		not a host	실험실 숙주 — 실제 숙주 정보 아님
+Environment	environmental|environmental sample|ambient air|air|surface		environmental sample	환경 시료 — 숙주 아님
+Wild monkey	monkey|wild primate|nonhuman primate|non-human primate		non-specific	종 미상 — 가능하면 학명으로

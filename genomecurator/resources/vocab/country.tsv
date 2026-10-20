@@ -1,0 +1,185 @@
+# 나라 사전 — term(표준 표기) · synonyms(`|`로 구분, 대소문자·구두점은 무시하고 비교) · iso3 · note
+# 표준 표기는 지금 데이터가 쓰는 INSDC 계열 표기를 따릅니다. 고치려면 이 파일(또는 data/vocab/country.tsv)을 편집하세요.
+term	synonyms	iso3	note
+Afghanistan		AFG	
+Albania		ALB	
+Algeria		DZA	
+Angola		AGO	
+Antarctica		ATA	
+Argentina		ARG	
+Armenia		ARM	
+Australia		AUS	
+Austria		AUT	
+Azerbaijan		AZE	
+Bahamas	The Bahamas	BHS	
+Bangladesh		BGD	
+Belarus		BLR	
+Belgium		BEL	
+Belize		BLZ	
+Benin		BEN	
+Bhutan		BTN	
+Bolivia	Bolivia, Plurinational State of	BOL	
+Bosnia and Herzegovina	Bosnia and Herz.	BIH	
+Botswana		BWA	
+Brazil		BRA	
+Brunei	Brunei Darussalam	BRN	
+Bulgaria		BGR	
+Burkina Faso		BFA	
+Burundi		BDI	
+Cabo Verde	Cape Verde	CPV	
+Cambodia		KHM	
+Cameroon		CMR	
+Canada		CAN	
+Central African Republic	Central African Rep.	CAF	
+Chad		TCD	
+Chile		CHL	
+China		CHN	
+Colombia		COL	
+Costa Rica		CRI	
+Cote d'Ivoire	Cote dIvoire|Côte d'Ivoire|Ivory Coast	CIV	
+Croatia		HRV	
+Cuba		CUB	
+Cyprus		CYP	
+Czech Republic	Czechia	CZE	현재 데이터가 쓰는 표기를 표준으로 둠
+Democratic Republic of the Congo	Congo DRC|Congo, Democratic Republic of the|Congo-Kinshasa|D.R. Congo|DR Congo|DRC|Dem. Rep. Congo|Democratic Republic of Congo|Republic of Zaire|Zaire	COD	옛 이름 Zaire 포함
+Denmark		DNK	
+Djibouti		DJI	
+Dominican Republic	Dominican Rep.	DOM	
+Ecuador		ECU	
+Egypt		EGY	
+El Salvador		SLV	
+Equatorial Guinea	Eq. Guinea	GNQ	
+Eritrea		ERI	
+Estonia		EST	
+Eswatini	Swaziland	SWZ	
+Ethiopia		ETH	
+Falkland Islands	Falkland Is.|Falkland Islands / Malvinas	FLK	
+Fiji		FJI	
+Finland		FIN	
+France		FRA	
+French Southern and Antarctic Lands	Fr. S. Antarctic Lands	ATF	
+Gabon		GAB	
+Gambia	The Gambia	GMB	
+Georgia		GEO	
+Germany		DEU	
+Ghana		GHA	
+Greece		GRC	
+Greenland		GRL	
+Guatemala		GTM	
+Guinea		GIN	
+Guinea-Bissau		GNB	
+Guyana		GUY	
+Haiti		HTI	
+Honduras		HND	
+Hong Kong	Hong Kong SAR|Hong Kong, China	HKG	
+Hungary		HUN	
+Iceland		ISL	
+India		IND	
+Indonesia		IDN	
+Iran	Iran, Islamic Republic of	IRN	
+Iraq		IRQ	
+Ireland		IRL	
+Israel		ISR	
+Italy		ITA	
+Jamaica		JAM	
+Japan		JPN	
+Jordan		JOR	
+Kazakhstan		KAZ	
+Kenya		KEN	
+Kosovo		KOS	
+Kuwait		KWT	
+Kyrgyzstan		KGZ	
+Laos	Lao PDR|Lao People's Democratic Republic	LAO	
+Latvia		LVA	
+Lebanon		LBN	
+Lesotho		LSO	
+Liberia		LBR	
+Libya		LBY	
+Lithuania		LTU	
+Luxembourg		LUX	
+Macao	Macau	MAC	
+Madagascar		MDG	
+Malawi		MWI	
+Malaysia		MYS	
+Mali		MLI	
+Malta		MLT	
+Mauritania		MRT	
+Mexico		MEX	
+Moldova	Moldova, Republic of|Republic of Moldova	MDA	
+Mongolia		MNG	
+Montenegro		MNE	
+Morocco		MAR	
+Mozambique		MOZ	
+Myanmar	Burma	MMR	
+Namibia		NAM	
+Nepal		NPL	
+Netherlands	Holland|The Netherlands	NLD	
+New Caledonia		NCL	
+New Zealand		NZL	
+Nicaragua		NIC	
+Niger		NER	
+Nigeria		NGA	
+North Korea	DPRK|Democratic People's Republic of Korea|Korea (North)|Korea, North	PRK	
+North Macedonia	Macedonia	MKD	
+Northern Cyprus	N. Cyprus	CYN	
+Norway		NOR	
+Oman		OMN	
+Pakistan		PAK	
+Palestine	Gaza Strip|State of Palestine|West Bank	PSE	
+Panama		PAN	
+Papua New Guinea		PNG	
+Paraguay		PRY	
+Peru		PER	
+Philippines		PHL	
+Poland		POL	
+Portugal		PRT	
+Puerto Rico		PRI	
+Qatar		QAT	
+Republic of Serbia	Serbia	SRB	
+Republic of the Congo	Congo|Congo, Republic of the|Congo-Brazzaville|Rep. Congo	COG	
+Romania		ROU	
+Russia	Russian Federation	RUS	
+Rwanda		RWA	
+Saudi Arabia		SAU	
+Senegal		SEN	
+Sierra Leone		SLE	
+Singapore		SGP	
+Slovakia		SVK	
+Slovenia		SVN	
+Solomon Islands	Solomon Is.	SLB	
+Somalia		SOM	
+Somaliland		SOL	
+South Africa		ZAF	
+South Korea	Korea|Korea (South)|Korea, South|Republic of Korea|S. Korea	KOR	
+South Sudan	S. Sudan	SSD	
+Spain		ESP	
+Sri Lanka		LKA	
+Sudan		SDN	
+Suriname		SUR	
+Sweden		SWE	
+Switzerland		CHE	
+Syria	Syrian Arab Republic	SYR	
+Taiwan	Republic of China|Taiwan, Province of China	TWN	
+Tajikistan		TJK	
+Tanzania	Tanzania, United Republic of|United Republic of Tanzania	TZA	
+Thailand		THA	
+Timor-Leste	East Timor	TLS	
+Togo		TGO	
+Trinidad and Tobago		TTO	
+Tunisia		TUN	
+Turkey	Turkiye|Türkiye	TUR	
+Turkmenistan		TKM	
+USA	America|U.S.|U.S.A.|US|United States|United States of America	USA	
+Uganda		UGA	
+Ukraine		UKR	
+United Arab Emirates		ARE	
+United Kingdom	England|Great Britain|Northern Ireland|Scotland|U.K.|UK|Wales	GBR	England·Scotland·Wales는 세부 위치(geographic_location)에 남기고 나라는 United Kingdom으로 통일
+Uruguay		URY	
+Uzbekistan		UZB	
+Vanuatu		VUT	
+Venezuela	Venezuela, Bolivarian Republic of	VEN	
+Viet Nam	Vietnam	VNM	
+Western Sahara	W. Sahara	ESH	
+Yemen		YEM	
+Zambia		ZMB	
+Zimbabwe		ZWE	
