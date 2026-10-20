@@ -994,7 +994,7 @@ def create_app(scheduler: bool = True) -> FastAPI:
         r = nextstrain.get_run(rid)
         if not r or r["tool"] != "mutprofile" or r["status"] != "done":
             return JSONResponse({"error": "finished mutation-profile run not found"}, 404)
-        return render(request, "insight.html", nav="res", run=r)
+        return render(request, "insight.html", nav="res", run=r, runref=mutprofile.summary(r).get("reference", ""))
 
     @app.get("/api/analyses/{rid}/insight")
     def api_analysis_insight(rid: int, window_days: int = 120, min_carriers: int = 3, skip_apobec: int = 0, max_n: float = 0.05):
@@ -1600,8 +1600,12 @@ def create_app(scheduler: bool = True) -> FastAPI:
     @app.get("/genomes")
     def genomes(request: Request, watch: int = 0, msg: str = ""):
         watch = current_watch(request, watch, _rows("SELECT w.id, w.name, (SELECT COUNT(*) FROM genome g WHERE g.watch_id=w.id) n FROM watchlist w"))
-        watches, data = _genome_view(watch)
-        return render(request, "genomes.html", data=data, nav="gen", watches=watches, watch=watch, msg=msg, private_n=len(private.list_rows(watch)) if watch else 0, dataset=None)
+        # the private genomes of this virus are part of the table (marked in the *출처* column and filterable), like in a dataset that includes them
+        priv = {rec["id"] for rec in private.rows_for_export(watch)} if watch else set()
+        cols = GN_COLS[:2] + [("source_kind", "출처", True, True)] + GN_COLS[2:]
+        facets = [("source_kind", "출처 (공개/비공개)")] + GN_FACETS
+        watches, data = _genome_view(watch, None, priv, cols, facets)
+        return render(request, "genomes.html", data=data, nav="gen", watches=watches, watch=watch, msg=msg, private_n=len(priv), dataset=None)
 
     @app.get("/dataset/{dsid}")
     def dataset_view(request: Request, dsid: int, msg: str = ""):

@@ -1492,7 +1492,7 @@ def test_exclusion_api_and_pages(tmp_path, monkeypatch):
     page = c.get("/genomes?watch=1").text
     import json, re
     data = json.loads(re.search(r'<script type="application/json" id="gdata">(.*?)</script>', page, re.S).group(1))
-    assert "exclSel" in page and {r["accession"]: r["excluded"] for r in data["rows"]} == {"A1": "제외", "X2": "포함"}
+    assert "exclSel" in page and {r["accession"]: r["excluded"] for r in data["rows"] if not r.get("is_private")} == {"A1": "제외", "X2": "포함"}
     assert {r["accession"]: r["excl_reason"] for r in data["rows"]}["A1"] == "short read" and any(f["k"] == "excluded" for f in data["facets"])
     assert c.post("/api/exclusions/1", json={"ids": ["LAB_Z1"], "scope": "private", "action": "exclude"}).json()["excluded"] == 1
     assert "제외됨" in c.get("/private?watch=1").text
@@ -1648,10 +1648,11 @@ def test_dataset_is_browsable_like_the_genome_table_and_on_the_dashboard(tmp_pat
     assert [i for i, r in enumerate(d["rows"])] == [r["id"] for r in d["rows"]]                          # row ids are positions (the table's selection uses them)
     assert any(f["k"] == "source_kind" for f in d["facets"]) and any(col["k"] == "source_kind" for col in d["cols"])
     assert "서열이 없는 1건" in page.text.replace("\n", " ")
-    # the ordinary genome table is unchanged: every curated genome, no private rows, no dataset header
+    # the ordinary genome table: every curated genome and, marked, the private ones of the virus (no dataset header)
     g = c.get("/genomes?watch=1")
     gd = _embedded(g.text, "gdata")
-    assert {r["accession"] for r in gd["rows"]} == {"A1", "X2", "N3"} and "Dataset View" not in g.text and not any(col["k"] == "source_kind" for col in gd["cols"])
+    assert {r["accession"] for r in gd["rows"]} == {"A1", "X2", "N3", "LAB_V1", "LAB_V2"} and "Dataset View" not in g.text and any(col["k"] == "source_kind" for col in gd["cols"])
+    assert {r["accession"]: r["source_kind"] for r in gd["rows"]}["LAB_V1"] == "비공개" and {r["accession"]: r["source_kind"] for r in gd["rows"]}["X2"] == "공개"
     assert c.get("/dataset/999", follow_redirects=False).status_code == 303
     # the dashboard over the dataset
     dash = c.get(f"/dashboard?dataset={ib['id']}")
