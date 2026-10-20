@@ -140,7 +140,7 @@ def trend(x: list[float], y: list[float]) -> dict | None:
 
 
 # ------------------------------------------------------------------------------------------------ 1-2: subclusters
-def clusters(run: dict, min_size: int = 5, min_muts: int = 1) -> dict:
+def clusters(run: dict, min_size: int = 5, min_muts: int = 1, tips: bool = False) -> dict:
     tree, rootseq, nsrun = _tree(run)
     if not tree:
         return {"available": False, "reason": "이 데이터셋의 Nextstrain 분석(트리)이 필요합니다."}
@@ -208,7 +208,7 @@ def clusters(run: dict, min_size: int = 5, min_muts: int = 1) -> dict:
     cols.sort(key=lambda s: int(re.search(r"\d+", s)[0]))
     matrix = [{"id": c["id"], "cells": {lab: (lab[-1] if lab in set(c["path"]) else "") for lab in cols}} for c in cl]
     ann = {m["label"]: m for c in cl for m in c["mutations"]}
-    return {"available": True, "tree": nsrun["name"], "reference": refname, "min_size": min_size, "min_muts": min_muts, "tips": len(nodes_tips[id(tree)]), "clusters": [{k: v for k, v in c.items() if k != "tips"} for c in cl],
+    return {"available": True, "tree": nsrun["name"], "reference": refname, "min_size": min_size, "min_muts": min_muts, "tips": len(nodes_tips[id(tree)]), "clusters": [c if tips else {k: v for k, v in c.items() if k != "tips"} for c in cl],
             "unassigned": len(nodes_tips[id(tree)]) - len(inside), "size_distribution": size_distribution(sizes), "columns": [{"label": lab, "gene": ann[lab]["gene"], "aa": ann[lab]["aa"], "apobec": ann[lab]["apobec"]} for lab in cols],
             "matrix": matrix, "months": sorted({m for c in cl for m in c["months"]}), "n_nested": len(qual)}
 

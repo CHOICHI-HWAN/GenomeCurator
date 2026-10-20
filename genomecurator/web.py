@@ -6,7 +6,7 @@ from fastapi import FastAPI, Form, Request
 from fastapi.responses import FileResponse, HTMLResponse, JSONResponse, RedirectResponse, Response, StreamingResponse
 from fastapi.templating import Jinja2Templates
 
-from . import __version__, analysis, completeness, datasets, exclusions, export, cooccur, geo, insight, lineages, mutprofile, nextstrain, novel, outbreak, pathoplexus, private, qc, squirrel, config, curate, jobs, log
+from . import __version__, analysis, completeness, datasets, exclusions, export, cooccur, geo, heatmap, insight, lineages, mutprofile, nextstrain, novel, outbreak, pathoplexus, private, qc, squirrel, config, curate, jobs, log
 from .db import audit_now, connect
 
 _log = log.get("web")
@@ -839,6 +839,38 @@ def create_app(scheduler: bool = True) -> FastAPI:
             return insight.insight(r, window_days=max(1, window_days), min_carriers=max(2, min_carriers), skip_apobec=bool(skip_apobec), max_n=min(1.0, max(0.0, max_n)))
         except (ValueError, RuntimeError) as e:
             return JSONResponse({"error": str(e)}, 400)
+
+    @app.get("/analysis/{rid}/heatmap")
+    def analysis_heatmap_page(request: Request, rid: int):
+        r = nextstrain.get_run(rid)
+        if not r or r["tool"] != "mutprofile" or r["status"] != "done":
+            return JSONResponse({"error": "finished mutation-profile run not found"}, 404)
+        return render(request, "heatmap.html", nav="ns", run=r)
+
+    @app.get("/api/analyses/{rid}/heatmap")
+    def api_analysis_heatmap(rid: int, group_by: str = "lineage", min_n: int = 3, max_n: float = 0.05, min_freq: float = 0.05, min_carriers: int = 2):
+        """Lineage (or clade / subcluster) x mutation frequencies with genes, histogram and defining mutations."""
+        r = nextstrain.get_run(rid)
+        if not r or r["tool"] != "mutprofile" or r["status"] != "done":
+            return JSONResponse({"error": "finished mutation-profile run not found"}, 404)
+        try:
+            return heatmap.build(r, group_by if group_by in ("lineage", "clade", "cluster") else "lineage", max(1, min_n), min(1.0, max(0.0, max_n)), min(1.0, max(0.0, min_freq)), max(1, min_carriers))
+        except (ValueError, RuntimeError) as e:
+            return JSONResponse({"error": str(e)}, 400)
+
+    @app.get("/api/analyses/{rid}/gvf")
+    def api_analysis_gvf(rid: int, group: str = "", group_by: str = "lineage", max_n: float = 0.05):
+        """GVF of one lineage (text), or a zip with one GVF per lineage (for VIRUS-MVP / nf-ncov-voc)."""
+        r = nextstrain.get_run(rid)
+        if not r or r["tool"] != "mutprofile" or r["status"] != "done":
+            return JSONResponse({"error": "finished mutation-profile run not found"}, 404)
+        try:
+            data = heatmap.gvf(r, group, group_by if group_by in ("lineage", "clade") else "lineage", min(1.0, max(0.0, max_n)))
+        except ValueError as e:
+            return JSONResponse({"error": str(e)}, 404)
+        if group:
+            return Response(data, media_type="text/plain; charset=utf-8", headers={"Content-Disposition": f'attachment; filename="{group}_annotated.gvf"'})
+        return Response(data, media_type="application/zip", headers={"Content-Disposition": 'attachment; filename="gvf_by_lineage.zip"'})
 
     @app.get("/analysis/{rid}/pca")
     def analysis_pca_page(request: Request, rid: int):

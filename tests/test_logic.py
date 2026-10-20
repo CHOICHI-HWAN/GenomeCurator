@@ -2459,3 +2459,38 @@ def test_mutation_groups_and_pca_of_genomes(monkeypatch):
     strict = cooccur.analyse({"dataset_id": 1}, max_n=None, min_carriers=3, merge=0.0)
     assert frozenset({"G100A", "G200A"}) in {frozenset(m["label"] for m in g["mutations"]) for g in strict["groups"]} and len(strict["groups"]) > len(r["groups"])
     assert cooccur.analyse({"dataset_id": 1}, max_n=None, min_carriers=50)["available"] is False
+
+
+def test_lineage_heatmap_frequencies_defining_marks_and_gvf(tmp_path, monkeypatch):
+    import io, zipfile
+    from genomecurator import heatmap, insight, lineages, mutprofile
+    ref = tmp_path / "r.fasta"
+    ref.write_text(">R\n" + "ACGT" * 60 + "\n", encoding="utf-8")
+    monkeypatch.setattr(mutprofile, "reference_by_name", lambda acc: (ref, None))
+    monkeypatch.setattr(mutprofile, "summary", lambda run: {"reference": "R"})
+    monkeypatch.setattr(mutprofile, "good_samples", lambda run, mn: None)
+    monkeypatch.setattr(mutprofile, "run_itr", lambda run: None)
+    row = lambda s, p, a="A", apo="other": {"sample": s, "pos": str(p), "ref": "G", "alt": a, "gene": "G1", "aa_change": "K2R", "effect": "nonsynonymous", "profile_of_interest": apo}
+    X = [f"x{i}" for i in range(4)]; Y = [f"y{i}" for i in range(4)]
+    rows = [row(s, 10) for s in X] + [row(s, 20, apo="GA>AA") for s in X[:3]] + [row(s, 10) for s in Y[:1]] + [row(s, 30) for s in Y]
+    monkeypatch.setattr(insight, "_mutations", lambda run, mn=None: rows)
+    gs = [{"id": s, "lineage": "X" if s[0] == "x" else "Y", "outbreak": "o", "clade": "Ib", "country": "U", "date": "2025-01-01"} for s in X + Y]
+    monkeypatch.setattr(lineages, "_genomes", lambda run: gs)
+    monkeypatch.setattr(lineages, "status", lambda: {"ok": True, "commit": "t"})
+    monkeypatch.setattr(lineages, "defining_in_run_coordinates", lambda run, fa: None)
+    monkeypatch.setattr(lineages, "defining_snps", lambda ob, lin: [(10, "A", "X")] if lin == "X" else [])
+    h = heatmap.build({"dataset_id": 1}, "lineage", min_n=2, max_n=None, min_freq=0.0, min_carriers=1)
+    assert {r["id"]: r["n"] for r in h["rows"]} == {"X": 4, "Y": 4} and [c["label"] for c in h["columns"]] == ["G10A", "G20A", "G30A"]
+    cell = {(h["rows"][r]["id"], h["columns"][c]["label"]): (f, n, d) for r, c, f, n, d in h["cells"]}
+    assert cell[("X", "G10A")] == (100.0, 4, 1) and cell[("Y", "G10A")] == (25.0, 1, 0)                  # frequency within the lineage; defining only for the lineage it defines
+    assert cell[("X", "G20A")][0] == 75.0 and ("Y", "G20A") not in cell and cell[("Y", "G30A")][0] == 100.0
+    assert h["columns"][1]["apobec"] and h["columns"][0]["defined_by"] == "X" and h["rows"][[r["id"] for r in h["rows"]].index("X")]["n_defining"] == 1
+    assert heatmap.build({"dataset_id": 1}, "lineage", min_n=5, max_n=None)["rows"] == []              # groups under the minimum size are left out
+    text = heatmap.gvf({"dataset_id": 1}, "X", "lineage", None)
+    assert text.startswith("##gff-version 3") and "##gvf-version 1.10" in text and "sample_group=X" in text
+    body = [l for l in text.splitlines() if not l.startswith("#")]
+    assert len(body) == 2 and "ao=4;dp=4;sample_size=4" in body[0] and "clade_defining=True" in body[0] and "apobec3_type=True" in body[1]
+    z = zipfile.ZipFile(io.BytesIO(heatmap.gvf({"dataset_id": 1}, "", "lineage", None)))
+    assert sorted(z.namelist()) == ["X_annotated.gvf", "Y_annotated.gvf"]
+    with __import__("pytest").raises(ValueError):
+        heatmap.gvf({"dataset_id": 1}, "nope", "lineage", None)

@@ -1,0 +1,75 @@
+{% extends "base.html" %}{% block body %}
+<div class="pagehead"><h2>변이 히트맵 <span class="mut" style="font-size:14px;font-weight:400">lineage × 변이 · 자세히 보기</span></h2><span class="mut">{{ run.name }}</span></div>
+<div class="help">행은 <b>lineage</b>(또는 clade, 트리 서브클러스터), 열은 <b>변이</b>(유전체 위치 순, 간격은 같게)이고 <b>칸 색은 그 행의 유전체 중 변이를 가진 비율</b>입니다. 굵은 검정 테두리 = 그 lineage의 <b>정의 변이</b>(lineage-designation), 열 머리의 <span style="color:#d6249f;font-weight:700">분홍</span> = APOBEC3형. 위 유전자 막대의 색 띠는 유전자이며 누르면 그 유전자의 변이가 아래에 나옵니다. 칸에 마우스를 올리면 요약, 누르면 상세가 열립니다. 전체를 볼 때는 <a href="/analysis/{{ run.id }}/snipit">변이 그림</a>, 자세히 볼 때는 이 화면입니다. 개념은 <a href="https://github.com/cidgoh/VIRUS-MVP" target="_blank" rel="noopener">VIRUS-MVP</a>에서 가져왔습니다.</div>
+<div class="card" style="font-size:13px"><div style="display:flex;gap:12px;flex-wrap:wrap;align-items:end">
+ <label>행<br><select id="gb"><option value="lineage">lineage</option><option value="clade">clade</option><option value="cluster">트리 서브클러스터 (유행 분석)</option></select></label>
+ <label title="이 수 미만의 행은 뺍니다">행 최소 유전체<br><input id="mn" type="number" min="1" value="3" style="width:60px"></label>
+ <label title="N·모호 염기 비율이 큰 유전체는 뺍니다">N 비율 상한<br><select id="nl"><option value="0.05">5% 이하</option><option value="0.01">1% 이하</option><option value="0.2">20% 이하</option><option value="1">제한 없음</option></select></label>
+ <label title="어느 행에서도 이 비율 미만이면 그 변이 열을 만들지 않습니다">열 최소 빈도<br><select id="mf"><option value="0.05">5%</option><option value="0.2">20%</option><option value="0.5">50%</option><option value="0">제한 없음</option></select></label>
+ <button type="button" class="p" onclick="load()">다시 계산</button>
+ <span style="border-left:1px solid var(--bd);height:32px"></span>
+ <label title="이 빈도 미만의 칸은 색을 칠하지 않습니다">칸 최소 빈도 <b id="thv">0</b>%<br><input type="range" id="th" min="0" max="100" value="0" style="width:130px" oninput="document.getElementById('thv').textContent=this.value;draw()"></label>
+ <label><input type="checkbox" id="fd" onchange="rebuild()"> 정의 변이만</label>
+ <label><input type="checkbox" id="fa" onchange="rebuild()"> APOBEC3형만</label>
+ <label title="모든 행의 90% 이상이 가진 변이(참조와의 공통 차이)를 숨깁니다"><input type="checkbox" id="fc" onchange="rebuild()"> 공통 변이 숨김</label>
+ <input id="q" placeholder="변이·유전자 검색 (예: OPG175, A98T)" style="width:200px" onkeydown="if(event.key==='Enter')find()"><input id="jp" type="number" placeholder="위치로 이동" style="width:110px" onkeydown="if(event.key==='Enter')jump()">
+ <a id="gvf" href="#"><button type="button">GVF 받기 (lineage별 zip)</button></a>
+ </div><div class="mut" id="meta" style="margin-top:6px"></div></div>
+<div id="hist" style="margin-top:8px"></div>
+<div style="display:flex;gap:0;margin-top:4px;border:1px solid var(--bd);border-radius:6px;background:#fff">
+ <div id="lab" style="flex:0 0 190px;position:relative;border-right:1px solid var(--bd);font-size:12px;font-family:Helvetica,Arial,sans-serif"></div>
+ <div id="sc" style="flex:1;overflow-x:auto;overflow-y:hidden;position:relative"><canvas id="cv" style="display:block"></canvas></div>
+</div>
+<div id="tip" style="position:fixed;display:none;background:#222;color:#fff;font-size:12px;padding:6px 9px;border-radius:5px;pointer-events:none;z-index:50;max-width:340px"></div>
+<div id="detail" class="card" style="margin-top:10px;display:none"></div>
+<script>
+const RID={{ run.id }};
+const esc=s=>String(s??'').replace(/[&<>"]/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c]));
+const CW=18,RH=20,HEAD=112,GENE=24;let H=null,VIS=[],cellMap={},SEL=-1,GCOL={};
+const GP=['#8dd3c7','#bebada','#fb8072','#80b1d3','#fdb462','#b3de69','#fccde5','#bc80bd','#ccebc5','#ffed6f','#a6cee3','#fb9a99','#cab2d6','#e6ab02'];
+async function load(){document.getElementById('meta').textContent='계산하는 중…';
+ const q=new URLSearchParams({group_by:document.getElementById('gb').value,min_n:document.getElementById('mn').value||3,max_n:document.getElementById('nl').value,min_freq:document.getElementById('mf').value});
+ H=await (await fetch('/api/analyses/'+RID+'/heatmap?'+q)).json();if(H.error){document.getElementById('meta').textContent=H.error;return}
+ document.getElementById('gvf').href='/api/analyses/'+RID+'/gvf?group_by='+(H.group_by==='cluster'?'lineage':H.group_by)+'&max_n='+document.getElementById('nl').value;
+ const gi={};H.genes.forEach((g,i)=>gi[g.gene]=i);GCOL={};H.columns.forEach(c=>{if(c.gene&&!(c.gene in GCOL))GCOL[c.gene]=GP[(gi[c.gene]??0)%GP.length]});
+ cellMap={};H.cells.forEach(([r,c,f,n,d])=>cellMap[r+','+c]={f,n,d});rebuild()}
+function rebuild(){if(!H)return;const fd=document.getElementById('fd').checked,fa=document.getElementById('fa').checked,fc=document.getElementById('fc').checked,R=H.rows.length;
+ const hasDef=new Set(),allHigh={};H.cells.forEach(([r,c,f,n,d])=>{if(d)hasDef.add(c);if(f>=90)allHigh[c]=(allHigh[c]||0)+1});
+ VIS=[];H.columns.forEach((c,j)=>{if(fd&&!(c.defined_by||hasDef.has(j)))return;if(fa&&!c.apobec)return;if(fc&&(allHigh[j]||0)>=R)return;VIS.push(j)});
+ document.getElementById('meta').textContent='행 '+R+'개 · 변이 열 '+VIS.length+' / '+H.columns.length+'개 · 유전체 '+H.n_genomes+'건 · 참조 '+H.reference+(H.definitions?'':' · lineage 정의 없음(전파 타임라인에서 받기)')+(H.itr?' · ITR 마스킹':'');
+ // labels
+ document.getElementById('lab').innerHTML='<div style="height:'+(HEAD+GENE)+'px;padding:6px;color:#888;font-size:11px">'+(H.group_by==='cluster'?'서브클러스터':H.group_by)+'<br>유전체 수 · 정의 변이</div>'+H.rows.map(r=>'<div title="'+esc(r.id+' · '+r.first+' ~ '+r.last+' · '+Object.entries(r.countries).map(x=>x[0]+'×'+x[1]).join(', '))+'" style="height:'+RH+'px;line-height:'+RH+'px;padding:0 6px;white-space:nowrap;overflow:hidden;display:flex;justify-content:space-between"><span style="font-weight:'+(r.designated?700:400)+'">'+esc(r.id)+'</span><span class="mut">'+r.n+(r.n_defining?' · '+r.n_defining:'')+'</span></div>').join('');
+ const cv=document.getElementById('cv');cv.width=Math.max(300,VIS.length*CW+10);cv.height=HEAD+GENE+R*RH+4;cv.style.width=cv.width+'px';cv.style.height=cv.height+'px';histogram();draw()}
+function colorFor(f){const t=Math.min(1,f/100),a=[255,255,255],b=[31,119,180];return 'rgb('+a.map((x,i)=>Math.round(x+(b[i]-x)*(0.12+0.88*t))).join(',')+')'}
+function draw(){if(!H)return;const cv=document.getElementById('cv'),x=cv.getContext('2d'),th=+document.getElementById('th').value,R=H.rows.length;x.clearRect(0,0,cv.width,cv.height);x.font='10.5px Helvetica,Arial,sans-serif';
+ // gene bar: runs of equal gene
+ let i=0;while(i<VIS.length){const g=H.columns[VIS[i]].gene||'';let j=i;while(j+1<VIS.length&&(H.columns[VIS[j+1]].gene||'')===g)j++;x.fillStyle=g?(GCOL[g]||'#ccc'):'#e5e5e5';x.fillRect(i*CW,HEAD,(j-i+1)*CW-1,GENE-2);x.fillStyle='#333';x.textBaseline='middle';const w=(j-i+1)*CW;if(w>=34)x.fillText(g||'(intergenic)',i*CW+3,HEAD+GENE/2-1,w-4);i=j+1}
+ // headers
+ VIS.forEach((cj,k)=>{const c=H.columns[cj];x.save();x.translate(k*CW+CW/2+3,HEAD-4);x.rotate(-Math.PI/2.6);x.fillStyle=c.apobec?'#d6249f':'#333';x.font=(c.defined_by?'bold ':'')+'10.5px Helvetica,Arial,sans-serif';x.textBaseline='middle';x.fillText(c.label+(c.aa?' '+c.aa:''),0,0);x.restore();if(k===SEL){x.strokeStyle='#e15759';x.lineWidth=2;x.strokeRect(k*CW+0.5,HEAD+GENE,CW-1,R*RH)}});
+ // cells
+ const y0=HEAD+GENE;for(let r=0;r<R;r++){if(r%2===0){x.fillStyle='#f6f6f6';x.fillRect(0,y0+r*RH,cv.width,RH)}
+  VIS.forEach((cj,k)=>{const cell=cellMap[r+','+cj];if(!cell||cell.f<th)return;x.fillStyle=colorFor(cell.f);x.fillRect(k*CW+1,y0+r*RH+1,CW-2,RH-2);if(cell.d){x.strokeStyle='#000';x.lineWidth=2;x.strokeRect(k*CW+2,y0+r*RH+2,CW-4,RH-4)}})}
+ if(SEL>=0){x.strokeStyle='#e15759';x.lineWidth=2;x.strokeRect(SEL*CW+0.5,y0,CW-1,R*RH)}}
+function histogram(){const W=Math.min(1100,document.getElementById('sc').clientWidth+190),h=46,L=H.length||1,mx=Math.max(1,...H.histogram.map(b=>b[1]));let s='<svg id="hsvg" width="'+W+'" height="'+(h+16)+'" font-family="Helvetica,Arial,sans-serif" font-size="9.5">';
+ H.genes.forEach((g,i)=>{s+='<rect x="'+(g.start/L*W)+'" y="'+h+'" width="'+Math.max(1,(g.end-g.start)/L*W)+'" height="6" fill="'+GP[i%GP.length]+'"><title>'+esc(g.gene)+'</title></rect>'});
+ H.histogram.forEach(b=>{const hh=b[1]/mx*(h-4);s+='<rect x="'+(b[0]/L*W)+'" y="'+(h-hh)+'" width="'+Math.max(1,1000/L*W-0.5)+'" height="'+hh+'" fill="#4e79a7"><title>'+b[0]+'–'+(b[0]+1000)+' · 변이 '+b[1]+'</title></rect>'});
+ (H.itr||[]).forEach(b=>{s+='<rect x="'+(b[0]/L*W)+'" y="0" width="'+((b[1]-b[0]+1)/L*W)+'" height="'+h+'" fill="#999" opacity=".2"><title>ITR (마스킹)</title></rect>'});
+ s+='<rect id="vp" x="0" y="0" width="10" height="'+(h+6)+'" fill="#e15759" opacity=".25" stroke="#e15759"/><text x="0" y="'+(h+15)+'" fill="#666">1</text><text x="'+W+'" y="'+(h+15)+'" text-anchor="end" fill="#666">'+L.toLocaleString()+' bp · 1 kb당 변이 수(위), 유전자(아래), 붉은 틀 = 지금 보는 구간</text></svg>';
+ document.getElementById('hist').innerHTML='<div style="overflow:auto;background:#fff;border:1px solid var(--bd);border-radius:6px;padding:4px">'+s+'</div>';viewport()}
+function viewport(){const vp=document.getElementById('vp');if(!vp||!VIS.length)return;const sc=document.getElementById('sc'),a=Math.max(0,Math.floor(sc.scrollLeft/CW)),b=Math.min(VIS.length-1,Math.floor((sc.scrollLeft+sc.clientWidth)/CW)),svg=document.getElementById('hsvg'),W=+svg.getAttribute('width'),L=H.length||1,p0=H.columns[VIS[a]].pos,p1=H.columns[VIS[b]].pos;vp.setAttribute('x',p0/L*W);vp.setAttribute('width',Math.max(4,(p1-p0)/L*W))}
+function hit(ev){const cv=document.getElementById('cv'),r=cv.getBoundingClientRect(),px=ev.clientX-r.left,py=ev.clientY-r.top,k=Math.floor(px/CW),row=Math.floor((py-HEAD-GENE)/RH);return {k,row,py}}
+document.addEventListener('DOMContentLoaded',()=>{const sc=document.getElementById('sc'),cv=document.getElementById('cv'),tip=document.getElementById('tip');sc.addEventListener('scroll',viewport);
+ cv.addEventListener('mousemove',ev=>{if(!H)return;const {k,row,py}=hit(ev);if(k<0||k>=VIS.length){tip.style.display='none';return}const c=H.columns[VIS[k]];let t='<b>'+esc(c.label)+'</b>'+(c.gene?' · '+esc(c.gene)+(c.aa?' '+esc(c.aa):''):' · intergenic')+(c.apobec?' · <span style="color:#ff9bd2">APOBEC3형</span>':'');
+  if(row>=0&&row<H.rows.length){const cell=cellMap[row+','+VIS[k]];t+='<br>'+esc(H.rows[row].id)+': '+(cell?cell.f+'% ('+cell.n+'/'+H.rows[row].n+')'+(cell.d?' · 정의 변이':''):'없음')}else if(py<HEAD+GENE&&py>=HEAD)t+='<br>유전자 막대: 누르면 이 유전자의 변이 목록';
+  tip.innerHTML=t;tip.style.display='block';tip.style.left=Math.min(innerWidth-360,ev.clientX+14)+'px';tip.style.top=(ev.clientY+14)+'px'});
+ cv.addEventListener('mouseleave',()=>tip.style.display='none');
+ cv.addEventListener('click',ev=>{if(!H)return;const {k,row,py}=hit(ev);if(k<0||k>=VIS.length)return;if(py>=HEAD&&py<HEAD+GENE){geneDetail(H.columns[VIS[k]].gene)}else{SEL=k;draw();detail(VIS[k])}})});
+function detail(cj){const c=H.columns[cj],per=H.rows.map((r,ri)=>({r,cell:cellMap[ri+','+cj]})).filter(x=>x.cell).sort((a,b)=>b.cell.f-a.cell.f);
+ document.getElementById('detail').style.display='block';document.getElementById('detail').innerHTML='<h3 style="margin:0 0 6px">'+esc(c.label)+(c.apobec?' <span style="color:#d6249f;font-size:13px">APOBEC3형 '+esc(c.profile)+'</span>':'')+'</h3><div style="display:flex;gap:24px;flex-wrap:wrap;font-size:13px"><div><table><tr><th>위치</th><td>'+c.pos.toLocaleString()+' ('+esc(c.ref)+'→'+esc(c.alt)+')</td></tr><tr><th>유전자</th><td>'+esc(c.gene||'intergenic')+(c.function?' · '+esc(c.function):'')+'</td></tr><tr><th>범주</th><td>'+esc(c.category||'-')+'</td></tr><tr><th>단백질 변화</th><td>'+esc(c.aa||'-')+' · '+esc(c.effect)+'</td></tr><tr><th>정의 변이</th><td>'+(c.defined_by?esc(c.defined_by)+'에서 정의':'아니오')+'</td></tr><tr><th>가진 유전체</th><td>'+c.n.toLocaleString()+'건</td></tr></table></div><div style="min-width:320px"><b>행별 빈도</b><table style="margin-top:4px">'+per.map(x=>'<tr><td style="font-weight:'+(x.r.designated?700:400)+'">'+esc(x.r.id)+'</td><td style="min-width:150px"><div style="height:9px;background:#eef0f2;border-radius:2px"><div style="height:9px;width:'+x.cell.f+'%;background:#1f77b4;border-radius:2px"></div></div></td><td>'+x.cell.f+'% <span class="mut">('+x.cell.n+'/'+x.r.n+')</span>'+(x.cell.d?' ◼ 정의':'')+'</td></tr>').join('')+'</table></div></div>'}
+function geneDetail(g){if(!g)return;const gs=VIS.map(j=>H.columns[j]).filter(c=>c.gene===g),meta=H.genes.find(x=>x.gene===g)||{};document.getElementById('detail').style.display='block';document.getElementById('detail').innerHTML='<h3 style="margin:0 0 6px">'+esc(g)+' <span class="mut" style="font-size:13px;font-weight:400">'+esc(gs[0]&&gs[0].function||'')+' · '+esc(meta.category||'')+' · '+(meta.start||'')+'–'+(meta.end||'')+' ('+esc(meta.strand||'')+')</span></h3><div class="mut" style="margin-bottom:4px">보이는 변이 '+gs.length+'개</div><table><tr><th>변이</th><th>단백질</th><th>효과</th><th>APOBEC3형</th><th>가진 유전체</th><th>정의</th></tr>'+gs.map(c=>'<tr><td><b>'+esc(c.label)+'</b></td><td>'+esc(c.aa)+'</td><td>'+esc(c.effect)+'</td><td>'+(c.apobec?'<span style="color:#d6249f">●</span>':'')+'</td><td>'+c.n+'</td><td>'+esc(c.defined_by||'')+'</td></tr>').join('')+'</table>'}
+function scrollToCol(k){const sc=document.getElementById('sc');sc.scrollLeft=Math.max(0,k*CW-sc.clientWidth/3);SEL=k;draw();detail(VIS[k])}
+function find(){const q=document.getElementById('q').value.trim().toLowerCase();if(!q||!H)return;const k=VIS.findIndex(j=>{const c=H.columns[j];return (c.label+' '+c.gene+' '+c.aa).toLowerCase().includes(q)});if(k<0){alert('보이는 열에서 찾을 수 없습니다 (스위치를 확인해 보세요)');return}scrollToCol(k)}
+function jump(){const p=+document.getElementById('jp').value;if(!p||!H)return;const k=VIS.findIndex(j=>H.columns[j].pos>=p);if(k<0){alert('그 위치 뒤에는 변이가 없습니다');return}scrollToCol(k)}
+load();
+</script>
+{% endblock %}
