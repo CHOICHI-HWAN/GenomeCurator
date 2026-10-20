@@ -2669,3 +2669,26 @@ def test_check_standardises_before_sources_are_compared_and_keeps_the_raw_value(
     blob = " ".join(str(item[k]) for k in item.keys() if k.endswith("_json"))
     con.close()
     assert "Homo sapiens" in blob and "Democratic Republic of the Congo" in blob and "Homosapiens" not in blob and "Zaire" not in blob
+
+
+def test_squirrel_alignment_reprojected_on_the_workflow_reference(tmp_path, monkeypatch):
+    import gzip
+    from genomecurator import aligned, lineages
+    T = "ACGTACGTAC"                                   # the workflow's reference (10 bp)
+    A = "GG" + T[:5] + "TT" + T[5:]                    # Squirrel's reference: 2 extra bases in front and 2 in the middle that the workflow reference does not have
+    tfa, afa = tmp_path / "t.fasta", tmp_path / "a.fasta"
+    tfa.write_text(">T\n" + T + "\n", encoding="utf-8")
+    afa.write_text(">A\n" + A + "\n", encoding="utf-8")
+    cmap = {**{i: i - 2 for i in range(3, 8)}, **{i: i - 4 for i in range(10, 15)}}                  # column of A -> position of T (A cols 8-9 have no counterpart)
+    monkeypatch.setattr(lineages, "liftover", lambda q, t: cmap)
+    aln = tmp_path / "aln.fasta.gz"
+    seq1 = A[:5] + "C" + A[6:]                                                                        # a change at A col 6 (T pos 4)
+    with gzip.open(aln, "wt") as f:
+        f.write(f">g1 x\n{A}\n>g2\n{seq1}\n>g3\n{A[:10]}NNNN\n")
+    got = dict(aligned.reproject(aln, afa, tfa))
+    assert set(got) == {"g1", "g2", "g3"} and all(len(v) == len(T) for v in got.values())             # exactly the reference's columns, like Nextclade's --output-fasta
+    assert got["g1"] == T and got["g2"][3] == "C" and got["g2"][:3] + got["g2"][4:] == T[:3] + T[4:]
+    assert got["g3"] == T[:6] + "NNNN" and set(dict(aligned.reproject(aln, afa, tfa, ids={"g2"}))) == {"g2"}
+    cmap.clear()
+    cmap.update({i: i for i in range(1, 4)})                                                          # positions the column map does not reach are N for every genome
+    assert dict(aligned.reproject(aln, afa, tfa))["g1"] == A[:3] + "N" * 7

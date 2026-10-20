@@ -78,3 +78,24 @@ def snvs_vs_target(aln_path, aln_ref_fa, target_fa, ids: set | None = None, prog
         if progress and n % 100 == 0:
             progress(n)
     return {"snvs": snvs, "gaps": gaps, "n": n, "covered": round(len(ts) / max(1, len(tseq)), 4), "length_ok": True}
+
+
+def reproject(aln_path, aln_ref_fa, target_fa, ids: set | None = None):
+    """Yield (id, aligned sequence) of the Squirrel alignment *on the target reference's columns*: the sequence has exactly the target's length, a column holds the genome's base at the
+    aligned Squirrel column, and every target position the column map does not reach is N. This is the shape of what Nextclade writes with `--output-fasta` (aligned to the reference,
+    insertions relative to the reference removed), so a workflow that expects an alignment to its own reference can take it as it is."""
+    _n1, aseq = mutprofile.read_fasta(Path(aln_ref_fa))
+    _n2, tseq = mutprofile.read_fasta(Path(target_fa))
+    cmap = lineages.liftover(Path(aln_ref_fa), Path(target_fa)) if str(aln_ref_fa) != str(target_fa) else {i: i for i in range(1, len(tseq) + 1)}
+    qs = np.array(sorted(cmap), dtype=np.int64)
+    ts = np.array([cmap[q] for q in qs], dtype=np.int64)
+    keep = ts <= len(tseq)
+    qs, ts = qs[keep], ts[keep]
+    for name, seq in read_alignment(aln_path):
+        if ids is not None and name not in ids:
+            continue
+        if len(seq) != len(aseq):
+            raise ValueError(f"정렬 행 {name}의 길이({len(seq)})가 Squirrel 참조({len(aseq)})와 다릅니다.")
+        out = np.full(len(tseq), ord("N"), dtype=np.uint8)
+        out[ts - 1] = np.frombuffer(seq.upper().encode(), dtype=np.uint8)[qs - 1]
+        yield name, out.tobytes().decode()
