@@ -6,7 +6,7 @@ from fastapi import FastAPI, Form, Request
 from fastapi.responses import FileResponse, HTMLResponse, JSONResponse, RedirectResponse, Response, StreamingResponse
 from fastapi.templating import Jinja2Templates
 
-from . import __version__, analysis, completeness, datasets, exclusions, export, geo, insight, lineages, mutprofile, nextstrain, outbreak, pathoplexus, private, qc, squirrel, config, curate, jobs, log
+from . import __version__, analysis, completeness, datasets, exclusions, export, geo, insight, lineages, mutprofile, nextstrain, novel, outbreak, pathoplexus, private, qc, squirrel, config, curate, jobs, log
 from .db import audit_now, connect
 
 _log = log.get("web")
@@ -837,6 +837,24 @@ def create_app(scheduler: bool = True) -> FastAPI:
             return JSONResponse({"error": "finished mutation-profile run not found"}, 404)
         try:
             return insight.insight(r, window_days=max(1, window_days), min_carriers=max(2, min_carriers), skip_apobec=bool(skip_apobec), max_n=min(1.0, max(0.0, max_n)))
+        except (ValueError, RuntimeError) as e:
+            return JSONResponse({"error": str(e)}, 400)
+
+    @app.get("/analysis/{rid}/novel")
+    def analysis_novel_page(request: Request, rid: int):
+        r = nextstrain.get_run(rid)
+        if not r or r["tool"] != "mutprofile" or r["status"] != "done":
+            return JSONResponse({"error": "finished mutation-profile run not found"}, 404)
+        return render(request, "novel.html", nav="ns", run=r)
+
+    @app.get("/api/analyses/{rid}/novel")
+    def api_analysis_novel(rid: int, window_days: int = 120, min_size: int = 3, max_n: float = 1.0, homoplasy: int = 0):
+        """New-variant discovery: candidate groups sharing mutations no designated lineage is defined by, with status, and the discovery curve of new clade mutations."""
+        r = nextstrain.get_run(rid)
+        if not r or r["tool"] != "mutprofile" or r["status"] != "done":
+            return JSONResponse({"error": "finished mutation-profile run not found"}, 404)
+        try:
+            return novel.discover(r, max(7, window_days), max(2, min_size), min(1.0, max(0.0, max_n)), bool(homoplasy))
         except (ValueError, RuntimeError) as e:
             return JSONResponse({"error": str(e)}, 400)
 

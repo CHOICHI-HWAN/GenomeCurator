@@ -2404,3 +2404,28 @@ def test_world_map_data_and_country_names(tmp_path, monkeypatch):
     from genomecurator import web
     r = TestClient(web.create_app(scheduler=False)).get("/api/world")
     assert r.status_code == 200 and len(r.json()["countries"]) == len(w["countries"])
+
+
+def test_novel_variant_discovery_statuses_and_known_mutations(monkeypatch):
+    from genomecurator import lineages, mutprofile, novel, outbreak
+    tip = lambda n: {"name": n}
+    ref = "A" * 9 + "G" + "A" * 9 + "T" + "A" * 9 + "G" + "A" * 9000
+    tree = {"name": "root", "children": [
+        {"name": "X", "branch_attrs": {"mutations": {"nuc": ["G10A", "T20C"]}}, "children": [tip("x1"), tip("x2"), tip("x3"), tip("x4")]},        # G10A is a defining mutation: only T20C is new
+        {"name": "Y", "branch_attrs": {"mutations": {"nuc": ["G30A"]}}, "children": [tip("y1"), tip("y2"), tip("y3")]},
+        {"name": "Z", "branch_attrs": {"mutations": {"nuc": ["G10A"]}}, "children": [tip("z1"), tip("z2"), tip("z3")]}]}                       # only a known mutation: no candidate
+    monkeypatch.setattr(outbreak, "_tree", lambda run: (tree, ref, {"name": "t", "build": "x-no-such-build"}))
+    monkeypatch.setattr(outbreak, "_tree_reference", lambda ns: ("R", ref, []))
+    monkeypatch.setattr(novel, "_known_in_tree_coordinates", lambda fa: ({(10, "A")}, True))
+    dt = {"x1": "2025-01-05", "x2": "2025-02-05", "x3": "2025-03-05", "x4": "2025-04-05", "y1": "2026-08-01", "y2": "2026-08-20", "y3": "2026-09-10", "z1": "2026-09-01", "z2": "2026-09-02", "z3": "2026-09-03"}
+    gs = [{"id": i, "lineage": "A", "outbreak": "o", "clade": "Ib", "country": "U" if i[0] != "y" else "K", "date": d} for i, d in dt.items()]
+    monkeypatch.setattr(lineages, "_genomes", lambda run: gs)
+    monkeypatch.setattr(mutprofile, "good_samples", lambda run, mn: None)
+    d = novel.discover({"dataset_id": 1}, window_days=120, min_size=3)
+    byfirst = {c["mutations"][0]["label"]: c for c in d["candidates"]}
+    assert set(byfirst) == {"T20C", "G30A"}                                           # the defining G10A (on X and Z) makes neither a candidate
+    assert byfirst["G30A"]["status"] == "new" and byfirst["G30A"]["countries"] == {"K": 3} and byfirst["G30A"]["n_recent"] == 3
+    assert byfirst["T20C"]["status"] == "steady" and byfirst["T20C"]["n"] == 4 and d["counts"] == {"new": 1, "steady": 1}
+    assert d["candidates"][0]["status"] == "new" and d["n_novel_mutations"] == 2 and d["recent_novel_mutations"] == 1                     # new ones are listed first
+    assert d["curve"][-1]["total"] == 2 and {c["month"]: c["new"] for c in d["curve"]}["2025-01"] == 1
+    assert novel.discover({"dataset_id": 1}, min_size=5)["candidates"] == []          # a larger minimum size drops them

@@ -1,0 +1,48 @@
+{% extends "base.html" %}{% block body %}
+<div class="pagehead"><h2>신규 변이 탐색 <span class="mut" style="font-size:14px;font-weight:400">정의에 없는 변이를 공유하는 새 계통군</span></h2><span class="mut">{{ run.name }}</span></div>
+<div class="help">트리에서 <b>같은 가지를 공유하는 N건 이상의 유전체</b> 중, 그 가지에 <b>lineage-designation 정의에 없는 변이</b>가 있는 것을 <b>후보</b>로 찾습니다(위치는 NC_063383.1 좌표로 비교). 후보는 <span class="pill" style="background:#e15759">신규</span> 데이터의 가장 최근 날짜에서 N일 안에 처음 관찰, <span class="pill" style="background:#f28e2b">성장 중</span> 유전체의 절반 이상이 그 기간이거나 직전 기간보다 늘어남, <span class="pill" style="background:#bab0ac">정체</span> 그 외로 표시합니다.
+<b>후보는 가설입니다</b>: 트리는 지지도가 없는 IQ-TREE 한 번의 결과이고, 한 유전체에만 있는 변이(시퀀싱 오류·숙주 내 변이와 구별 불가)는 넣지 않았으며, 나라마다 시퀀싱 양이 달라 <i>처음 관찰</i>이 <i>처음 출현</i>은 아닙니다. 가장 최근 몇 달은 후보가 최소 크기에 아직 못 미쳐 <b>적게 보입니다</b>(검출 지연).</div>
+<style>.pill{color:#fff;border-radius:9px;padding:1px 8px;font-size:11.5px;font-weight:600}</style>
+<div class="card" style="font-size:13px"><div style="display:flex;gap:14px;flex-wrap:wrap;align-items:end">
+ <label title="가장 최근 날짜에서 이 기간 안에 처음 관찰되면 신규">최근 기준(일)<br><input id="wd" type="number" min="7" value="120" style="width:70px"></label>
+ <label title="후보가 되는 최소 유전체 수">최소 유전체 수<br><input id="ms" type="number" min="2" value="3" style="width:70px"></label>
+ <label title="N·모호 염기 비율이 이보다 큰 유전체는 세지 않습니다">N 비율 상한<br><select id="mn"><option value="1">제한 없음</option><option value="0.2">20% 이하</option><option value="0.05">5% 이하</option><option value="0.01">1% 이하</option></select></label>
+ <label title="여러 가지에 되풀이된 변이(homoplasy)도 신규 변이로 셈"><input type="checkbox" id="hp"> 되풀이 변이 포함</label>
+ <button type="button" class="p" onclick="load()">다시 탐색</button><span id="meta" class="mut"></span></div></div>
+<div id="root"><div class="card mut">탐색하는 중…</div></div>
+<script>
+const RID={{ run.id }};
+const esc=s=>String(s??'').replace(/[&<>"]/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c]));
+const bar=(v,mx,col,txt)=>'<div style="display:flex;align-items:center;gap:6px;min-width:80px"><div style="flex:1;height:9px;background:#eef0f2;border-radius:2px"><div style="height:9px;width:'+(mx?Math.max(0,Math.min(100,v/mx*100)):0).toFixed(1)+'%;background:'+(col||'#4e79a7')+';border-radius:2px"></div></div><span style="min-width:28px;text-align:right">'+(txt??v)+'</span></div>';
+const spark=(vals,col,w,h)=>{w=w||120;h=h||22;const mx=Math.max(1,...vals),bw=w/Math.max(1,vals.length);return '<svg width="'+w+'" height="'+h+'" style="vertical-align:middle">'+vals.map((v,i)=>v?'<rect x="'+(i*bw).toFixed(1)+'" y="'+(h-v/mx*(h-2)).toFixed(1)+'" width="'+Math.max(1,bw-0.5).toFixed(1)+'" height="'+(v/mx*(h-2)).toFixed(1)+'" fill="'+(col||'#4e79a7')+'"/>':'').join('')+'</svg>'};
+const ST={new:['신규','#e15759'],growing:['성장 중','#f28e2b'],steady:['정체','#bab0ac']};
+let D=null,FLT='';
+async function load(){document.getElementById('root').innerHTML='<div class="card mut">탐색하는 중…</div>';
+ const q=new URLSearchParams({window_days:document.getElementById('wd').value||120,min_size:document.getElementById('ms').value||3,max_n:document.getElementById('mn').value,homoplasy:document.getElementById('hp').checked?1:0});
+ D=await (await fetch('/api/analyses/'+RID+'/novel?'+q)).json();render()}
+function setF(f){FLT=f;render()}
+function render(){if(D.error||D.available===false){document.getElementById('root').innerHTML='<div class="card" style="color:var(--bad)">'+esc(D.error||D.reason)+'</div>';return}
+ document.getElementById('meta').textContent='가장 최근 날짜 '+D.newest+' · 날짜 있는 유전체 '+D.n_dated.toLocaleString()+'건 · 트리 '+D.tree.slice(-26)+' · 참조 '+D.reference;
+ let h='';if(!D.definitions)h+='<div class="card" style="color:var(--bad)">lineage 정의가 없어 <b>모든 가지 변이를 신규로 셉니다</b>. 전파 타임라인에서 <i>정의 받기</i>를 먼저 하세요.</div>';
+ const c=D.counts;h+='<div style="display:flex;gap:12px;flex-wrap:wrap;margin:10px 0">'+[['new','최근 '+D.window_days+'일 안에 처음 나타난 후보'],['growing','늘고 있는 후보'],['steady','정체한 후보']].map(x=>'<div class="card" style="min-width:170px;cursor:pointer;border-left:5px solid '+ST[x[0]][1]+'" onclick="setF(\''+(FLT===x[0]?'':x[0])+'\')"><div style="font-size:26px;font-weight:700">'+(c[x[0]]||0)+'</div><div class="mut">'+x[1]+'</div></div>').join('')+'<div class="card" style="min-width:170px"><div style="font-size:26px;font-weight:700">'+D.n_novel_mutations+'</div><div class="mut">정의에 없는 계통군 변이(최근 '+D.window_days+'일 신규 '+D.recent_novel_mutations+')</div></div></div>';
+ // curve
+ const cv=D.curve;if(cv.length){const W=860,Ht=170,m={l:40,r:44,t:10,b:28},mxN=Math.max(1,...cv.map(x=>x.new)),mxT=Math.max(1,...cv.map(x=>x.total)),bw=(W-m.l-m.r)/cv.length;let s='<svg xmlns="http://www.w3.org/2000/svg" width="'+W+'" height="'+Ht+'" font-family="Helvetica,Arial,sans-serif" font-size="10">';
+  const rf=D.recent_from.slice(0,7),ri=cv.findIndex(x=>x.month>=rf);if(ri>=0)s+='<rect x="'+(m.l+ri*bw)+'" y="'+m.t+'" width="'+((cv.length-ri)*bw)+'" height="'+(Ht-m.t-m.b)+'" fill="#e15759" opacity=".08"><title>최근 기간: 후보가 최소 크기에 못 미쳐 적게 보임(검출 지연)</title></rect>';
+  cv.forEach((x,i)=>{const hh=x.new/mxN*(Ht-m.t-m.b);s+='<rect x="'+(m.l+i*bw+1).toFixed(1)+'" y="'+(Ht-m.b-hh).toFixed(1)+'" width="'+(bw-2).toFixed(1)+'" height="'+hh.toFixed(1)+'" fill="#4e79a7"><title>'+x.month+' · 새로 보인 변이 '+x.new+' · 누적 '+x.total+'</title></rect>';if(i%Math.ceil(cv.length/14)==0)s+='<text x="'+(m.l+i*bw)+'" y="'+(Ht-12)+'" fill="#666">'+x.month+'</text>'});
+  s+='<polyline fill="none" stroke="#d6249f" stroke-width="2" points="'+cv.map((x,i)=>(m.l+i*bw+bw/2).toFixed(1)+','+(Ht-m.b-x.total/mxT*(Ht-m.t-m.b)).toFixed(1)).join(' ')+'"/><text x="'+(W-m.r+4)+'" y="'+(m.t+8)+'" fill="#d6249f">누적 '+cv[cv.length-1].total+'</text><text x="2" y="'+(m.t+8)+'" fill="#4e79a7">월 '+mxN+'</text></svg>';
+  h+='<h3 style="margin-top:18px">신규 변이가 계속 생기고 있는가 <span class="mut" style="font-size:12.5px;font-weight:400">월별로 처음 관찰된 정의 외 계통군 변이(막대)와 누적(선) · 붉은 영역은 검출 지연 구간</span></h3><div style="overflow:auto;background:#fff;border:1px solid var(--bd);border-radius:6px;padding:6px">'+s+'</div>'}
+ // scatter
+ const sc=D.scatter;if(sc.length){const W=860,Ht=250,m={l:44,r:12,t:10,b:28},t0=Math.min(...sc.map(x=>Date.parse(x.first))),t1=Date.parse(D.newest),mx=Math.max(...sc.map(x=>x.n)),ly=v=>Math.log(v)/Math.log(mx+1),x=t=>m.l+(t-t0)/(t1-t0||1)*(W-m.l-m.r),y=v=>Ht-m.b-ly(v)*(Ht-m.t-m.b);let s='<svg xmlns="http://www.w3.org/2000/svg" width="'+W+'" height="'+Ht+'" font-family="Helvetica,Arial,sans-serif" font-size="10">';
+  [3,10,30,100,300].filter(v=>v<=mx).forEach(v=>{s+='<line x1="'+m.l+'" x2="'+(W-m.r)+'" y1="'+y(v)+'" y2="'+y(v)+'" stroke="#eee"/><text x="'+(m.l-4)+'" y="'+(y(v)+3)+'" text-anchor="end" fill="#666">'+v+'</text>'});
+  for(let yr=new Date(t0).getFullYear()+1;yr<=new Date(t1).getFullYear();yr++){const xx=x(Date.parse(yr+'-01-01'));s+='<line x1="'+xx+'" x2="'+xx+'" y1="'+m.t+'" y2="'+(Ht-m.b)+'" stroke="#ddd" stroke-dasharray="3"/><text x="'+(xx+3)+'" y="'+(Ht-12)+'" fill="#666">'+yr+'</text>'}
+  sc.forEach(p=>{s+='<circle cx="'+x(Date.parse(p.first)).toFixed(1)+'" cy="'+y(p.n).toFixed(1)+'" r="'+(3+2*Math.sqrt(p.countries)).toFixed(1)+'" fill="'+(p.recent?'#e15759':'#4e79a7')+'" fill-opacity=".6" stroke="'+(p.apobec?'#d6249f':'#555')+'" stroke-width="'+(p.apobec?1.6:.4)+'"><title>'+esc(p.label+' · 처음 '+p.first+' · 유전체 '+p.n+' · 나라 '+p.countries+(p.apobec?' · APOBEC3형':''))+'</title></circle>'});
+  h+='<h3 style="margin-top:18px">신규 변이의 처음 관찰 시점과 퍼진 정도 <span class="mut" style="font-size:12.5px;font-weight:400">가로 = 처음 관찰한 날, 세로 = 가진 유전체 수(로그), 원 크기 = 나라 수, <span style="color:#e15759">붉은색</span> = 최근 신규, 분홍 테두리 = APOBEC3형</span></h3><div style="overflow:auto;background:#fff;border:1px solid var(--bd);border-radius:6px;padding:6px">'+s+'</svg></div>'}
+ // candidates
+ const list=D.candidates.filter(x=>!FLT||x.status===FLT),mxn=Math.max(1,...list.map(x=>x.n));
+ h+='<h3 style="margin-top:18px">후보 계통군 <span class="mut" style="font-size:12.5px;font-weight:400">'+(FLT?ST[FLT][0]+'만 · ':'')+list.length+'개 · 위 카드를 누르면 걸러집니다 · 신규 → 성장 중 → 정체 순</span></h3>';
+ h+=list.length?'<table><tr><th></th><th>후보</th><th>상위</th><th>유전체</th><th>최근 / 직전</th><th>시간 분포(월별)</th><th>첫 ~ 마지막</th><th>나라</th><th>소속 lineage</th><th>정의에 없는 변이 (유전자 · 아미노산)</th></tr>'+list.slice(0,80).map(c=>{const mo=[...new Set(D.curve.map(x=>x.month))],vals=(mo.length?mo:Object.keys(c.months)).map(m=>c.months[m]||0);return '<tr><td class="nw"><span class="pill" style="background:'+ST[c.status][1]+'">'+ST[c.status][0]+'</span></td><td><b>'+c.id+'</b></td><td class="mut">'+(c.parent||'-')+'</td><td>'+bar(c.n,mxn,'#4e79a7',c.n)+'</td><td>'+c.n_recent+' / '+c.n_prev+'</td><td>'+spark(vals,'#4e79a7',Math.min(240,Math.max(70,vals.length*5)))+'</td><td class="nw">'+esc(c.first)+' ~ '+esc(c.last)+'</td><td style="font-size:12px">'+esc(Object.entries(c.countries).map(x=>x[0]+'×'+x[1]).join(', '))+'</td><td style="font-size:12px">'+esc(Object.entries(c.lineages).map(x=>x[0]+'×'+x[1]).join(' '))+'</td><td style="font-size:12px">'+c.mutations.map(m=>'<span style="'+(m.apobec?'color:#d6249f;':'')+'font-weight:700" title="'+esc(m.effect)+(m.branches>1?' · 여러 가지에 되풀이':'')+'">'+esc(m.label)+(m.branches>1?'‡':'')+(m.gene?' ('+esc(m.gene)+' '+esc(m.aa)+')':'')+'</span>').join(' · ')+'</td></tr>'}).join('')+'</table>':'<div class="mut">해당하는 후보가 없습니다.</div>';
+ h+='<div class="mut" style="margin-top:6px">분홍 = APOBEC3형 · ‡ = 같은 변이가 다른 가지에도 있음 · 상위 = 이 후보를 포함하는 더 큰 후보</div>';
+ document.getElementById('root').innerHTML=h}
+load();
+</script>
+{% endblock %}
