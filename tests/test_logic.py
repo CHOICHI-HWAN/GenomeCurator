@@ -2785,15 +2785,23 @@ def test_vocab_platform_and_specimen_fold_into_standard_terms(tmp_path, monkeypa
     monkeypatch.setattr(config, "DATA_DIR", tmp_path)
     vocab._CACHE.clear()
     S = vocab.standardize
-    assert S("sequencing_platform", "Illumina NovaSeq 6000").value == "Illumina" and S("sequencing_platform", "MinION").value == "Oxford Nanopore"
+    # the model stays in sequencing_platform (spelling made standard); the technology goes to the derived column `platform`
+    assert S("sequencing_platform", "Illumina NovaSeq 6000").status == "same" and S("sequencing_platform", "novaseq").value == "Illumina NovaSeq 6000"
+    assert S("sequencing_platform", "Oxford Nanopore Technologies GridION").value == "Oxford Nanopore GridION" and S("sequencing_platform", "MinION").value == "Oxford Nanopore MinION"
+    assert S("sequencing_platform", "Nanopore").value == "Oxford Nanopore"
     r = S("sequencing_platform", "Illumina MiSeq; Oxford Nanopore Technologies GridION")
-    assert (r.value, r.status) == ("Illumina; Oxford Nanopore", "mapped")
+    assert (r.value, r.status) == ("Illumina MiSeq; Oxford Nanopore GridION", "mapped")
+    assert vocab.platform_of(r.value) == "Illumina; Oxford Nanopore" and vocab.platform_of("Illumina NextSeq 2000") == "Illumina" and vocab.platform_of("Quantum") == ""
     assert S("sequencing_platform", "Nanopore+Illumina").value == "Oxford Nanopore; Illumina"
-    assert S("sequencing_platform", "Illumina").status == "same" and S("sequencing_platform", "WGS").status == "flagged"
+    assert S("sequencing_platform", "WGS").status == "flagged"
     u = S("sequencing_platform", "Illumina; Quantum Sequencer")                                            # one unknown part: kept as it is, for a person to decide
     assert (u.value, u.status) == ("Illumina; Quantum Sequencer", "unmapped")
+    recs = {"ncbi": {"A1": {"sequencing_platform": "MinION"}, "A2": {"sequencing_platform": "Quantum"}}}
+    vocab.apply_to_sources(recs)
+    assert recs["ncbi"]["A1"] == {"sequencing_platform": "Oxford Nanopore MinION", "platform": "Oxford Nanopore"} and "platform" not in recs["ncbi"]["A2"]
     assert S("isolation_source", "lesion swab").value == "Lesion swab" and S("isolation_source", "Skin lesion:Crust").value == "Skin lesion (crust/scab)"
     assert S("isolation_source", "clinical").status == "unmapped"                                         # too vague to guess a specimen type
+
 
 
 def test_squirrel_qc_is_compared_with_nextclade_bad_only(tmp_path, monkeypatch):
@@ -2817,3 +2825,17 @@ def test_squirrel_qc_is_compared_with_nextclade_bad_only(tmp_path, monkeypatch):
     assert q["judged"] == 4 and q["flagged"] == 2 and q["both"] == 1 and q["only_squirrel"] == 1 and q["only_nextclade"] == 1 and q["neither"] == 1
     assert q["nextclade_mediocre"] == 1 and q["site_notes"] == {"clustered_snps": 2} and q["genomes_with_site_notes"] == 2
     assert qc.squirrel_qc(99) == {"available": False}
+
+
+def test_support_badges_say_what_is_built_for_which_virus(tmp_path, monkeypatch):
+    from genomecurator import support
+    m = {s["area"]: s["level"] for s in support.for_virus("Orthopoxvirus monkeypox")}
+    o = {s["area"]: s["level"] for s in support.for_virus("Henipavirus nipahense")}
+    assert m == {"collect": "done", "vocab": "done", "qc": "done", "analysis": "done"}
+    assert o["analysis"] == "none" and o["vocab"] == "wip" and o["qc"] == "wip"
+    from fastapi.testclient import TestClient
+    from genomecurator import config, web
+    monkeypatch.setattr(config, "DATA_DIR", tmp_path)
+    monkeypatch.setattr(config, "DB_PATH", tmp_path / "t.db")
+    c = TestClient(web.create_app(scheduler=False))
+    assert c.get("/").status_code == 200 and c.get("/hub").status_code == 200

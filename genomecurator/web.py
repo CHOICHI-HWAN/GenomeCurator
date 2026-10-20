@@ -6,7 +6,7 @@ from fastapi import FastAPI, Form, Request
 from fastapi.responses import FileResponse, HTMLResponse, JSONResponse, RedirectResponse, Response, StreamingResponse
 from fastapi.templating import Jinja2Templates
 
-from . import variantcall, __version__, analysis, completeness, datasets, exclusions, export, cooccur, geo, heatmap, vocab, insight, lineages, mutprofile, nextstrain, novel, outbreak, pathoplexus, private, qc, squirrel, config, curate, jobs, log
+from . import support, variantcall, __version__, analysis, completeness, datasets, exclusions, export, cooccur, geo, heatmap, vocab, insight, lineages, mutprofile, nextstrain, novel, outbreak, pathoplexus, private, qc, squirrel, config, curate, jobs, log
 from .db import audit_now, connect
 
 _log = log.get("web")
@@ -46,7 +46,7 @@ CS_COLS = [("kind", "종류", True, True), ("decision", "결정", True, True), (
            ("isolation_country", "Country", True, False), ("geographic_location", "Geographic Location", False, False),
            ("collection_date", "Collection Date", True, False), ("isolation_source", "Isolation Source", False, False),
            ("sra_accession", "SRA Accession", True, False), ("bioproject_accession", "BioProject", False, False),
-           ("biosample_accession", "BioSample", False, False), ("sequencing_platform", "Sequencing Platform", False, False),
+           ("biosample_accession", "BioSample", False, False), ("sequencing_platform", "Sequencing Platform", False, False), ("platform", "Platform", False, False),
            ("assembly_method", "Assembly Method", False, False), ("has_sra", "SRA", False, False),
            ("submitter", "Submitter", False, False), ("bvbrc_genome_id", "BV-BRC ID", False, False),
            ("release_date", "Release Date", False, False)]
@@ -60,7 +60,7 @@ GN_COLS = [("genome_name", "Genome Name", True), ("strain", "Strain", True), ("g
            ("genotype", "Genotype", None), ("subtype", "Subtype", None), ("outbreak", "Outbreak", None),
            ("geographic_location", "Geographic Location", False), ("isolation_source", "Isolation Source", False),
            ("sra_accession", "SRA Accession", True), ("bioproject_accession", "BioProject", False),
-           ("biosample_accession", "BioSample", False), ("sequencing_platform", "Sequencing Platform", False),
+           ("biosample_accession", "BioSample", False), ("sequencing_platform", "Sequencing Platform", False), ("platform", "Platform", False),
            ("assembly_method", "Assembly Method", False), ("has_sra", "SRA Available", False), ("has_fasta", "FASTA", False),
            ("genome_quality", "Genome Quality", False), ("genome_id", "Genome ID", False), ("bvbrc_genome_id", "BV-BRC ID", False),
            ("qc", "QC", True, True), ("nc_clade", "Nextclade Clade", None), ("nc_lineage", "Nextclade Lineage", None),
@@ -220,8 +220,10 @@ def create_app(scheduler: bool = True) -> FastAPI:
 
     @app.get("/")
     def index(request: Request, msg: str = ""):
-        return render(request, "index.html", msg=msg, nav="cur",
-                      watches=_rows("SELECT w.*, (SELECT COUNT(*) FROM genome g WHERE g.watch_id=w.id AND IFNULL(g.genome_status,'')!='Removed') n_genomes FROM watchlist w"),
+        ws = _rows("SELECT w.*, (SELECT COUNT(*) FROM genome g WHERE g.watch_id=w.id AND IFNULL(g.genome_status,'')!='Removed') n_genomes FROM watchlist w")
+        for w in ws:
+            w["support"] = support.for_virus(w["name"], w["taxon"])
+        return render(request, "index.html", msg=msg, nav="cur", watches=ws,
                       changesets=_changeset_cards())
 
     STATUS_TEXT = {"PENDING": ("준비 중", "warn"), "READY": ("검토 대기", "warn"), "BLOCKED": ("적용 불가", "bad"), "APPLIED": ("적용 완료", "ok")}
@@ -649,7 +651,8 @@ def create_app(scheduler: bool = True) -> FastAPI:
         ds = datasets.get(dataset) if dataset else None
         watches = _rows("SELECT id, name FROM watchlist ORDER BY name")
         wid = ds["watch_id"] if ds else (watch or next((w["id"] for w in watches if "monkeypox" in w["name"].lower()), watches[0]["id"] if watches else 0))
-        return render(request, "hub.html", nav="hub", watches=watches, wid=wid, dsid=ds["id"] if ds else 0)
+        cur = next((w for w in watches if w["id"] == wid), None)
+        return render(request, "hub.html", nav="hub", watches=watches, wid=wid, dsid=ds["id"] if ds else 0, support=support.for_virus(cur["name"]) if cur else [])
 
     @app.get("/nextstrain")
     def nextstrain_page(request: Request, dataset: int = 0, watch: int = 0):

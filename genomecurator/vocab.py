@@ -4,7 +4,7 @@ Sources spell the same thing in many ways (`Homo sapiens`, `Homosapiens`, `H. sa
 `2025-05-01/2025-05-28`, `15-May-2025`, ...). Compared as they come, such differences look like conflicts and end up as different values in the curated table. Here every incoming value of
 a standardised field is looked up in **our dictionary** and replaced by the standard term, **before** the sources are compared:
 
-    host_name, isolation_country, collection_date, clade, sequencing_platform (technology, models fold into it), isolation_source (specimen type)
+    host_name, isolation_country, collection_date, clade, sequencing_platform (model-level standard names; the technology goes into the derived column `platform`), isolation_source (specimen type)
 
 The dictionary lives in `resources/vocab/*.tsv` (host, country, clade: term, synonyms separated by `|`, and a flag for terms that are not what the field means, e.g. a cell line in the
 host field) and can be extended or overridden with files of the same name in `<data>/vocab/` (kept out of git, survives updates). Dates follow rules instead of a list.
@@ -32,7 +32,7 @@ _log = log.get("vocab")
 FIELDS = ("host_name", "isolation_country", "collection_date", "clade", "sequencing_platform", "isolation_source")
 FILES = {"host_name": "host", "isolation_country": "country", "clade": "clade", "collection_date": "date", "sequencing_platform": "platform", "isolation_source": "specimen"}
 COLUMNS = {"host_name": ["term", "synonyms", "taxon_id", "flag", "note"], "isolation_country": ["term", "synonyms", "iso3", "note"], "clade": ["scope", "term", "synonyms", "flag", "note"],
-           "collection_date": ["raw", "standard", "note"], "sequencing_platform": ["term", "synonyms", "flag", "note"], "isolation_source": ["term", "synonyms", "flag", "note"]}
+           "collection_date": ["raw", "standard", "note"], "sequencing_platform": ["term", "platform", "synonyms", "flag", "note"], "isolation_source": ["term", "synonyms", "flag", "note"]}
 MULTI = {"sequencing_platform"}        # several values in one field (`Illumina; Oxford Nanopore`): every part is looked up, the parts are joined again
 EMPTY = {"", "missing", "unknown", "unspecified", "n/a", "na", "none", "null", "nan", "not applicable", "not available", "not collected", "not provided", "not determined", "-", "--", "?"}
 MONTHS = {m: i for i, m in enumerate(["jan", "feb", "mar", "apr", "may", "jun", "jul", "aug", "sep", "oct", "nov", "dec"], 1)}
@@ -75,7 +75,7 @@ def load(field: str) -> dict:
     for _d, r in _rows(FILES[field]):
         scope = (r.get("scope") or "*").strip() or "*"
         term = r["term"].strip()
-        e = {"term": term, "flag": (r.get("flag") or "").strip(), "note": (r.get("note") or "").strip(), "iso3": (r.get("iso3") or "").strip(), "taxon_id": (r.get("taxon_id") or "").strip(), "scope": scope}
+        e = {"term": term, "flag": (r.get("flag") or "").strip(), "note": (r.get("note") or "").strip(), "iso3": (r.get("iso3") or "").strip(), "taxon_id": (r.get("taxon_id") or "").strip(), "platform": (r.get("platform") or "").strip(), "scope": scope}
         for k in [term] + [x for x in (r.get("synonyms") or "").split("|") if x.strip()]:
             out[(scope, key(k))] = e
     _CACHE[field] = (_stamp(field), out)
@@ -232,6 +232,18 @@ def standardize(field: str, raw, scope: str = "*") -> Std:
     return Std(term, "mapped", f"{FILES[field]}.synonym", note)
 
 
+def platform_of(value) -> str:
+    """The technology / manufacturer of a standardised `sequencing_platform` value (`Illumina MiSeq; Oxford Nanopore MinION` -> `Illumina; Oxford Nanopore`); empty when a part is not in the dictionary."""
+    d = load("sequencing_platform")
+    out = []
+    for x in (p.strip() for p in str(value or "").split(";")):
+        h = d.get(("*", key(x))) if x else None
+        if not h or not h.get("platform"):
+            return ""
+        out.append(h["platform"])
+    return "; ".join(dict.fromkeys(out))
+
+
 def _standardize_multi(field: str, s: str, clean: str, d: dict) -> Std:
     """A field that may hold several values (separated by `;`, `,` or `/`): each part is looked up; the standard value is the distinct standard terms in order of first appearance joined by `; `.
     One unknown part makes the whole value `unmapped` (kept as it is), one flagged part makes it `flagged`."""
@@ -267,6 +279,8 @@ def apply_to_sources(per_source: dict[str, dict[str, dict]], scope: str = "*") -
                     continue
                 r = standardize(field, v, scope)
                 counts[(field, r.status)] += 1
+                if field == "sequencing_platform" and r.status not in ("unmapped", "nodict"):
+                    rec["platform"] = platform_of(r.value)                                 # derived column: the technology, while the model stays in sequencing_platform
                 if r.status in ("same", "nodict"):
                     continue
                 if r.value != v:

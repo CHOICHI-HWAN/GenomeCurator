@@ -12,6 +12,10 @@ Virus Genome Metadata Curator(패키지 `genomecurator`, 이전 표시 이름 "G
 ## [Unreleased]
 
 ### 추가
+- **플랫폼 열**: `sequencing_platform`은 *모델*을 유지하고(철자만 표준화: `Illumina NovaSeq 6000`, `Oxford Nanopore MinION` …) 새 파생 열 `platform`에 기술(`Illumina`, `Oxford Nanopore` …, 여러 개면 `; `로 연결)을 채웁니다. 둘 다 다음 확인에서 평소처럼 제안으로 올라옵니다. 모델 수준 용어와 기술 대응은 `resources/vocab/platform.tsv`에 있습니다.
+- **구현 상태 뱃지**(워치리스트·분석 허브): 바이러스마다 수집, 용어 사전, QC, 분석이 *완료 / 개발중 / 미지원*인지 표시합니다(`genomecurator/support.py`). 아직 큐레이션·검증하지 않은 나머지 바이러스는 완료로 표시하지 않고, 원숭이두창만 완료입니다.
+- **구조 점검**(`docs/ARCHITECTURE_REVIEW.ko.md`): import로 모듈 결합도를 측정(`mutprofile` 허브, 순환 의존 5쌍, 실행 틀 4벌 복사)하고 Snakemake를 검토했습니다 — 새 변이 검증 파이프라인에만 시험 적용하길 권합니다.
+- **공식 데이터와 비교**: 로컬 clade Ib 분석을 nextstrain.org mpox/clade-I 공식 트리와 비교했습니다(`docs/VALIDITY.md` 9번; 공유 749 tip에서 clade·lineage 모두 일치).
 - **용어 사전 3단계**: 사전이 `sequencing_platform`(모델은 기술로 접힘: Illumina, Oxford Nanopore, Ion Torrent, MGI, Sanger, PacBio, 454; `Illumina; Oxford Nanopore`처럼 한 칸에 여러 개면 부분별로 찾아 다시 이어 붙임; `WGS`는 플랫폼이 아니라 표시)과 `isolation_source`(검체 종류: 병변 면봉, 피부 병변(수포/가피), 혈액, 구인두 면봉, 항문생식기 면봉, 대변, 조직, 세포배양 분리주)까지 넓어졌습니다. `clinical`·`patient`·`hospital`처럼 모호한 값은 일부러 추측하지 않고 `사전에 없는 값`으로 남겨 검토 화면에서 정합니다. `assembly_method`는 도구 버전이 정보라 바꾸지 않습니다.
 - **변이 호출 일치도 화면**(변이 프로파일 실행의 *호출 일치도* 탭, `/analysis/<id>/concordance`): 실행의 모든 유전체에 snippy + lofreq를 돌리고(서버 작업) 이 실행의 호출·snippy·lofreq가 모두 일치하지 않는 위치를 보여 줍니다. 아무것도 가리거나 지우지 않습니다.
 - **Squirrel QC를 Nextclade QC 옆에**(QC 화면): 최근 끝난 Squirrel 실행의 유전체 단위 제외 권고(`suggested_to_exclude.csv`)와 위치 마스킹 권고(`alignment.suggested_mask.csv`)를 바이러스별로 보여 주고 Nextclade *불량*과 대조합니다(Nextclade *주의*는 clade I 대부분이 해당해 비교에서 뺐습니다).

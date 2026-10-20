@@ -131,7 +131,7 @@ SELECT g.genome_id, g.accession, w.name AS virus, g.genome_name, g.strain, g.gen
   CASE WHEN g.release_date GLOB '[12][0-9][0-9][0-9]*' THEN CAST(substr(g.release_date,1,4) AS INTEGER) END AS release_year,
   g.release_date, g.update_date,
   g.clade, g.lineage, g.genotype, g.subtype, g.serotype, g.outbreak,
-  g.sequencing_platform, g.assembly_method, g.submitter,
+  g.sequencing_platform, g.platform, g.assembly_method, g.submitter,
   CASE WHEN g.sra_accession IS NOT NULL AND g.sra_accession != '' THEN 'Yes' ELSE 'No' END AS has_sra,
   CASE WHEN g.pathoplexus_accession IS NOT NULL AND g.pathoplexus_accession != '' THEN 'Yes' ELSE 'No' END AS in_pathoplexus,
   CASE WHEN s.file_path IS NOT NULL THEN 'Yes' ELSE 'No' END AS has_fasta,
@@ -155,7 +155,7 @@ LEFT JOIN genome_sequence s ON s.genome_id = g.genome_id
 def migrate(con: sqlite3.Connection) -> None:
     """Add columns introduced after the base SCHEMA (also used to build backup copies)."""
     have = {r[1] for r in con.execute("PRAGMA table_info(genome)")}
-    for col in ("sra_accession", "bioproject_accession", "biosample_accession", "assembly_method", "sequencing_platform",
+    for col in ("sra_accession", "bioproject_accession", "biosample_accession", "assembly_method", "sequencing_platform", "platform",
                 "clade", "lineage", "serotype", "outbreak"):
         if col not in have:
             con.execute(f"ALTER TABLE genome ADD COLUMN {col} TEXT")

@@ -1,12 +1,12 @@
 {% extends "base.html" %}{% block body %}
 <h2>Watchlist</h2>
-<table><tr><th>이름</th><th>NCBI taxon</th><th>로컬 유전체</th><th>자동 확인</th><th>마지막 확인</th><th></th></tr>
-{% for w in watches %}<tr{% if not w.enabled %} style="opacity:.6"{% endif %}><td>{{ w.name }}</td><td>{{ w.taxon }} <span class="mut">({{ w.taxon_id }})</span></td><td>{{ w.n_genomes }}</td>
+<table><tr><th>이름</th><th>NCBI taxon</th><th>로컬 유전체</th><th title="이 바이러스에서 각 기능이 어디까지 만들어졌는지">구현 상태</th><th>자동 확인</th><th>마지막 확인</th><th></th></tr>
+{% for w in watches %}<tr{% if not w.enabled %} style="opacity:.6"{% endif %}><td>{{ w.name }}</td><td>{{ w.taxon }} <span class="mut">({{ w.taxon_id }})</span></td><td>{{ w.n_genomes }}</td><td>{% for s in w.support %}<span class="bdg {{ s.level }}" title="{{ s.note }}">{{ s.label }} {{ s.text }}</span> {% endfor %}</td>
 <td>{{ "켜짐" if w.enabled else "꺼짐" }}</td><td>{{ w.last_checked or "-" }}</td>
 <td style="white-space:nowrap"><form method="post" action="/watch/{{ w.name }}/check" onsubmit="runJob(this);return false" style="display:inline"><button>지금 확인</button></form>
  <button type="button" onclick="editWatch({{ w.id }})">편집</button>
  <button type="button" onclick="delWatch({{ w.id }})" style="color:var(--bad)">삭제</button></td></tr>
-{% else %}<tr><td colspan="6" class="mut">등록된 바이러스가 없습니다.</td></tr>{% endfor %}</table>
+{% else %}<tr><td colspan="7" class="mut">등록된 바이러스가 없습니다.</td></tr>{% endfor %}</table>
 
 <dialog id="edlg" style="border:1px solid var(--bd);border-radius:6px;background:var(--card);color:var(--fg);max-width:520px;width:92vw">
  <form method="post" id="edf" style="display:flex;flex-direction:column;gap:10px"><b style="font-size:16px">워치 편집</b>
