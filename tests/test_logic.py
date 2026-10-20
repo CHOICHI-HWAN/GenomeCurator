@@ -2311,6 +2311,7 @@ def test_cross_site_writes_are_refused_for_every_route(tmp_path, monkeypatch):
     assert c.get("/", headers={"origin": "https://evil.example"}).status_code == 200                              # reading stays possible
 
 
+@_unix_only
 def test_changed_content_under_the_same_ids_is_not_the_same_analysis(tmp_path, monkeypatch):
     from genomecurator import datasets, nextstrain, private
     from genomecurator.db import connect
