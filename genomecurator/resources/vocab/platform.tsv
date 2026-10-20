@@ -19,7 +19,8 @@ Oxford Nanopore GridION	Oxford Nanopore	gridion|oxford nanopore gridion|oxford n
 Oxford Nanopore PromethION	Oxford Nanopore	promethion|oxford nanopore promethion|oxford nanopore technologies promethion|nanopore promethion		
 Oxford Nanopore Flongle	Oxford Nanopore	flongle|oxford nanopore flongle		
 Ion Torrent	Ion Torrent	iontorrent|ion torrent|ion torrent s5|ion s5|ion proton|ion gene studio s5|ion torrent pgm|ion pgm|ion gene studio		
-MGI	MGI	mgi|bgi|dnbseq|mgiseq		
+MGI	MGI	mgi|bgi|mgiseq		
+MGI DNBSEQ	MGI	dnbseq		모델 번호를 모르는 DNBSEQ
 MGI DNBSEQ-G99	MGI	mgi dnbseq-g99|mgi dnbseq g99|dnbseq-g99		
 MGI DNBSEQ-G400	MGI	mgi dnbseq-g400|dnbseq-g400		
 Sanger	Sanger	sanger|sanger dideoxy sequencing|sanger sequencing|capillary sequencing|abi 3730|abi3730		
