@@ -3,7 +3,7 @@
 [![tests](https://github.com/CHOICHI-HWAN/GenomeCurator/actions/workflows/ci.yml/badge.svg)](https://github.com/CHOICHI-HWAN/GenomeCurator/actions/workflows/ci.yml)
 ![python](https://img.shields.io/badge/python-3.10%20%7C%203.12-blue)
 ![version](https://img.shields.io/github/v/tag/CHOICHI-HWAN/GenomeCurator?label=version&sort=semver)
-![license](https://img.shields.io/badge/license-MIT-green)
+![license](https://img.shields.io/badge/license-GPL--3.0-blue)
 
 [한국어](README.ko.md)
 
@@ -179,5 +179,5 @@ Also: [CHANGELOG.md](CHANGELOG.md) · [docs/SUPERSET.md](docs/SUPERSET.md) · [d
 
 ## Contributing and license
 
-Bug reports and ideas: [Issues](https://github.com/CHOICHI-HWAN/GenomeCurator/issues). MIT License, © 2026 CHOICHI-HWAN.
+Bug reports and ideas: [Issues](https://github.com/CHOICHI-HWAN/GenomeCurator/issues). Licensed under the GNU General Public License v3.0 or later ([LICENSE](LICENSE)), © 2026 CHOICHI-HWAN. Releases up to v0.2.0 were MIT-licensed.
 Please be kind to the data providers: requests are spaced out on purpose (`GC_REQUEST_DELAY_MS`).

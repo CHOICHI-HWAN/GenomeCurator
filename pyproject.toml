@@ -3,6 +3,8 @@ name = "genomecurator"
 dynamic = ["version"]
 description = "Local web tool to collect, check and curate virus genomes (Pathoplexus > NCBI Virus > BV-BRC)"
 requires-python = ">=3.10"
+license = {text = "GPL-3.0-or-later"}
+classifiers = ["License :: OSI Approved :: GNU General Public License v3 or later (GPLv3+)"]
 dependencies = [
   "fastapi>=0.110",
   "uvicorn>=0.29",

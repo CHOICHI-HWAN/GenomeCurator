@@ -12,6 +12,7 @@ Virus Genome Metadata Curator(패키지 `genomecurator`, 이전 표시 이름 "G
 ## [Unreleased]
 
 ### 추가
+- **라이선스: 이제부터 GPL-3.0 이상**(v0.2.0까지는 MIT, 그 릴리스는 받은 사람에게 MIT로 남음). `LICENSE`는 GPL-3.0 전문과 통상의 고지문이고, README·`docs/LICENSES.md`·`pyproject.toml`도 같게 고쳤습니다.
 - **Snakemake 시험 적용 - 변이 호출**(`flows/variantcheck/Snakefile`, `genomecurator/variantflow.py`, 호출 일치도 화면의 *Snakemake로 실행* 버튼): snippy → lofreq 호출을 Snakemake 워크플로로 만들어 기존 직접 구현**과 나란히** 둡니다(워크플로가 완성될 때까지 둘 다 유지; `variantflow.parity()`가 두 결과가 같은지 검사 — clade I 1,142건의 호출 105,985건이 전부 같음). 중간에 끊겨도 끝난 유전체는 건너뛰고 이어서 합니다(실행을 강제 종료해서 확인), 유전체별 병렬, 도구 환경은 Snakemake가 `--use-conda`로 기존 환경을 활성화합니다. 남은 415건을 64코어로 43초에 처리. 전용 환경 `gc-snakemake`(`variantcall/snakemake.yml`).
 - **구조 정리**: `seqio.py`(FASTA 읽기, 열 대응표)로 `aligned`/`mutprofile`/`lineages` 순환 import를 끊었고, `runs.py`에 Squirrel·변이 프로파일 실행이 복사해 쓰던 실행 기록 처리를 모았습니다.
 - **플랫폼 열**: `sequencing_platform`은 *모델*을 유지하고(철자만 표준화: `Illumina NovaSeq 6000`, `Oxford Nanopore MinION` …) 새 파생 열 `platform`에 기술(`Illumina`, `Oxford Nanopore` …, 여러 개면 `; `로 연결)을 채웁니다. 둘 다 다음 확인에서 평소처럼 제안으로 올라옵니다. 모델 수준 용어와 기술 대응은 `resources/vocab/platform.tsv`에 있습니다.

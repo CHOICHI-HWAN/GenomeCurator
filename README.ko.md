@@ -3,7 +3,7 @@
 [![tests](https://github.com/CHOICHI-HWAN/GenomeCurator/actions/workflows/ci.yml/badge.svg)](https://github.com/CHOICHI-HWAN/GenomeCurator/actions/workflows/ci.yml)
 ![python](https://img.shields.io/badge/python-3.10%20%7C%203.12-blue)
 ![version](https://img.shields.io/github/v/tag/CHOICHI-HWAN/GenomeCurator?label=version&sort=semver)
-![license](https://img.shields.io/badge/license-MIT-green)
+![license](https://img.shields.io/badge/license-GPL--3.0-blue)
 
 [English](README.md)
 
@@ -179,5 +179,5 @@ data/
 
 ## 기여와 라이선스
 
-버그와 아이디어는 [Issues](https://github.com/CHOICHI-HWAN/GenomeCurator/issues)로 보내 주세요. MIT License, © 2026 CHOICHI-HWAN.
+버그와 아이디어는 [Issues](https://github.com/CHOICHI-HWAN/GenomeCurator/issues)로 보내 주세요. GNU General Public License v3.0 이상([LICENSE](LICENSE)), © 2026 CHOICHI-HWAN. v0.2.0까지의 릴리스는 MIT 라이선스였습니다.
 데이터를 내주는 곳들에 예의를 지키려고 요청 사이에 간격을 둡니다(`GC_REQUEST_DELAY_MS`).

@@ -7,7 +7,7 @@ Reviewed 2026-10-19 from the installed packages, the projects' LICENSE files and
 
 | 질문 | 답 |
 |---|---|
-| 이 저장소의 **코드**를 GitHub에 공개해도 되나? | **예.** 쓰는 라이브러리는 모두 MIT·BSD·Apache·PSF·MPL 등 허용적 라이선스이고, 이 프로젝트는 MIT입니다. 강한 카피레프트(GPL·AGPL)를 코드에 끌어들이는 의존성은 없습니다. |
+| 이 저장소의 **코드**를 GitHub에 공개해도 되나? | **예.** 쓰는 라이브러리는 모두 MIT·BSD·Apache·PSF·MPL 등 허용적 라이선스이고, 이 프로젝트는 **GPL-3.0 이상**입니다(v0.2.0까지는 MIT였고, 그 릴리스는 받은 사람에게 MIT로 남습니다). 강한 카피레프트(GPL·AGPL)를 코드에 끌어들이는 의존성은 없습니다. |
 | **Docker 이미지**를 GHCR에 올려도 되나? | **예.** 베이스 이미지(miniforge3: Ubuntu + conda-forge)에 시스템 라이브러리(GPL/LGPL: readline, libgcc 등)가 들어 있으나, 별도 프로그램으로 동봉될 뿐 이 프로젝트 코드와 결합되지 않습니다. 일반적인 컨테이너 배포 관행과 같습니다. |
 | **공개 페이지**(`docs/index.html`)에 데이터를 올려도 되나? | **조건부로 예.** 아래 "데이터" 표를 보세요. NCBI는 자체 제한이 없고, Pathoplexus는 *공개(Open)* 데이터만 들어가며, BV-BRC는 명시적 재배포 조항을 찾지 못해 출처 표기를 권합니다. 이번 검토로 페이지 푸터에 출처·면책 고지 링크를 넣었습니다. |
 | **Nextclade 데이터셋**을 저장소에 넣어도 되나? | **넣지 않습니다.** 데이터셋에는 라이선스 파일이 없어 재배포 조건이 불명확합니다. 앱이 필요할 때 Nextstrain 서버에서 내려받아 `data/`(git 제외)에만 둡니다. |
@@ -31,7 +31,7 @@ Reviewed 2026-10-19 from the installed packages, the projects' LICENSE files and
 | MAFFT | BSD | 〃 |
 | **augur, auspice** | **AGPL-3.0** | 〃. 수정하지 않고 **별도 프로그램으로 실행**만 하며 이 저장소·Docker 이미지에는 들어가지 않습니다. Auspice 보기 서버는 `127.0.0.1`에만 열립니다. 다른 사람이 쓰도록 네트워크에 공개할 때는 AGPL에 따라 소스(수정하지 않았다면 업스트림 소스 링크)를 안내하면 됩니다. 소스가 공개되어 있어 문제될 것은 없습니다. |
 | **IQ-TREE** | **GPL-2.0+** | 〃 (별도 프로그램으로 실행) |
-| **Squirrel, mutation_profile, gofasta** | GPL-3.0 | 별도 conda 환경 `gc-squirrel`. 별도 프로그램으로 실행하므로 이 프로젝트의 MIT 코드에는 영향이 없습니다. 소스가 모두 공개되어 있어, 나중에 이 도구들을 함께 배포하더라도 각 도구의 조건(라이선스 고지·소스 제공)을 맞추면 되고 어렵지 않습니다. |
+| **Squirrel, mutation_profile, gofasta** | GPL-3.0 | 별도 conda 환경 `gc-squirrel`. 별도 프로그램으로 실행합니다. 이 프로젝트도 GPL-3.0 이상이므로 같은 계열이라 함께 배포하거나 코드를 주고받을 때 라이선스가 충돌하지 않습니다. 소스가 모두 공개되어 있어, 나중에 이 도구들을 함께 배포하더라도 각 도구의 조건(라이선스 고지·소스 제공)을 맞추면 되고 어렵지 않습니다. |
 | minimap2 | MIT | 〃 |
 | **Natural Earth** 국가 경계(110m) | 퍼블릭 도메인 | 전파 지도용 `genomecurator/resources/world_110m.json`(naturalearthdata.com, `nvkelso/natural-earth-vector`에서 받아 좌표를 줄여 저장). 출처 표기는 요구되지 않으나 화면에 적습니다. |
 분석 결과(트리 JSON)와 입력 표에는 공개 데이터의 출처 조건과 *비공개* 데이터의 공유 제한이 그대로 따라갑니다: 비공개 포함 분석 결과(`data/nextstrain/auspice/`, `runs/`)는 공유하지 마세요.
@@ -63,7 +63,7 @@ GitHub Actions(`checkout`, `setup-python`, `setup-miniconda`, `setup-qemu`, `set
 
 ## 3. 공개(GitHub Pages) 전 점검표 / Before publishing
 
-- [x] 코드는 MIT, 저장소에 비밀값 없음 (`data/`, `superset/home/` 제외; 추적 파일·이력에서 토큰·키 패턴 검색 결과 없음).
+- [x] 코드는 GPL-3.0 이상, 저장소에 비밀값 없음 (`data/`, `superset/home/` 제외; 추적 파일·이력에서 토큰·키 패턴 검색 결과 없음).
 - [x] 서열·로컬 경로·이력·수집 코드는 공개 페이지에 들어가지 않음.
 - [x] 출처·면책 고지가 페이지 푸터에 있음.
 - [x] Pathoplexus 제한 사용 데이터는 수집 구조상 포함되지 않음.
