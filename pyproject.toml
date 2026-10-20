@@ -33,4 +33,4 @@ version = {attr = "genomecurator.__version__"}
 include = ["genomecurator*"]
 
 [tool.setuptools.package-data]
-genomecurator = ["templates/*.html", "resources/*.tsv"]
+genomecurator = ["templates/*.html", "resources/*.tsv", "resources/*.json"]

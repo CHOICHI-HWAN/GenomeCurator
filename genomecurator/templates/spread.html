@@ -21,6 +21,14 @@
  </div>
  <div class="mut" id="info" style="margin-top:8px"></div>
 </div>
+<div class="card" id="mapcard" style="margin-top:10px">
+ <div style="display:flex;gap:12px;flex-wrap:wrap;align-items:center;font-size:13px"><b>지도</b>
+  <label>표시 <select id="mrow" onchange="panel()"></select></label>
+  <label>원 크기 <select id="msz" onchange="panel()"><option value="cum">그 시점까지 누적</option><option value="new">그 기간에 새로 관찰</option></select></label>
+  <span class="mut" id="munk"></span></div>
+ <div id="map" style="margin-top:6px;overflow:auto;background:#eaf2f8;border-radius:6px"></div>
+ <div class="mut" style="font-size:12px;margin-top:4px">원의 면적 = 유전체 수, 색 = lineage(대표 변이 보기에서는 고른 변이). 분홍 테두리가 번지는 원은 그 기간에 <b>처음 관찰된 나라</b>입니다 — 유입 시점이 아니라 보고된 시점이며 나라마다 시퀀싱 양이 다릅니다. 지도: Natural Earth(퍼블릭 도메인).</div>
+</div>
 <div id="ctry" style="margin-top:10px"></div>
 <div id="fig" style="overflow:auto;background:#fff;border:1px solid var(--bd);border-radius:6px;margin-top:10px"></div>
 <form id="jf" method="post" style="display:none"></form>
@@ -35,7 +43,7 @@ async function load(){const q=new URLSearchParams({view:document.getElementById(
  const r=await fetch('/api/analyses/'+RID+'/spread?'+q);D=await r.json();if(D.error){document.getElementById('fig').innerHTML='<div class="card" style="color:var(--bad)">'+esc(D.error)+'</div>';document.getElementById('info').textContent='';return}
  if(!obSet){obSet=true;document.getElementById('ob').innerHTML=D.outbreaks.map(o=>'<option '+(o===D.outbreak?'selected':'')+'>'+esc(o)+'</option>').join('')}
  document.getElementById('info').textContent='유전체 '+D.genomes.toLocaleString()+'건 중 날짜가 있는 '+D.dated.toLocaleString()+'건(일 단위 '+D.day_precision.toLocaleString()+' · 월까지만 '+D.month_only.toLocaleString()+') · 날짜 없음 '+D.no_date+'건은 제외 · 시간 단위: '+(D.bin==='week'?'ISO 주':'월')+' · 정의 '+(D.definitions||'없음');
- const sl=document.getElementById('sl');sl.max=Math.max(0,D.periods.length-1);CUR=D.periods.length-1;sl.value=CUR;stop();draw()}
+ const sl=document.getElementById('sl');sl.max=Math.max(0,D.periods.length-1);CUR=D.periods.length-1;sl.value=CUR;stop();draw();mapInit()}
 function draw(){const P=D.periods,n=P.length;if(!n){document.getElementById('fig').innerHTML='<div class="card mut">그릴 데이터가 없습니다.</div>';return}
  const lim=document.getElementById('fl').checked&&CUR>=0?CUR:n-1,LW=380,cw=Math.max(2.5,Math.min(16,1100/n)),RH=15,top=34,all=document.getElementById('ex').checked,mut=D.view==='mutation';
  const idx={};P.forEach((p,i)=>idx[p]=i);const mIdx={};D.starts.forEach((s,i)=>{const m=s.slice(0,7);(mIdx[m]=mIdx[m]||[]).push(i)});
@@ -57,10 +65,33 @@ function draw(){const P=D.periods,n=P.length;if(!n){document.getElementById('fig
   if(hi>=0){o+='<line x1="'+(LW+lo*cw)+'" x2="'+(LW+(hi+1)*cw)+'" y1="'+(y+RH/2)+'" y2="'+(y+RH/2)+'" stroke="#333" stroke-width="1"/><path d="M'+(LW+lo*cw)+' '+(y+RH/2-4)+'l4 4l-4 4l-4 -4z" fill="#000"/>'}});
  if(lim<n-1)o+='<line x1="'+(LW+(lim+1)*cw)+'" x2="'+(LW+(lim+1)*cw)+'" y1="16" y2="'+H+'" stroke="#d6249f" stroke-width="2"/>';
  o+='</svg>';document.getElementById('fig').innerHTML=o;panel()}
-function panel(){const lim=CUR<0?D.periods.length-1:CUR,cs={};document.getElementById('cur').textContent=(D.periods[lim]||'')+' ('+(D.starts[lim]||'')+')';
- D.rows.forEach((r,ri)=>r.countries.forEach(c=>{let v=0;Object.entries(c.cells).forEach(([p,x])=>{const i=D.periods.indexOf(p);if(i>=0&&i<=lim)v+=x});Object.entries(c.monthly).forEach(([m,x])=>{if(m<=D.starts[lim].slice(0,7))v+=x});if(v){const o=cs[c.country]=cs[c.country]||{n:0,by:{}};o.n+=v;o.by[ri]=(o.by[ri]||0)+v}}));
- const list=Object.entries(cs).sort((a,b)=>b[1].n-a[1].n),mx=list.length?list[0][1].n:1;
- document.getElementById('ctry').innerHTML=list.length?'<div style="display:flex;flex-wrap:wrap;gap:6px 18px;font-size:12px">'+list.slice(0,24).map(([c,o])=>'<div style="width:210px"><div style="display:flex;justify-content:space-between"><span>'+esc(c)+'</span><b>'+o.n+'</b></div><div style="display:flex;height:8px;background:#eee;width:'+Math.max(4,o.n/mx*100)+'%">'+Object.entries(o.by).map(([ri,x])=>'<span title="'+esc(D.rows[ri].label)+' '+x+'" style="background:'+PAL[ri%PAL.length]+';width:'+(x/o.n*100)+'%"></span>').join('')+'</div></div>').join('')+'</div>':'<span class="mut">이 시점까지 관찰된 나라가 없습니다.</span>'}
+function mapData(lim,row){const cs={},P=D.periods,mi=m=>{const ii=[];D.starts.forEach((st,i)=>{if(st.slice(0,7)===m)ii.push(i)});return ii};
+ D.rows.forEach((r,ri)=>{if(row>=0&&ri!==row)return;r.countries.forEach(c=>{const o=cs[c.country]=cs[c.country]||{name:c.country,iso:c.iso,lon:c.lon,lat:c.lat,n:0,newn:0,by:{},first:1e9};
+  Object.entries(c.cells).forEach(([p,x])=>{const i=P.indexOf(p);if(i<0)return;o.first=Math.min(o.first,i);if(i<=lim){o.n+=x;o.by[ri]=(o.by[ri]||0)+x}if(i===lim)o.newn+=x});
+  Object.entries(c.monthly).forEach(([m,x])=>{const ii=mi(m);if(!ii.length)return;o.first=Math.min(o.first,ii[0]);if(ii[0]<=lim){o.n+=x;o.by[ri]=(o.by[ri]||0)+x}if(ii[0]<=lim&&ii[ii.length-1]>=lim)o.newn+=x/ii.length})})});
+ return Object.values(cs)}
+function panel(){const lim=CUR<0?D.periods.length-1:CUR,sel=document.getElementById('mrow'),row=sel&&sel.value!==''?+sel.value:-1;document.getElementById('cur').textContent=(D.periods[lim]||'')+' ('+(D.starts[lim]||'')+')';
+ const list=mapData(lim,row).filter(o=>o.n>0).sort((a,b)=>b.n-a.n),mx=list.length?list[0].n:1;
+ document.getElementById('ctry').innerHTML=list.length?'<div style="display:flex;flex-wrap:wrap;gap:6px 18px;font-size:12px">'+list.slice(0,24).map(o=>'<div style="width:210px"><div style="display:flex;justify-content:space-between"><span>'+esc(o.name)+'</span><b>'+o.n+'</b></div><div style="display:flex;height:8px;background:#eee;width:'+Math.max(4,o.n/mx*100)+'%">'+Object.entries(o.by).map(([ri,x])=>'<span title="'+esc(D.rows[ri].label)+' '+x+'" style="background:'+PAL[ri%PAL.length]+';width:'+(x/o.n*100)+'%"></span>').join('')+'</div></div>').join('')+'</div>':'<span class="mut">이 시점까지 관찰된 나라가 없습니다.</span>';
+ mapDraw(lim,row)}
+// ---- world map (Natural Earth outlines, Robinson projection)
+let WORLD=null,BASE=null;const RB=[[0,1,0],[5,.9986,.062],[10,.9954,.124],[15,.99,.186],[20,.9822,.248],[25,.973,.31],[30,.96,.372],[35,.9427,.434],[40,.9216,.4958],[45,.8962,.5571],[50,.8679,.6176],[55,.835,.6769],[60,.7986,.7346],[65,.7597,.7903],[70,.7186,.8435],[75,.6732,.8936],[80,.6213,.9394],[85,.5722,.9761],[90,.5322,1]];
+function rob(lon,lat){const a=Math.min(90,Math.abs(lat)),i=Math.min(17,Math.floor(a/5)),f=(a-RB[i][0])/5,X=RB[i][1]+(RB[i+1][1]-RB[i][1])*f,Y=RB[i][2]+(RB[i+1][2]-RB[i][2])*f;return [0.8487*X*lon*Math.PI/180,(lat<0?-1:1)*1.3523*Y]}
+const MW=1000,MH=500,SCALE=MW/(2*0.8487*Math.PI),CX=MW/2,CY=MH/2+10;const px=(lon,lat)=>{const [x,y]=rob(lon,lat);return [CX+x*SCALE,CY-y*SCALE]};
+async function mapInit(){if(WORLD)return;try{WORLD=await (await fetch('/api/world')).json()}catch(e){WORLD={countries:[]}}
+ BASE='<rect width="'+MW+'" height="'+MH+'" fill="#eaf2f8"/>'+WORLD.countries.map(c=>'<path d="'+c.poly.map(poly=>poly.map(ring=>'M'+ring.map(pt=>px(pt[0],pt[1]).map(v=>v.toFixed(1)).join(' ')).join('L')+'Z').join('')).join('')+'" fill="#dfe6df" stroke="#fff" stroke-width=".5"><title>'+esc(c.name)+'</title></path>').join('');
+ const sel=document.getElementById('mrow');sel.innerHTML=(D.view==='mutation'?'':'<option value="">모든 행(lineage별 파이)</option>')+D.rows.map((r,i)=>'<option value="'+i+'">'+esc(r.label)+'</option>').join('');panel()}
+function arc(cx,cy,r,a0,a1){const x0=cx+r*Math.cos(a0),y0=cy+r*Math.sin(a0),x1=cx+r*Math.cos(a1),y1=cy+r*Math.sin(a1);return 'M'+cx.toFixed(1)+' '+cy.toFixed(1)+'L'+x0.toFixed(1)+' '+y0.toFixed(1)+'A'+r.toFixed(1)+' '+r.toFixed(1)+' 0 '+((a1-a0)>Math.PI?1:0)+' 1 '+x1.toFixed(1)+' '+y1.toFixed(1)+'Z'}
+function mapDraw(lim,row){if(!WORLD||!BASE){mapInit();return}
+ const size=document.getElementById('msz').value,all=mapData(lim,row),last=mapData(D.periods.length-1,row),mx=Math.max(1,...last.map(o=>size==='cum'?o.n:o.n)),skip=[];let o2='';
+ all.filter(o=>(size==='cum'?o.n:o.newn)>0).sort((a,b)=>b.n-a.n).forEach(o=>{if(o.lon==null){skip.push(o.name);return}const v=size==='cum'?o.n:o.newn,r=3+20*Math.sqrt(v/(size==='cum'?mx:Math.max(1,mx/6))),[x,y]=px(o.lon,o.lat),ents=Object.entries(o.by);
+  const fresh=o.first===lim;let g='<g><title>'+esc(o.name+' · 누적 '+Math.round(o.n)+'건'+(o.newn?' · 이 기간 '+Math.round(o.newn)+'건':'')+(fresh?' · 이 기간에 처음 관찰':''))+'</title>';
+  if(ents.length<=1)g+='<circle cx="'+x.toFixed(1)+'" cy="'+y.toFixed(1)+'" r="'+r.toFixed(1)+'" fill="'+PAL[(+(ents[0]?ents[0][0]:0))%PAL.length]+'" fill-opacity=".8" stroke="#333" stroke-width=".5"/>';
+  else{let a=-Math.PI/2;const tot=ents.reduce((s,e)=>s+e[1],0);ents.forEach(([ri,xv])=>{const da=xv/tot*2*Math.PI;g+='<path d="'+arc(x,y,r,a,a+da-1e-4)+'" fill="'+PAL[ri%PAL.length]+'" fill-opacity=".85" stroke="#fff" stroke-width=".4"/>';a+=da})}
+  if(fresh)g+='<circle cx="'+x.toFixed(1)+'" cy="'+y.toFixed(1)+'" r="'+(r+2).toFixed(1)+'" fill="none" stroke="#d6249f" stroke-width="2"><animate attributeName="r" from="'+(r+2).toFixed(1)+'" to="'+(r+16).toFixed(1)+'" dur="1.1s" repeatCount="indefinite"/><animate attributeName="stroke-opacity" from="1" to="0" dur="1.1s" repeatCount="indefinite"/></circle>';
+  o2+=g+'</g>'});
+ document.getElementById('map').innerHTML='<svg xmlns="http://www.w3.org/2000/svg" id="mapsvg" viewBox="0 0 '+MW+' '+MH+'" width="100%" style="max-width:1100px;display:block;margin:auto">'+BASE+o2+'<text x="8" y="'+(MH-8)+'" font-size="13" fill="#555" font-family="Helvetica,Arial,sans-serif">'+esc(D.periods[lim]||'')+'</text></svg>';
+ document.getElementById('munk').textContent=skip.length?'지도에 놓지 못한 나라: '+skip.join(', '):''}
 function stepTo(i,fromSlider){CUR=i;if(!fromSlider)document.getElementById('sl').value=i;draw()}
 function stop(){if(timer){clearInterval(timer);timer=null}document.getElementById('pl').textContent='▶'}
 function play(){if(timer){stop();return}if(CUR>=D.periods.length-1)stepTo(0);document.getElementById('pl').textContent='⏸';

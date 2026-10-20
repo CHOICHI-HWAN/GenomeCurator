@@ -33,6 +33,7 @@ Reviewed 2026-10-19 from the installed packages, the projects' LICENSE files and
 | **IQ-TREE** | **GPL-2.0+** | 〃 (별도 프로그램으로 실행) |
 | **Squirrel, mutation_profile, gofasta** | GPL-3.0 | 별도 conda 환경 `gc-squirrel`. 별도 프로그램으로 실행하므로 이 프로젝트의 MIT 코드에는 영향이 없습니다. 소스가 모두 공개되어 있어, 나중에 이 도구들을 함께 배포하더라도 각 도구의 조건(라이선스 고지·소스 제공)을 맞추면 되고 어렵지 않습니다. |
 | minimap2 | MIT | 〃 |
+| **Natural Earth** 국가 경계(110m) | 퍼블릭 도메인 | 전파 지도용 `genomecurator/resources/world_110m.json`(naturalearthdata.com, `nvkelso/natural-earth-vector`에서 받아 좌표를 줄여 저장). 출처 표기는 요구되지 않으나 화면에 적습니다. |
 분석 결과(트리 JSON)와 입력 표에는 공개 데이터의 출처 조건과 *비공개* 데이터의 공유 제한이 그대로 따라갑니다: 비공개 포함 분석 결과(`data/nextstrain/auspice/`, `runs/`)는 공유하지 마세요.
 
 ### 선택 (개발·시연·분석)

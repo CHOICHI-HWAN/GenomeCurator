@@ -6,7 +6,7 @@ from fastapi import FastAPI, Form, Request
 from fastapi.responses import FileResponse, HTMLResponse, JSONResponse, RedirectResponse, Response, StreamingResponse
 from fastapi.templating import Jinja2Templates
 
-from . import __version__, analysis, completeness, datasets, exclusions, export, insight, lineages, mutprofile, nextstrain, outbreak, pathoplexus, private, qc, squirrel, config, curate, jobs, log
+from . import __version__, analysis, completeness, datasets, exclusions, export, geo, insight, lineages, mutprofile, nextstrain, outbreak, pathoplexus, private, qc, squirrel, config, curate, jobs, log
 from .db import audit_now, connect
 
 _log = log.get("web")
@@ -787,6 +787,11 @@ def create_app(scheduler: bool = True) -> FastAPI:
             r = mutprofile.run(ds, cores or None, bool(force), note, p)
             return {"redirect": f"/nextstrain?dataset={dsid}", "result": {"run": r["id"], "name": r["name"], "reused": bool(r.get("reused"))}}
         return start_job(work, f"변이 프로파일 · {ds['name']}", "mutprofile")
+
+    @app.get("/api/world")
+    def api_world():
+        """Country outlines (Natural Earth 110m, public domain) for the spread map."""
+        return Response(geo.outlines(), media_type="application/json", headers={"Cache-Control": "public, max-age=86400"})
 
     @app.get("/api/lineages/status")
     def api_lineages_status():

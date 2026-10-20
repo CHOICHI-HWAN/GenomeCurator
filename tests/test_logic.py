@@ -1722,6 +1722,7 @@ def _ns_env(tmp_path, monkeypatch):
     (co / "phylogenetic" / "Snakefile").write_text("")
     (co / "phylogenetic" / "defaults" / "clade-i" / "config.yaml").write_text("filter:\n  min_length: 170000\n  min_date: 1900\ntimetree: false\nroot: best\n")
     monkeypatch.setenv("GC_NEXTSTRAIN_DIR", str(co))
+    monkeypatch.setenv("GC_AUSPICE_PORT", "49173")                       # never the real viewer's port: a viewer that is running on this machine must not change what the tests see
     env = tmp_path / "envs" / "gc-nextstrain"
     (env / "bin").mkdir(parents=True)
     fake = env / "bin" / "nextstrain"
@@ -2387,3 +2388,19 @@ def test_gene_hotspots_use_independent_events_not_inherited_sums():
     from genomecurator import outbreak
     assert abs(outbreak._pois_sf(0, 3) - 1) < 1e-12 and abs(outbreak._pois_sf(1, 3) - (1 - math.exp(-3))) < 1e-12
     assert abs(outbreak._pois_sf(10, 1.7) - 1.19728e-5) < 1e-9 and outbreak._pois_sf(10, 1.7) < 1e-4 and outbreak._pois_sf(3, 17) > 0.99      # 10 events where 1.7 are expected: a hotspot; 3 where 17 are expected: not
+
+
+def test_world_map_data_and_country_names(tmp_path, monkeypatch):
+    import json
+    from genomecurator import geo
+    w = json.loads(geo.outlines())
+    assert len(w["countries"]) > 150 and "public domain" in w["source"] and all({"iso", "name", "c", "poly"} <= set(c) for c in w["countries"])
+    assert geo.resolve("USA")["iso"] == "USA" and geo.resolve("Viet Nam")["iso"] == "VNM" and geo.resolve("Zaire")["iso"] == "COD" and geo.resolve("Cote d'Ivoire")["iso"] == "CIV"
+    assert geo.resolve("Democratic Republic of the Congo")["iso"] == "COD" and geo.resolve("Republic of the Congo")["iso"] == "COG"            # the two Congos stay apart
+    assert geo.resolve("Singapore")["iso"] == "SGP" and geo.resolve("Hong Kong")["lat"] > 22                                                   # small places the outlines lack
+    assert geo.resolve("missing") is None and geo.resolve("") is None and geo.resolve("Atlantis") is None
+    _qc_env(tmp_path, monkeypatch)
+    from fastapi.testclient import TestClient
+    from genomecurator import web
+    r = TestClient(web.create_app(scheduler=False)).get("/api/world")
+    assert r.status_code == 200 and len(r.json()["countries"]) == len(w["countries"])
