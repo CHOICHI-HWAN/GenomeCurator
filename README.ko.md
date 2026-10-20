@@ -87,6 +87,7 @@ Python 3.10 이상과 세 소스에 접속할 인터넷이 필요합니다. x86-
 git clone https://github.com/CHOICHI-HWAN/GenomeCurator.git
 cd GenomeCurator
 mamba env create -f environment.yml      # conda라면 conda env create -f environment.yml (bioconda의 Nextclade 포함)
+# 환경 6개를 한 번에 만들고 설치를 점검:  ./setup.sh   &&   ./test.sh check   (단위 테스트: ./test.sh unit)
 mamba activate genomecurator
 python -m pytest -q                      # 선택: 전부 통과하면 정상
 ```

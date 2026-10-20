@@ -12,6 +12,8 @@ Virus Genome Metadata Curator(패키지 `genomecurator`, 이전 표시 이름 "G
 ## [Unreleased]
 
 ### 추가
+- **`setup.sh`와 `test.sh`**: `./setup.sh`가 mamba로 conda 환경 6개를 만듭니다(`--core`, `--only a,b`, `--update`, `--dry-run`; 활성화는 `conda activate`로). `./test.sh unit`은 단위 테스트, `./test.sh check`는 설치가 실제로 동작하는지 점검(환경, 각 도구의 응답, 심어 둔 치환 3개를 찾아야 하는 Snakemake 변이 호출의 작은 실제 종단 실행), `./test.sh`는 둘 다 실행합니다. 없어도 되는 부분은 WARN, 필수 부분의 누락·고장은 FAIL입니다.
+- **Snakemake 워크플로의 호출 일치도**: 위치별 보고서(`concordance.json`)와 검토할 위치 BED(`review_sites.bed` — 도구들의 호출이 3개 이상 유전체에서 어긋나는 위치, **마스크가 아님**)가 Snakefile 규칙이 되었습니다. 계산은 순수 파이썬 모듈 하나(`flowlogic.py`)를 워크플로와 앱이 같이 써서 어긋날 수 없습니다(1,142건에서 워크플로 보고서와 앱 계산이 같음). 워크플로 실행은 `analysis_run`에 기록되어(도구 `variantflow`, 메모 `mutprofile:<id>`) 다른 실행과 함께 보입니다.
 - **라이선스: 이제부터 GPL-3.0 이상**(v0.2.0까지는 MIT, 그 릴리스는 받은 사람에게 MIT로 남음). `LICENSE`는 GPL-3.0 전문과 통상의 고지문이고, README·`docs/LICENSES.md`·`pyproject.toml`도 같게 고쳤습니다.
 - **Snakemake 시험 적용 - 변이 호출**(`flows/variantcheck/Snakefile`, `genomecurator/variantflow.py`, 호출 일치도 화면의 *Snakemake로 실행* 버튼): snippy → lofreq 호출을 Snakemake 워크플로로 만들어 기존 직접 구현**과 나란히** 둡니다(워크플로가 완성될 때까지 둘 다 유지; `variantflow.parity()`가 두 결과가 같은지 검사 — clade I 1,142건의 호출 105,985건이 전부 같음). 중간에 끊겨도 끝난 유전체는 건너뛰고 이어서 합니다(실행을 강제 종료해서 확인), 유전체별 병렬, 도구 환경은 Snakemake가 `--use-conda`로 기존 환경을 활성화합니다. 남은 415건을 64코어로 43초에 처리. 전용 환경 `gc-snakemake`(`variantcall/snakemake.yml`).
 - **구조 정리**: `seqio.py`(FASTA 읽기, 열 대응표)로 `aligned`/`mutprofile`/`lineages` 순환 import를 끊었고, `runs.py`에 Squirrel·변이 프로파일 실행이 복사해 쓰던 실행 기록 처리를 모았습니다.

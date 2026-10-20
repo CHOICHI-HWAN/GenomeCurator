@@ -2867,3 +2867,22 @@ def test_snakefile_collects_the_same_columns_as_the_direct_implementation():
     assert "genome\\tpos\\tref\\talt\\tsnippy\\tlofreq\\tdp\\taf" in src
     for rule in ("one_genome", "snippy", "lofreq", "calls", "collect"):
         assert f"rule {rule}:" in (root / "Snakefile").read_text(encoding="utf-8")
+
+
+def test_flowlogic_is_pure_and_gives_the_report_and_review_bed(tmp_path):
+    import ast
+    from pathlib import Path
+    from genomecurator import flowlogic
+    src = (Path(flowlogic.__file__)).read_text(encoding="utf-8")
+    imported = {n.names[0].name.split(".")[0] if isinstance(n, ast.Import) else (n.module or "").split(".")[0] for n in ast.walk(ast.parse(src)) if isinstance(n, (ast.Import, ast.ImportFrom))}
+    assert imported <= {"csv", "collections"}, imported                 # the Snakemake environment has no other package
+    v = tmp_path / "v.tsv"
+    v.write_text("genome\tpos\tref\talt\tsnippy\tlofreq\tdp\taf\n" + "".join(f"g{i}\t50\tA\tG\t0\t1\t17\t1.0\n" for i in range(4)) + "g0\t60\tC\tT\t1\t1\t17\t1.0\n")
+    m = tmp_path / "m.tsv"
+    m.write_text("sample\tpos\tref\talt\ng0\t60\tC\tT\n")
+    judged = {"g0", "g1", "g2", "g3"}
+    callers = {"mutprofile": flowlogic.read_mutations(m, judged), **flowlogic.read_calls(v, judged)}
+    rep = flowlogic.sites_report(callers)
+    assert rep["sites_disagree"] == 1 and rep["sites"][0]["pos"] == 50 and rep["sites"][0]["lofreq"] == 4 and rep["sites"][0]["mutprofile"] == 0
+    assert flowlogic.review_bed(rep["all_sites"], "ref", 3) == "ref\t49\t50\n" and flowlogic.review_bed(rep["all_sites"], "ref", 5) == ""
+    assert flowlogic.read_calls(v, {"g0"}, lambda p: p < 55)["lofreq"]["g0"] == {(50, "A", "G")}      # window: the ITR side is left out

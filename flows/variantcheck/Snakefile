@@ -1,7 +1,9 @@
 # Independent variant calls for every genome of a FASTA: snippy (--ctgs, simulated 20x reads) -> lofreq on snippy's BAM -> one table.
 # The Snakemake version of genomecurator/variantcall.py (both are kept until this one is complete; they must give the same calls).
 #
-# config: fasta (all genomes, one record each), reference (FASTA), snippy_env / lofreq_env (conda environment *directories*, used with --use-conda), cpus_per_job
+# config: fasta (all genomes, one record each), reference (FASTA), snippy_env / lofreq_env (conda environment *directories*, used with --use-conda), cpus_per_job,
+#         repo (the app's folder, for genomecurator/flowlogic.py), mutations (the mutation-profile run's mutations.tsv), judged (genome ids that pass the N limit, one per line),
+#         itr_lo / itr_hi (the window outside which the inverted terminal repeats lie), seqid (reference name for the BED), min_genomes (a site needs this many disagreeing genomes for the BED)
 # Per genome only the small `calls/<id>.tsv` is kept; snippy's folder (BAM, VCF, ...) is temporary and deleted once lofreq has read it.
 import re
 
@@ -29,6 +31,8 @@ rule all:
     input:
         "variantcall.tsv",
         "variantcall.genomes.txt",
+        "concordance.json",
+        "review_sites.bed",
 
 
 rule one_genome:
@@ -92,3 +96,17 @@ rule collect:
         genomes="variantcall.genomes.txt",
     script:
         "scripts/collect.py"
+
+
+rule concordance:
+    """Where the run's own calls, snippy and lofreq disagree: per-site report (JSON) and a BED of sites to look at. Nothing is masked or removed."""
+    input:
+        tsv="variantcall.tsv",
+        genomes="variantcall.genomes.txt",
+        mutations=config["mutations"],
+        judged=config["judged"],
+    output:
+        json="concordance.json",
+        bed="review_sites.bed",
+    script:
+        "scripts/concordance.py"

@@ -14,7 +14,7 @@ from pathlib import Path
 
 from collections import Counter
 
-from . import log, mutprofile, nextstrain
+from . import flowlogic, log, mutprofile, nextstrain
 
 _log = log.get("variantcall")
 ENVS = {"snippy": ("GC_SNIPPY_ENV", "gc-snippy"), "lofreq": ("GC_LOFREQ_ENV", "gc-lofreq")}
@@ -107,22 +107,7 @@ def _iter(fasta: Path):
         yield name, "".join(parts)
 
 
-def concordance(callers: dict[str, dict[str, set]]) -> dict:
-    """How well callers agree. `callers` = {caller: {genome id: {(pos, ref, alt)}}} -> {"callers": [...], "rows": [{id, pos, ref, alt, by: [callers], n}], "summary": {...}}.
-    A genome is only judged by the callers that looked at it; a variant is called by `n` of those."""
-    names = list(callers)
-    genomes = sorted(set().union(*(set(c) for c in callers.values())))
-    rows, agree = [], 0
-    for g in genomes:
-        have = [c for c in names if g in callers[c]]
-        allv = set().union(*(set(callers[c][g]) for c in have))
-        for v in sorted(allv):
-            by = [c for c in have if v in callers[c][g]]
-            rows.append({"id": g, "pos": v[0], "ref": v[1], "alt": v[2], "by": by, "n": len(by), "of": len(have)})
-            agree += len(by) == len(have)
-    return {"callers": names, "rows": rows, "summary": {"genomes": len(genomes), "variants": len(rows), "all_agree": agree,
-                                                         "share_all_agree": round(agree / len(rows), 4) if rows else None,
-                                                         "only_one": sum(1 for r in rows if r["n"] == 1 and r["of"] > 1)}}
+concordance = flowlogic.concordance                         # one implementation, shared with the Snakemake flow (flowlogic.py)
 
 
 # ------------------------------------------------------------------------------------------------ on a finished mutation-profile run
@@ -174,26 +159,11 @@ def concordance_for_run(run: dict, max_n: float | None = 0.05, limit: int = 300,
     ok = mutprofile.good_samples(run, max_n)
     if ok is not None:
         judged &= ok
-    callers: dict[str, dict[str, set]] = {"mutprofile": {g: set() for g in judged}, "snippy": {g: set() for g in judged}, "lofreq": {g: set() for g in judged}}
-    for r in mutprofile._load_mutations(run):
+    callers = {"mutprofile": {g: set() for g in judged}}
+    for r in mutprofile._load_mutations(run):                       # the run's own calls, with the ITR already left out (mutprofile._load_mutations)
         if r["sample"] in judged:
             callers["mutprofile"][r["sample"]].add((int(r["pos"]), r["ref"].upper(), r["alt"].upper()))
-    import csv
-    for r in csv.DictReader(open(_vc_file(run, source), encoding="utf-8"), delimiter="\t"):
-        if r["genome"] in judged and inwin(int(r["pos"])):
-            v = (int(r["pos"]), r["ref"], r["alt"])
-            for t in ("snippy", "lofreq"):
-                if r[t] == "1":
-                    callers[t][r["genome"]].add(v)
-    c = concordance(callers)
-    by_site: dict[tuple, dict] = {}
-    for r in c["rows"]:
-        s = by_site.setdefault((r["pos"], r["ref"], r["alt"]), {"pos": r["pos"], "ref": r["ref"], "alt": r["alt"], "genomes": 0, "all": 0, **{t: 0 for t in callers}})
-        s["genomes"] += 1
-        s["all"] += r["n"] == r["of"]
-        for t in r["by"]:
-            s[t] += 1
-    sites = sorted((s for s in by_site.values() if s["all"] < s["genomes"]), key=lambda s: (-(s["genomes"] - s["all"]), s["pos"]))
-    patterns = Counter(",".join(r["by"]) for r in c["rows"])
-    return {"available": True, "genomes": len(judged), "max_n": max_n, "summary": c["summary"], "patterns": dict(patterns.most_common()), "sites_total": len(by_site),
-            "sites_disagree": len(sites), "sites": sites[:limit], "callers": list(callers)}
+    callers.update(flowlogic.read_calls(_vc_file(run, source), judged, inwin))
+    rep = flowlogic.sites_report(callers, limit)
+    rep.pop("all_sites")
+    return {"available": True, "max_n": max_n, **rep}

@@ -601,3 +601,16 @@ snippy `--ctgs`는 조립본을 20x 모의 리드로 자르므로 lofreq가 FAST
 ### Snakemake 워크플로 (시험 적용, 기존 구현과 병행)
 
 변이 호출(snippy → lofreq)을 `flows/variantcheck/Snakefile`로도 돌릴 수 있습니다. 호출 일치도 화면의 **Snakemake로 실행**을 누르면 되고, 결과 선택에서 *직접 구현*과 *Snakemake*를 바꿔 볼 수 있습니다. 두 결과가 같은지는 화면 맨 위의 “두 구현의 일치”가 알려 줍니다. 환경: `mamba env create -f variantcall/snakemake.yml`(그리고 snippy·lofreq 환경). **차이**: 중간에 멈춰도 다시 실행하면 끝난 유전체는 건너뛰고 이어서 합니다. **방침**: 워크플로가 완성되고 두 구현이 계속 같은 결과를 내면 직접 구현을 deprecated 합니다. 그 전에는 둘 다 유지합니다. Windows에서는 WSL2에서 실행하는 것을 전제로 합니다.
+
+
+### 설치와 확인: `setup.sh`, `test.sh`
+
+```bash
+./setup.sh              # 환경 6개를 mamba로 만듭니다 (--core: 앱만, --only gc-squirrel,gc-snippy: 골라서, --update: 갱신, --dry-run: 계획만)
+conda activate genomecurator
+./test.sh unit          # 단위 테스트 (인터넷·분석 도구 불필요)
+./test.sh check         # 설치가 실제로 동작하는지: 환경·도구 응답·작은 종단 실행(Snakemake 변이 호출이 심어 둔 치환 3개를 찾아야 함)
+./test.sh               # 둘 다
+```
+
+환경은 mamba로 만들고 활성화는 conda로 합니다. `check`의 **WARN**은 없어도 되는 부분(예: Nextclade가 없으면 서열 통계만 동작)이고 **FAIL**은 필수 부분의 고장입니다. 분석마다 필요한 환경이 다르므로 쓰지 않을 분석의 환경은 만들지 않아도 됩니다.

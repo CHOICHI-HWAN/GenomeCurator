@@ -87,6 +87,7 @@ Requires Python 3.10+ and internet access to the three sources. x86-64 and ARM (
 git clone https://github.com/CHOICHI-HWAN/GenomeCurator.git
 cd GenomeCurator
 mamba env create -f environment.yml      # or: conda env create -f environment.yml (includes Nextclade from bioconda)
+# all six environments at once, then verify the installation:  ./setup.sh   &&   ./test.sh check   (unit tests: ./test.sh unit)
 mamba activate genomecurator
 python -m pytest -q                      # optional: all green means it works
 ```

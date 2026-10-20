@@ -967,7 +967,7 @@ def create_app(scheduler: bool = True) -> FastAPI:
             return JSONResponse({"error": variantflow.status()["how"]}, 400)
 
         def work(p):
-            res = variantflow.run_for_mutprofile(r, progress=p)
+            res = variantflow.run_recorded(r, progress=p)
             return {"redirect": f"/analysis/{rid}/concordance", "result": res}
         return start_job(work, f"변이 호출(Snakemake) · {r['name']}", "variantflow")
 
