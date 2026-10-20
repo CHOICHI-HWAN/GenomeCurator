@@ -222,3 +222,8 @@ Windows에서 `git`이 PATH에 없으면 `C:\Program Files\Git\cmd\git.exe`로 �
 - **보안**: 모든 쓰기 요청(POST 등)은 다른 사이트에서 온 것이면 전역 미들웨어가 거절합니다. 결과 파일 API는 분석 폴더 밖을 열지 않습니다. 비공개 유전체는 일반 백업·공개 페이지·TSV 다운로드에 나가지 않습니다.
 - **알아 둘 것**: `resources/opg_categories.tsv`(유전자 기능 범주)는 논문 보충표 1을 옮겨 적은 것이라 원문과 대조가 필요합니다. dN/dS는 탐색용입니다. 첫 관찰은 유입 시점이 아닙니다. 합의 서열로는 환자 내 소수 변이를 알 수 없습니다.
 - **남은 일**: 로컬 커밋 push(터미널에서 `git push origin main`, 이후 Actions의 Windows 테스트 확인) · 공식 mpox/clade-i 공개 데이터와의 비교(미실시; 예제 데이터로는 업스트림 직접 실행과 일치 확인) · 환자 내 소수 변이(iSNV)·역학 정보 겹치기는 자료가 생기면.
+
+## README 시연 GIF 추가 (2026-10-20)
+- `scripts/demo/make_gifs.py`에 시나리오 4개 추가: `spread_map`(전파 지도·타임라인·라인차트·대표 변이 보기), `snipit`(변이 그림), `outbreak`(유행 분석·APOBEC3 대 배경·유전자 hotspot), `novel_pca`(신규 변이·변이 묶음). 결과 `docs/demo/06-spread-map.gif` ~ `09-novel-pca.gif`(합계 약 1.8MB).
+- 분석 시연은 실제 `data/`(또는 `GC_DEMO_REAL_DATA`)의 **DB 사본**으로 돌고(서열 폴더와 Nextstrain·lineage 폴더는 읽기 전용으로만 연결), 끝나면 사본을 지웁니다. 유전체 id가 나오는 화면(비공개 id 포함)은 찍지 않고, 변이 그림은 id 열을 끕니다. 완료된 변이 프로파일 분석이 데이터에 있어야 합니다. 다시 만들려면 `python scripts/demo/make_gifs.py spread_map snipit outbreak novel_pca` (녹화에 `websocket-client`, `pillow`, Google Chrome 필요).
+

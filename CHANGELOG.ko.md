@@ -51,6 +51,7 @@ Virus Genome Metadata Curator(패키지 `genomecurator`, 이전 표시 이름 "G
 - 서버 로그 검색(예: `job=ab12cd34`).
 
 ### 변경
+- **README를 분석 기능 중심으로 다시 썼습니다**(기능을 큐레이션 / 품질·비공개 유전체·데이터셋 / 데이터셋 분석으로 묶음), 시연 GIF 4개 추가(`docs/demo/06~09`, 데이터베이스 임시 복사본에서 녹화, 화면에 유전체 id 없음), 선택 분석 환경 설치, 새 명령어, 데이터 폴더, 분석의 한계를 담았고 `docs/VALIDITY.md`를 연결했습니다. 녹화 시나리오는 `scripts/demo/make_gifs.py`(`spread_map`, `snipit`, `outbreak`, `novel_pca`)에 있습니다.
 - 유전체 표: 서열(FASTA)이 아직 없는 유전체 수와 대략의 용량을 알려 주는 배너와 **모두 받기** 버튼이 생겼고, 확인 창에 용량과 예상 시간이, 작업 진행 중에는 남은 시간이 표시되며, 끝나면 QC 탭으로 안내합니다.
 - **커버리지 하한**: 기준 게놈(가장 긴 RefSeq)의 `GC_MIN_COVERAGE_PCT`(기본 **80**)% 미만 길이의 유전체는 큐레이션할 가치가 없다고 보고, `check`가 제안하지 않으며 이미 가지고 있던 것은 사유와 함께 `removed`로 changeset에 올라 **미리 승인**됩니다(소프트 삭제: 상태 `Removed`, 이력 유지, FASTA 파일은 디스크에 남음). NCBI *Complete* 유전체는 예외이고 `0`이면 규칙이 꺼집니다. Removed 유전체는 유전체 표·대시보드·TSV 다운로드·QC에서 숨겨집니다(공개 페이지는 원래 숨겼습니다).
 - 공개 페이지 푸터에 출처별 정책 링크(NCBI 고지, Pathoplexus 이용 약관, BV-BRC)와 Pathoplexus는 공개 데이터만 포함한다는 문구를 넣었습니다. 새 문서: `docs/LICENSES.md`(라이선스·데이터 이용 검토), `docs/WORKFLOW.md`.
