@@ -10,7 +10,7 @@
 #
 # Environments (name <- file): the app and everything the curation tabs need, and one separate environment per analysis tool (they are run as separate programs):
 #   genomecurator <- environment.yml            gc-nextstrain <- nextstrain/environment.yml   gc-squirrel <- squirrel/environment.yml
-#   gc-snippy     <- variantcall/snippy.yml     gc-lofreq     <- variantcall/lofreq.yml        gc-snakemake <- variantcall/snakemake.yml   gc-checkv <- variantcall/checkv.yml (its database, about 1.5 GB, is downloaded separately: see the file)
+#   gc-snippy     <- variantcall/snippy.yml     gc-lofreq     <- variantcall/lofreq.yml        gc-snakemake <- variantcall/snakemake.yml   gc-beast <- variantcall/beast.yml   gc-checkv <- variantcall/checkv.yml (its database, about 1.5 GB, is downloaded separately: see the file)
 # Check the result with ./test.sh check
 set -euo pipefail
 cd "$(dirname "$0")"
@@ -23,6 +23,7 @@ ENVS=(
   "gc-lofreq:variantcall/lofreq.yml"
   "gc-snakemake:variantcall/snakemake.yml"
   "gc-checkv:variantcall/checkv.yml"
+  "gc-beast:variantcall/beast.yml"
 )
 ONLY=""; UPDATE=0; DRY=0
 while [ $# -gt 0 ]; do

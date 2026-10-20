@@ -3046,3 +3046,83 @@ def test_qc_headline_follows_the_tool_priority():
     assert qc.overall({"checkv": "bad", "seqstats": "good"}) == "bad"                                                      # CheckV before the built-in statistics
     assert qc.overall({"squirrel": "error", "nextclade": "good"}) == "good"                                               # a tool that failed has no verdict
     assert qc.overall({"squirrel": "error"}) == "error" and qc.overall({}) is None
+
+
+def test_clock_inputs_outputs_and_group_tmrca(tmp_path):
+    import pytest
+    from genomecurator import clock
+    s = clock.parse_settings({"source": "squirrel", "clock_filter": "2.5", "min_group": 3})
+    assert s["clock_filter"] == 2.5 and s["min_group"] == 3 and s["reroot"] == "least-squares" and s["covariation"] is True
+    for bad in ({"source": "x"}, {"reroot": "x"}, {"clock_filter": 99}, {"coalescent": "foo"}, {"min_group": 1}, {"min_precision": "week"}):
+        with pytest.raises(ValueError):
+            clock.parse_settings(bad)
+    assert clock.parse_settings({"coalescent": "skyline"})["coalescent"] == "skyline" and clock.parse_settings({"coalescent": "0.5"})["coalescent"] == "0.5"
+    # dates: a day as it is, a month as its range, nothing below the chosen precision
+    assert clock._treetime_date("2025-03-04", "day") == ("2025-03-04", "day")
+    assert clock._treetime_date("2025-02", "day") is None and clock._treetime_date("2025-02", "month") == ("[2025-02-01:2025-02-28]", "month")
+    assert clock._treetime_date("2024-12", "month")[0] == "[2024-12-01:2024-12-31]" and clock._treetime_date("2025", "month") is None
+    assert clock._treetime_date("2025", "year") == ("[2025-01-01:2025-12-31]", "year") and clock._treetime_date("", "year") is None
+    assert abs(clock.given_decimal("2025-07-02") - 2025.5) < 0.01 and abs(clock.given_decimal("[2025-01-01:2025-12-31]") - 2025.5) < 0.01
+    # TreeTime's files
+    (tmp_path / "mc.txt").write_text("Root-Tip-Regression:\n --rate:\t2.157e-05 +/- 3.57e-06 (one std-dev)\n --r^2:  \t0.33\n")
+    assert clock.parse_clock_txt(tmp_path / "mc.txt") == {"rate": 2.157e-05, "rate_sd": 3.57e-06, "r2": 0.33}
+    (tmp_path / "rtt.csv").write_text("#Dates of nodes ...\nname, date, root-to-tip distance, clock-deviation\nA, 2025.1, 0.0001, -0.00002\nNODE_0000001, 2024.0, 0.00005, 0.0\nB, 2025.9, 0.0003, 0.0001\n")
+    (tmp_path / "out.tsv").write_text("\tgiven_date\tapparent_date\tresidual\nB\t2025.9\t2031.0\t5.1\n")
+    pts, outl = clock.parse_rtt(tmp_path / "rtt.csv", tmp_path / "out.tsv")
+    assert [p["name"] for p in pts] == ["A", "B"] and outl == {"B"}
+    # the MRCA of a group in a time tree: a monophyletic group, one that is not, and one that is too small
+    def node(name, date, lo, hi, children=None):
+        n = {"name": name, "node_attrs": {"num_date": {"value": date, "confidence": [lo, hi]}}}
+        if children:
+            n["children"] = children
+        return n
+    tree = node("N0", 2020.0, 2019.0, 2021.0, [node("N1", 2023.0, 2022.5, 2023.4, [node("a1", 2024.0, 2024.0, 2024.0), node("a2", 2024.5, 2024.5, 2024.5)]),
+                                               node("N2", 2022.0, 2021.5, 2022.5, [node("b1", 2025.0, 2025.0, 2025.0), node("c1", 2025.2, 2025.2, 2025.2)])])
+    g = {x["group"]: x for x in clock.group_tmrca(tree, {"A": {"a1", "a2"}, "BC": {"a1", "b1"}, "small": {"c1"}}, 2)}
+    assert g["A"]["tmrca"] == 2023.0 and g["A"]["extra"] == 0 and g["A"]["lo"] == 2022.5
+    assert g["BC"]["tmrca"] == 2020.0 and g["BC"]["extra"] == 2 and "small" not in g                       # not monophyletic: the root, with the other genomes counted
+    w = clock.warnings({"clock": {"r2": 0.1}, "span_years": 2.9, "time": {"root": {"lo": 2019.0, "hi": 2022.4}}, "n_outliers": 20, "n_dated": 100, "precision": {"month": 50}, "n_dropped_no_date": 3})
+    assert len(w) >= 6 and any("R² 0.10" in x for x in w) and any("2.9년" in x for x in w) and any("외삽" in x for x in w)
+
+
+def test_beast_package_subsample_xml_and_posterior_reading(tmp_path):
+    import random
+    import xml.etree.ElementTree as ET
+    import pytest
+    from genomecurator import beastprep
+    s = beastprep.parse_settings({"n_tips": 20, "chain_length": 50000, "samples": 500})
+    assert s["clock"] == "relaxed" and s["tree_prior"] == "exponential"
+    for bad in ({"n_tips": 5}, {"clock": "x"}, {"tree_prior": "x"}, {"samples": 5}, {"chain_length": 10}):
+        with pytest.raises(ValueError):
+            beastprep.parse_settings(bad)
+    rng = random.Random(2)
+    tips = [{"name": f"g{i}", "date": 2023.0 + (i % 36) / 12 + rng.random() / 12, "outlier": i % 17 == 0, "precision": "range" if i % 9 == 0 else "day", "lineage": f"A.{i % 4}", "clade": "Ib", "country": "X"} for i in range(200)]
+    ch = beastprep.choose_tips(tips, 30, seed=1)
+    assert len(ch) == 30 and all(not t["outlier"] and t["precision"] == "day" for t in ch)
+    assert ch == beastprep.choose_tips(tips, 30, seed=1) and [t["date"] for t in ch] == sorted(t["date"] for t in ch)                  # deterministic, in date order
+    assert max(t["date"] for t in ch) - min(t["date"] for t in ch) > 2.5 and {t["lineage"] for t in ch} == {"A.0", "A.1", "A.2", "A.3"}   # the whole period and every lineage kept
+    assert len(beastprep.choose_tips(tips[:12], 30)) <= 12
+    seqs = {t["name"]: "".join(rng.choice("ACGT") for _ in range(60)) for t in ch}
+    for clk in ("strict", "relaxed"):
+        for tp in ("constant", "exponential"):
+            xml = beastprep.build_xml(seqs, {t["name"]: t["date"] for t in ch}, {"lineage.A.1": [t["name"] for t in ch if t["lineage"] == "A.1"]}, {**s, "clock": clk, "tree_prior": tp}, 2e-5)
+            root = ET.fromstring(xml)                                                                                                    # well-formed
+            ids = {e.get("id") for e in root.iter() if e.get("id")}
+            assert {"taxa", "alignment", "treeModel", "age(root)", "age(lineage.A.1)", "mcmc", "fileLog", "treeLikelihood", "demographic"} <= ids
+            assert ("ucld.mean" in ids) == (clk == "relaxed") and ("clock.rate" in ids) == (clk == "strict") and ("demographic.growthRate" in ids) == (tp == "exponential")
+            assert len(list(root.iter("taxon"))) > 2 * len(ch) and root.find("mcmc").get("chainLength") == "50000"
+    # the posterior: a log with a known answer
+    log = tmp_path / "b.log"
+    vals = [2023.0 + 0.5 * math_sin(i) for i in range(400)]
+    log.write_text("# comment\nstate\tposterior\tage(root)\tclock.rate\n" + "".join(f"{i * 100}\t-1.0\t{v:.5f}\t{1e-5 + i * 1e-9:.3e}\n" for i, v in enumerate(vals)))
+    r = beastprep.read_log(log)
+    a = r["params"]["age(root)"]
+    assert r["states"] == 400 and r["last_state"] == 39900 and 2022.5 <= a["lo"] <= a["median"] <= a["hi"] <= 2023.5 and a["ess"] >= 1
+    lo, hi = beastprep.hpd(list(range(100)), 0.95)
+    assert (lo, hi) == (0, 94) or (hi - lo) == 94
+    assert beastprep.ess([float(i % 2) for i in range(400)]) > 100 and beastprep.ess([float(i) for i in range(400)]) < 20     # independent-looking vs a drifting chain
+
+
+def math_sin(i):
+    import math
+    return math.sin(i * 0.9)

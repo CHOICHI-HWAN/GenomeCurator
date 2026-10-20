@@ -1,0 +1,9 @@
+# BEAST 10 (beast.community, LGPL-2.1) with the BEAGLE library it needs: Bayesian tMRCA from the BEAST package of a clock run (genomecurator/beastprep.py).
+#   mamba env create -f variantcall/beast.yml          (the app finds it by name: GC_BEAST_ENV, default gc-beast)
+name: gc-beast
+channels:
+  - bioconda
+  - conda-forge
+dependencies:
+  - beast
+  - beagle-lib

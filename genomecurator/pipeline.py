@@ -3,11 +3,11 @@
 Each step is the same function the single-step buttons call, so nothing is computed differently here: a step whose input is unchanged (same members, content, settings and tool version) is reused
 instead of run again, and a step that fails does not stop the others (the variant calls are skipped when the mutation profile they belong to failed). The result says, per step, whether it was run,
 reused, failed or skipped, and why. Nextstrain is last because it takes longest; the quick ones are finished and usable while it runs."""
-from . import datasets, mutprofile, nextstrain, squirrel, support, variantflow
+from . import clock, datasets, mutprofile, nextstrain, squirrel, support, variantflow
 
-STEPS = ("qc", "squirrel", "mutprofile", "variants", "nextstrain")
-LABEL = {"qc": "QC", "squirrel": "Squirrel", "mutprofile": "변이 프로파일", "variants": "변이 호출(snippy+lofreq)", "nextstrain": "Nextstrain 트리"}
-WEIGHT = {"qc": 5, "squirrel": 25, "mutprofile": 12, "variants": 8, "nextstrain": 50}
+STEPS = ("qc", "squirrel", "clock", "mutprofile", "variants", "nextstrain")
+LABEL = {"qc": "QC", "squirrel": "Squirrel", "clock": "분자시계·tMRCA", "mutprofile": "변이 프로파일", "variants": "변이 호출(snippy+lofreq)", "nextstrain": "Nextstrain 트리"}
+WEIGHT = {"qc": 5, "squirrel": 25, "clock": 4, "mutprofile": 12, "variants": 8, "nextstrain": 46}
 
 
 def plan(ds: dict, steps=None) -> tuple[list[str], list[str]]:
@@ -52,6 +52,12 @@ def run_all(ds: dict, steps=None, force: bool = False, cores: int | None = None,
             elif s == "squirrel":
                 r = squirrel.run(ds, cores, force, "전체 분석", sp)
                 out["steps"][s] = {"status": "reused" if r.get("reused") else "done", "run": r["id"]}
+            elif s == "clock":
+                if not clock.find_source(ds, "squirrel") and not clock.find_source(ds, "nextstrain"):
+                    out["steps"][s] = {"status": "skipped", "detail": "트리가 있는 Squirrel 또는 Nextstrain 결과가 없습니다"}
+                else:
+                    r = clock.run(ds, {"source": "squirrel" if clock.find_source(ds, "squirrel") else "nextstrain"}, force, "전체 분석", sp)
+                    out["steps"][s] = {"status": "reused" if r.get("reused") else "done", "run": r["id"]}
             elif s == "mutprofile":
                 r = mutprofile.run(ds, cores, force, "전체 분석", sp)
                 mp_run = nextstrain.get_run(r["id"])

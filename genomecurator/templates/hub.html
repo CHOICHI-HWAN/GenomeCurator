@@ -11,7 +11,7 @@
 <script>
 const WID={{ wid }},START={{ dsid }};
 const esc=s=>String(s??'').replace(/[&<>"]/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c]));
-const TOOL={nextstrain:'Nextstrain 트리',squirrel:'Squirrel',mutprofile:'변이 프로파일'};
+const TOOL={nextstrain:'Nextstrain 트리',squirrel:'Squirrel',clock:'분자시계·tMRCA',mutprofile:'변이 프로파일'};
 const GROUPS=[['변이','어떤 변이가 있는가',[['snipit','변이 그림','유전체마다 한 줄, 전체를 한눈에 · lineage 띠, APOBEC3 점, 유전자 트랙'],['heatmap','변이 히트맵','lineage·서브클러스터별 변이 빈도, 검색·유전자 이동으로 자세히'],['pca','변이 묶음','함께 나타나는 변이 묶음과 유전체 PCA']]],
  ['계통·전파','언제, 어디서 퍼졌는가',[['spread','전파 타임라인·지도','lineage·대표 변이 × 나라 × 시간, 세계 지도 애니메이션, 라인차트']]],
  ['통계·가설','무엇을 뜻하는가',[['concordance','호출 일치도','이 실행의 변이를 snippy·lofreq(독립 호출)와 맞춰 봅니다 · 도구가 어긋나는 위치, 가리지 않음'],['insight','변이 분석','APOBEC3 변이의 전달, APOBEC3 대 배경 변이, lineage 시그니처'],['outbreak','유행 분석','서브클러스터, 크기 분포, APOBEC3 누적, 유전자 hotspot'],['novel','신규 변이','정의에 없는 변이를 공유하는 새 계통군 후보와 발견 곡선']]]];
@@ -23,7 +23,7 @@ async function pick(id){if(!id)return;INFO=await (await fetch('/api/datasets/'+i
  const runs=INFO.runs,mp=runs.filter(r=>r.tool==='mutprofile'&&r.status==='done');RID=mp.length?mp[0].id:0;render()}
 function badge(c,r){if(!c)return '';return c.current?'<span style="color:var(--ok)">● 현재 데이터와 같은 입력</span>':(c.same_members&&c.same_content===false?'<span style="color:var(--bad)">● 같은 id인데 내용이 바뀜</span>':(!c.same_members?'<span style="color:var(--warn)">● 데이터가 바뀜 (+'+c.added+' / −'+c.removed+')</span>':(!c.same_params?'<span style="color:var(--warn)">● 설정이 다름</span>':'<span class="mut">● 확인 불가</span>')))}
 function render(){const d=INFO.dataset,runs=INFO.runs;document.getElementById('dinfo').innerHTML='규칙: '+esc(d.summary)+' · 지금 멤버 <b>'+INFO.members.toLocaleString()+'건</b>'+(d.include_private?' (🔒 비공개 포함)':'')+' · <a href="/dataset/'+d.id+'">목록 보기</a>';
- let h='<h3>① 분석 실행 현황</h3><div style="display:flex;gap:12px;flex-wrap:wrap">'+['nextstrain','squirrel','mutprofile'].map(t=>{const rs=runs.filter(r=>r.tool===t&&!r.align_only),last=rs.find(r=>r.status==='done'),bad=rs.find(r=>r.status==='error'&&(!last||r.id>last.id));
+ let h='<h3>① 분석 실행 현황</h3><div style="display:flex;gap:12px;flex-wrap:wrap">'+['nextstrain','squirrel','clock','mutprofile'].map(t=>{const rs=runs.filter(r=>r.tool===t&&!r.align_only),last=rs.find(r=>r.status==='done'),bad=rs.find(r=>r.status==='error'&&(!last||r.id>last.id));
   return '<div class="card" style="min-width:250px;flex:1"><b>'+TOOL[t]+'</b>'+(last?'<div style="margin-top:4px;font-size:13px">'+badge(last.cmp,last)+'</div><div class="mut" style="font-size:12px">'+esc(last.started.replace('T',' '))+' · 공개 '+(last.n_public||0).toLocaleString()+(last.n_private?' · 🔒 '+last.n_private:'')+'</div>'+(t==='squirrel'&&last.url?'<div style="margin-top:6px"><a href="'+esc(last.url)+'" target="_blank" rel="noopener">보고서 열기</a></div>':'')+(t==='nextstrain'?'<div style="margin-top:6px"><a href="/nextstrain?dataset='+d.id+'">Auspice로 열기</a></div>':''):'<div class="mut" style="margin-top:4px">아직 없음 — <a href="/nextstrain?dataset='+d.id+'">실행하기</a></div>')+(bad?'<div style="color:var(--bad);font-size:12px;margin-top:4px">최근 실패: '+esc(String(bad.error||'').slice(0,80))+'</div>':'')+'</div>'}).join('')+'</div>';
  const mp=runs.filter(r=>r.tool==='mutprofile'&&r.status==='done');
  h+='<h3 style="margin-top:20px">② 결과 보기 <span class="mut" style="font-size:12.5px;font-weight:400">변이 프로파일 결과를 바탕으로 합니다</span></h3>';

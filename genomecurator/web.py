@@ -6,7 +6,7 @@ from fastapi import FastAPI, Form, Request
 from fastapi.responses import FileResponse, HTMLResponse, JSONResponse, RedirectResponse, Response, StreamingResponse
 from fastapi.templating import Jinja2Templates
 
-from . import pipeline, support, variantcall, variantflow, __version__, analysis, completeness, datasets, exclusions, export, cooccur, geo, heatmap, vocab, insight, lineages, mutprofile, nextstrain, novel, outbreak, pathoplexus, private, qc, squirrel, config, curate, jobs, log
+from . import beastprep, clock, pipeline, support, variantcall, variantflow, __version__, analysis, completeness, datasets, exclusions, export, cooccur, geo, heatmap, vocab, insight, lineages, mutprofile, nextstrain, novel, outbreak, pathoplexus, private, qc, squirrel, config, curate, jobs, log
 from .db import audit_now, connect
 
 _log = log.get("web")
@@ -729,6 +729,9 @@ def create_app(scheduler: bool = True) -> FastAPI:
                 r["files"] = mutprofile.result_files(r) if r["status"] == "done" else []
                 r["summary"] = mutprofile.summary(r) if r["status"] == "done" else {}
                 r["url"] = ""
+            elif r["tool"] == "clock":
+                r["cmp"], r["url"], r["files"] = None, f"/clock/{r['id']}", []
+                r["summary"] = {k: v for k, v in clock.summary(r).items() if k in ("n_dated", "clock", "time")} if r["status"] == "done" else {}
             elif r["tool"] == "variantflow":                          # snippy + lofreq of a mutation-profile run: has its own page, is not a Nextstrain run
                 r["cmp"], r["url"], r["files"] = None, "", []
             elif r["tool"] == "squirrel":
@@ -1169,6 +1172,90 @@ def create_app(scheduler: bool = True) -> FastAPI:
         if not todo:
             return JSONResponse({"error": "실행할 단계가 없습니다."}, 400)
         return start_job(lambda p: {"redirect": f"/dataset/{dsid}", "result": pipeline.run_all(ds, want, bool(force), cores or None, p)}, f"전체 분석 · {ds['name']} ({len(todo)}단계)", "pipeline")
+
+    @app.post("/api/datasets/{dsid}/clock")
+    async def api_ds_clock(request: Request, dsid: int, force: int = 0):
+        """Molecular clock and tMRCA (root-to-tip regression + time-scaled tree) on this dataset's tree (a server job). Settings in the JSON body (all optional)."""
+        if not _same_origin(request):
+            return JSONResponse({"error": "cross-site request refused"}, 403)
+        ds = datasets.get(dsid)
+        if not ds:
+            return JSONResponse({"error": "unknown dataset"}, 404)
+        try:
+            body = await request.json()
+        except ValueError:
+            body = {}
+        try:
+            s = clock.parse_settings(body.get("settings") if isinstance(body, dict) else None)
+        except ValueError as e:
+            return JSONResponse({"error": str(e)}, 400)
+
+        def work(p):
+            r = clock.run(ds, s, bool(force), "", p)
+            return {"redirect": f"/clock/{r['id']}", "result": {"run": r["id"], "name": r["name"], "reused": bool(r.get("reused"))}}
+        return start_job(work, f"분자시계·tMRCA · {ds['name']}", "clock")
+
+    @app.get("/clock/{rid}")
+    def clock_page(request: Request, rid: int):
+        r = nextstrain.get_run(rid)
+        if not r or r["tool"] != "clock":
+            return JSONResponse({"error": "clock run not found"}, 404)
+        return render(request, "clock.html", nav="res", run=r)
+
+    @app.get("/api/clock/{rid}/beast")
+    def api_clock_beast(rid: int):
+        r = nextstrain.get_run(rid)
+        if not r or r["tool"] != "clock":
+            return JSONResponse({"error": "clock run not found"}, 404)
+        b = [x for x in nextstrain.list_runs(r["dataset_id"]) if x["tool"] == "beast" and str(x.get("note") or "") == f"clock:{rid}"]
+        d = beastprep.folder(r)
+        return {"status": beastprep.status(), "defaults": beastprep.DEFAULTS, "runs": [{k: x[k] for k in ("id", "name", "status", "started", "finished", "error")} for x in b],
+                "result": beastprep.result(r), "files": [{"name": f.name, "size": f.stat().st_size} for f in sorted(d.iterdir()) if f.is_file()] if d.exists() else [],
+                "tips_usable": sum(1 for t in clock.summary(r).get("tips", []) if not t["outlier"] and t["precision"] == "day")}
+
+    @app.post("/api/clock/{rid}/beast/prepare")
+    async def api_clock_beast_prepare(request: Request, rid: int):
+        """Write the BEAST package (subsample, alignment, dates, XML) without running BEAST."""
+        if not _same_origin(request):
+            return JSONResponse({"error": "cross-site request refused"}, 403)
+        r = nextstrain.get_run(rid)
+        if not r or r["tool"] != "clock":
+            return JSONResponse({"error": "clock run not found"}, 404)
+        try:
+            body = await request.json()
+        except ValueError:
+            body = {}
+        try:
+            return beastprep.prepare(r, body.get("settings") if isinstance(body, dict) else None)
+        except ValueError as e:
+            return JSONResponse({"error": str(e)}, 400)
+
+    @app.post("/api/clock/{rid}/beast/run")
+    async def api_clock_beast_run(request: Request, rid: int):
+        """Prepare the package and run BEAST on it (a long background job: hours for a long chain)."""
+        if not _same_origin(request):
+            return JSONResponse({"error": "cross-site request refused"}, 403)
+        r = nextstrain.get_run(rid)
+        if not r or r["tool"] != "clock":
+            return JSONResponse({"error": "clock run not found"}, 404)
+        if not beastprep.status()["ok"]:
+            return JSONResponse({"error": beastprep.status()["how"]}, 400)
+        try:
+            body = await request.json()
+        except ValueError:
+            body = {}
+        try:
+            s = beastprep.parse_settings(body.get("settings") if isinstance(body, dict) else None)
+        except ValueError as e:
+            return JSONResponse({"error": str(e)}, 400)
+        return start_job(lambda p: {"redirect": f"/clock/{rid}", "result": beastprep.run_recorded(r, s, p)}, f"BEAST · {r['name']}", "beast")
+
+    @app.get("/api/clock/{rid}")
+    def api_clock(rid: int):
+        r = nextstrain.get_run(rid)
+        if not r or r["tool"] != "clock":
+            return JSONResponse({"error": "clock run not found"}, 404)
+        return {"run": {k: r[k] for k in ("id", "name", "status", "started", "finished", "error", "dataset_id")}, "summary": clock.summary(r), "files": clock.result_files(r)}
 
     @app.get("/api/analyses")
     def api_analyses(dataset: int = 0, watch: int = 0):

@@ -65,6 +65,13 @@ def main() -> int:
     vf = variantflow.status()
     rec("OK" if vf["snakemake"]["ok"] else "WARN", "Snakemake environment", vf["snakemake"]["version"] if vf["snakemake"]["ok"] else "missing - ./setup.sh --only gc-snakemake")
 
+    from genomecurator import beastprep, clock
+    ck = clock.status()
+    rec("OK" if ck["ok"] else "WARN", "TreeTime (molecular clock, tMRCA)", ck["version"] if ck["ok"] else "missing - " + ck["how"])
+    bs = beastprep.status()
+    rec("OK" if bs["ok"] else "WARN", "BEAST + BEAGLE (Bayesian tMRCA)", bs["version"] if bs["ok"] else "missing - " + bs["how"])
+    if bs["ok"]:
+        beast_smoke()
     if vf["ok"]:
         end_to_end()
     else:
@@ -75,6 +82,31 @@ def main() -> int:
     if warn and not bad:
         print("Warnings are optional parts: curation, QC statistics and the app itself work without them; each analysis needs its own environment.")
     return 1 if bad else 0
+
+
+def beast_smoke() -> None:
+    """The BEAST XML the app writes, with random sequences and dates, run for a short chain: BEAST and BEAGLE must start, accept the XML and write a log."""
+    import random
+    from genomecurator import beastprep, nextstrain
+    rng = random.Random(3)
+    names = [f"s{i}" for i in range(12)]
+    seqs = {n: "".join(rng.choice("ACGT") for _ in range(300)) for n in names}
+    dates = {n: 2024.0 + i * 0.1 for i, n in enumerate(names)}
+    s = {"n_tips": 12, "chain_length": 20000, "samples": 200, "clock": "strict", "tree_prior": "constant", "seed": 1, "threads": 0}
+    tmp = Path(tempfile.mkdtemp(prefix="gc-beast-"))
+    try:
+        (tmp / "beast.xml").write_text(beastprep.build_xml(seqs, dates, {}, s, 1e-3), encoding="utf-8")
+        pre = beastprep.env_prefix()
+        r = subprocess.run([str(pre / "bin" / "beast"), "-overwrite", "-seed", "1", "beast.xml"], cwd=tmp, capture_output=True, text=True, timeout=600, env=nextstrain.tool_env(pre))
+        log = tmp / "beast.log"
+        if r.returncode == 0 and log.exists() and len(log.read_text().splitlines()) > 20:
+            rec("OK", "BEAST runs the XML the app writes", "12 random sequences, 20,000 states")
+        else:
+            rec("FAIL", "BEAST runs the XML the app writes", (r.stdout + r.stderr)[-300:])
+    except Exception as e:
+        rec("FAIL", "BEAST runs the XML the app writes", f"{type(e).__name__}: {e}")
+    finally:
+        shutil.rmtree(tmp, ignore_errors=True)
 
 
 def end_to_end() -> None:

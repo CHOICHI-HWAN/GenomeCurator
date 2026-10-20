@@ -10,6 +10,7 @@ import json
 import random
 import sys
 from collections import Counter
+from datetime import date
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parent.parent
@@ -231,6 +232,38 @@ def main() -> int:
     else:
         rec("SKIP", "mutation profile checks", "no finished run")
 
+    # ---- 5b. the molecular clock and tMRCA
+    from genomecurator import beastprep, clock
+    ck = latest("clock", runs)
+    if ck:
+        S = clock.summary(ck)
+        if S.get("tips"):
+            rt = S["time"]["root"]
+            ok(rt["lo"] <= rt["date"] <= rt["hi"], "clock: the root date lies inside its own 90% interval", f"{rt['date']:.2f} in [{rt['lo']:.2f}, {rt['hi']:.2f}]")
+            first = min(t["date"] for t in S["tips"])
+            ok(rt["date"] < first, "clock: the tMRCA of the tree is earlier than the earliest sampled genome", f"tMRCA {rt['date']:.2f} < first sample {first:.2f}")
+            bad_g = []
+            by_g: dict[str, list] = {}
+            for t in S["tips"]:
+                for kind, val in (("clade", t["clade"]), ("lineage", t["lineage"])):
+                    if val:
+                        by_g.setdefault(f"{kind} {val}", []).append(t["date"])
+            for g in S["time"]["groups"]:
+                if g["tmrca"] is not None and g["group"] in by_g and g["tmrca"] > min(by_g[g["group"]]) + 0.01:
+                    bad_g.append(g["group"])
+            ok(not bad_g, "clock: every group's tMRCA is earlier than its earliest member", f"{len(S['time']['groups'])} groups, wrong: {bad_g}")
+            ok(S["clock"]["rate"] and S["clock"]["rate"] > 0 and S["time"]["rate"] and S["time"]["rate"] > 0, "clock: the substitution rate is positive", f"{S['clock']['rate']:.2e} (regression), {S['time']['rate']:.2e} (time tree)")
+            ok(max(t["date"] for t in S["tips"]) <= date.today().year + 1, "clock: no sampling date lies in the future", f"last sample {max(t['date'] for t in S['tips']):.2f}")
+            b = beastprep.result(ck)
+            if b.get("root"):
+                ok(b["root"]["median"] < first, "BEAST: the posterior tMRCA is earlier than the earliest sampled genome", f"median {b['root']['median']:.2f}")
+                rec("PASS" if (b.get("min_ess") or 0) >= 200 else "WARN", "BEAST: effective sample sizes", f"lowest ESS {b.get('min_ess') or 0:.0f} (200 or more is needed before an interval is used)")
+        else:
+            rec("SKIP", "clock checks", "the newest clock run has no result")
+    else:
+        rec("SKIP", "clock checks", "no finished clock run")
+    planted_clock()
+
     # ---- 6. a planted-mutation test with a known answer
     try:
         sys.path.insert(0, str(ROOT / "scripts"))
@@ -245,6 +278,54 @@ def main() -> int:
     warn = [x for x in R if x[0] == "WARN"]
     print(f"\n{sum(1 for x in R if x[0] == 'PASS')} pass, {len(warn)} warnings, {len(bad)} failures, {sum(1 for x in R if x[0] == 'SKIP')} skipped")
     return 1 if bad else 0
+
+
+def planted_clock() -> None:
+    """A tree simulated with a known clock (rate 2e-5 substitutions/site/year, root in 2020.0, tips sampled 2023-2026, a little noise): TreeTime must give back the rate and the root date."""
+    import subprocess
+    import tempfile
+    from genomecurator import clock
+    pre = clock.env_prefix()
+    if not pre:
+        rec("SKIP", "planted clock test", "TreeTime not available")
+        return
+    rng = random.Random(5)
+    L, rate, root_t = 200000, 2e-5, 2020.0
+    names, dates = [], {}
+
+    def grow(t0, depth):
+        """subtree starting at time t0: a tip when depth is 0 or by chance, else two children; branch length = rate * elapsed time (+ a little noise)."""
+        if depth == 0 or (depth < 4 and rng.random() < 0.15):
+            t = rng.uniform(2023.0, 2026.5)
+            t = max(t, t0 + 0.01)
+            n = f"t{len(names)}"
+            names.append(n)
+            dates[n] = t
+            return n, t
+        t1 = t0 + rng.uniform(0.15, 0.9)
+        kids = [grow(t1, depth - 1) for _ in range(2)]
+        parts = []
+        for k, tk in kids:
+            bl = max(1e-9, rate * (tk - t1) * rng.uniform(0.8, 1.2))
+            parts.append(f"{k}:{bl:.9f}")
+        return "(" + ",".join(parts) + ")", t1
+    nw, _t = grow(root_t, 6)
+    if len(names) < 20:
+        rec("SKIP", "planted clock test", "the simulated tree was too small")
+        return
+    with tempfile.TemporaryDirectory(prefix="gcclock-") as td:
+        td = Path(td)
+        (td / "t.nwk").write_text(f"{nw}:0.0;")
+        (td / "d.csv").write_text("name,date\n" + "".join(f"{n},{d:.4f}\n" for n, d in dates.items()))
+        r = subprocess.run([str(pre / "bin" / "treetime"), "clock", "--tree", "t.nwk", "--dates", "d.csv", "--sequence-length", str(L), "--outdir", "o", "--keep-root"], cwd=td, capture_output=True, text=True, timeout=600)
+        if r.returncode != 0:
+            rec("FAIL", "planted clock test", (r.stderr or r.stdout)[-200:])
+            return
+        c = clock.parse_clock_txt(td / "o" / "molecular_clock.txt")
+        mm = __import__("re").search(r"root-date:\s*([0-9.]+)", r.stdout)
+        rd = float(mm[1]) if mm else None
+        good = c["rate"] and abs(c["rate"] - rate) / rate < 0.15 and rd is not None and abs(rd - root_t) < 1.0
+        ok(bool(good), "planted clock: TreeTime recovers a known rate and root date", f"{len(names)} tips; rate {c['rate']:.2e} (true {rate:.0e}), root {rd} (true {root_t}), R2 {c['r2']}")
 
 
 def mutprofile_run_stub(r):
