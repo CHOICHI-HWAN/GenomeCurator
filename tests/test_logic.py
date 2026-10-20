@@ -2699,6 +2699,7 @@ def test_vocab_editing_decisions_land_in_the_user_dictionary(tmp_path, monkeypat
     from fastapi.testclient import TestClient
     from genomecurator import config, vocab, web
     monkeypatch.setattr(config, "DATA_DIR", tmp_path)
+    monkeypatch.setattr(config, "DB_PATH", tmp_path / "t.db")
     vocab._CACHE.clear()
     S = vocab.standardize
     assert S("host_name", "Mus fantasticus").status == "unmapped"
