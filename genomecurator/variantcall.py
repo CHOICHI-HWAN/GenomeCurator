@@ -6,6 +6,7 @@ nothing is removed or masked here. For an assembly the "reads" are simulated: de
 
 snippy and lofreq each live in their own conda environment (`gc-snippy`, `gc-lofreq`; snippy 4.6.0 cannot be installed together with lofreq), both GPL and run as separate programs."""
 import os
+import re
 import shutil
 import subprocess
 import tempfile
@@ -31,6 +32,24 @@ def status() -> dict:
         pre = env_prefix(t)
         out[t] = {"ok": bool(pre), "env": ENVS[t][1], "prefix": str(pre) if pre else ""}
     out["ok"] = all(v["ok"] for v in out.values() if isinstance(v, dict))
+    return out
+
+
+def tool_versions() -> dict:
+    """{"snippy": "4.6.0", "lofreq": "2.1.5"} as the tools report them (empty when a tool cannot be run)."""
+    out = {}
+    for t, args in (("snippy", ["--version"]), ("lofreq", ["version"])):
+        pre = env_prefix(t)
+        v = ""
+        if pre:
+            try:
+                r = subprocess.run([str(pre / "bin" / t)] + args, capture_output=True, text=True, timeout=60, env=nextstrain.tool_env(pre))
+                text = (r.stdout + r.stderr)
+                m = re.search(r"(\d+\.\d+(?:\.\d+)?)", text)
+                v = m.group(1) if m else ""
+            except Exception:
+                v = ""
+        out[t] = v
     return out
 
 

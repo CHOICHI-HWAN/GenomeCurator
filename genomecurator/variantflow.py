@@ -12,7 +12,7 @@ import subprocess
 import time
 from pathlib import Path
 
-from . import log, mutprofile, nextstrain, squirrel, variantcall
+from . import callcache, log, mutprofile, nextstrain, squirrel, variantcall
 
 _log = log.get("variantflow")
 FLOW = Path(__file__).resolve().parent.parent / "flows" / "variantcheck" / "Snakefile"
@@ -80,6 +80,11 @@ def run_for_mutprofile(run: dict, cores: int | None = None, progress=None, max_n
         sel.unlink()
     else:
         sel.replace(keep)
+    # calls already made for the same sequence, reference and tool versions are taken from the shared cache (callcache.py); only the new genomes are called
+    records = list(variantcall._iter(keep))
+    tv = variantcall.tool_versions()
+    ck = callcache.key(mutprofile.read_fasta(fa)[0], mutprofile.read_fasta(fa)[1], tv["snippy"], tv["lofreq"])
+    from_cache = callcache.prefill(records, ck, wd / "calls") if tv["snippy"] and tv["lofreq"] else 0
     ok = mutprofile.good_samples(run, max_n)
     judged = wd / "judged.txt"
     new = "\n".join(sorted(members if ok is None else members & ok)) + "\n"
@@ -121,7 +126,9 @@ def run_for_mutprofile(run: dict, cores: int | None = None, progress=None, max_n
                 proc.kill()
     if rc != 0:
         raise RuntimeError(f"Snakemake가 실패했습니다 (종료 코드 {rc}); 다시 실행하면 끝난 유전체는 건너뛰고 이어서 합니다. 로그: {logp}")
-    return {"genomes": len((wd / "variantcall.genomes.txt").read_text(encoding="utf-8").split()), "seconds": round(time.time() - t0), "dir": str(wd)}
+    stored = callcache.store(records, ck, wd / "calls") if tv["snippy"] and tv["lofreq"] else 0
+    return {"genomes": len((wd / "variantcall.genomes.txt").read_text(encoding="utf-8").split()), "seconds": round(time.time() - t0), "dir": str(wd),
+            "from_cache": from_cache, "added_to_cache": stored}
 
 
 def run_recorded(run: dict, cores: int | None = None, progress=None, max_n: float | None = 0.05) -> dict:

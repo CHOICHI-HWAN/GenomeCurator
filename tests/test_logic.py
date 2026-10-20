@@ -2886,3 +2886,20 @@ def test_flowlogic_is_pure_and_gives_the_report_and_review_bed(tmp_path):
     assert rep["sites_disagree"] == 1 and rep["sites"][0]["pos"] == 50 and rep["sites"][0]["lofreq"] == 4 and rep["sites"][0]["mutprofile"] == 0
     assert flowlogic.review_bed(rep["all_sites"], "ref", 3) == "ref\t49\t50\n" and flowlogic.review_bed(rep["all_sites"], "ref", 5) == ""
     assert flowlogic.read_calls(v, {"g0"}, lambda p: p < 55)["lofreq"]["g0"] == {(50, "A", "G")}      # window: the ITR side is left out
+
+
+def test_callcache_shares_calls_between_runs_per_sequence_and_reference(tmp_path, monkeypatch):
+    from genomecurator import callcache, config
+    monkeypatch.setattr(config, "DATA_DIR", tmp_path)
+    k = callcache.key("KJ642613.1", "ACGT" * 10, "4.6.0", "2.1.5")
+    assert k != callcache.key("KJ642613.1", "ACGT" * 10, "4.6.1", "2.1.5") and k != callcache.key("KJ642613.1", "ACGA" * 10, "4.6.0", "2.1.5")     # other reference or tool version = other cache
+    run1 = tmp_path / "run1"
+    (run1).mkdir()
+    (run1 / "private_X.tsv").write_text("private:X\t10\tA\tG\t1\t1\t17\t1.0\n")
+    (run1 / "A1.tsv").write_text("")                                                                  # a genome without any call is a result too
+    recs = [("private:X", "acgtacgt"), ("A1", "TTTT")]
+    assert callcache.store(recs, k, run1) == 2 and callcache.store(recs, k, run1) == 0
+    run2 = tmp_path / "run2"
+    n = callcache.prefill([("OTHER_NAME", "ACGTACGT"), ("B2", "TTTT"), ("NEW", "GGGG")], k, run2)       # same sequence under other ids; one new genome
+    assert n == 2 and (run2 / "OTHER_NAME.tsv").read_text() == "OTHER_NAME\t10\tA\tG\t1\t1\t17\t1.0\n" and (run2 / "B2.tsv").read_text() == "" and not (run2 / "NEW.tsv").exists()
+    assert callcache.prefill([("OTHER_NAME", "ACGTACGT")], k, run2) == 0                                 # never over a file that is there
