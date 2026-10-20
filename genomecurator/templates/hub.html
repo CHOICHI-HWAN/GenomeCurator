@@ -14,7 +14,7 @@ const esc=s=>String(s??'').replace(/[&<>"]/g,c=>({'&':'&amp;','<':'&lt;','>':'&g
 const TOOL={nextstrain:'Nextstrain 트리',squirrel:'Squirrel',mutprofile:'변이 프로파일'};
 const GROUPS=[['변이','어떤 변이가 있는가',[['snipit','변이 그림','유전체마다 한 줄, 전체를 한눈에 · lineage 띠, APOBEC3 점, 유전자 트랙'],['heatmap','변이 히트맵','lineage·서브클러스터별 변이 빈도, 검색·유전자 이동으로 자세히'],['pca','변이 묶음','함께 나타나는 변이 묶음과 유전체 PCA']]],
  ['계통·전파','언제, 어디서 퍼졌는가',[['spread','전파 타임라인·지도','lineage·대표 변이 × 나라 × 시간, 세계 지도 애니메이션, 라인차트']]],
- ['통계·가설','무엇을 뜻하는가',[['insight','변이 분석','APOBEC3 변이의 전달, APOBEC3 대 배경 변이, lineage 시그니처'],['outbreak','유행 분석','서브클러스터, 크기 분포, APOBEC3 누적, 유전자 hotspot'],['novel','신규 변이','정의에 없는 변이를 공유하는 새 계통군 후보와 발견 곡선']]]];
+ ['통계·가설','무엇을 뜻하는가',[['concordance','호출 일치도','이 실행의 변이를 snippy·lofreq(독립 호출)와 맞춰 봅니다 · 도구가 어긋나는 위치, 가리지 않음'],['insight','변이 분석','APOBEC3 변이의 전달, APOBEC3 대 배경 변이, lineage 시그니처'],['outbreak','유행 분석','서브클러스터, 크기 분포, APOBEC3 누적, 유전자 hotspot'],['novel','신규 변이','정의에 없는 변이를 공유하는 새 계통군 후보와 발견 곡선']]]];
 let DS=[],INFO=null,RID=0;
 async function init(){DS=await (await fetch('/api/datasets?watch='+WID)).json();const sel=document.getElementById('dsel');sel.innerHTML=DS.length?DS.map(d=>'<option value="'+d.id+'">'+esc(d.name)+'</option>').join(''):'<option value="">(데이터셋 없음)</option>';
  if(!DS.length){document.getElementById('root').innerHTML='<div class="card">이 바이러스에는 아직 데이터셋이 없습니다. <a href="/datasets?watch='+WID+'">데이터셋을 먼저 만드세요</a>.</div>';return}
