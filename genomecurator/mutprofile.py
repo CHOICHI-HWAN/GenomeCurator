@@ -14,7 +14,7 @@ from datetime import datetime
 from pathlib import Path
 from urllib.parse import unquote
 
-from . import aligned, datasets, export, log, nextstrain, squirrel
+from . import aligned, datasets, export, log, nextstrain, runs, seqio, squirrel
 from .db import audit, connect
 
 _log = log.get("mutprofile")
@@ -208,16 +208,7 @@ def genbank_to_fasta_gff3(text: str, acc: str) -> tuple[str, str]:
     return seq, "\n".join(out) + "\n"
 
 
-def read_fasta(path: Path) -> tuple[str, str]:
-    name, seq = "", []
-    for line in open(path, encoding="utf-8"):
-        if line.startswith(">"):
-            if name:
-                break
-            name = line[1:].split()[0]
-        else:
-            seq.append(line.strip())
-    return name, "".join(seq).upper()
+read_fasta = seqio.read_fasta                                        # kept under this name: the result views and the CLI call it from here
 
 
 def load_cds(gff: Path | None) -> list[dict]:
@@ -264,7 +255,7 @@ def annotate(pos: int, ref: str, alt: str, cds: list[dict], refseq: str) -> dict
     return {"gene": "", "product": "", "strand": "", "codon_pos": "", "codon_base": "", "ref_codon": "", "alt_codon": "", "aa_change": "", "effect": "intergenic"}
 
 
-_CS = re.compile(r"(:\d+|\*[a-z][a-z]|[+-][a-z]+|~[a-z]{2}\d+[a-z]{2})")
+_CS = seqio.CS
 
 
 def snvs_from_paf(paf_lines):
@@ -306,23 +297,14 @@ def run(ds: dict, cores: int | None = None, force: bool = False, note: str = "",
     msha = datasets.members_hash(members)
     csha = nextstrain.content_sha(ds)
     if not force:
-        for r in nextstrain.list_runs(ds["id"]):
-            if r["tool"] == "mutprofile" and r["status"] == "done" and r["members_sha"] == msha and r.get("content_sha") == csha and r["params_sha"] == sha and r["workflow_commit"] == ver:
-                p(100, f"같은 데이터·설정·버전으로 이미 분석했습니다 ({r['name']})")
-                return {**r, "reused": True}
+        r = runs.reusable(ds, "mutprofile", msha, csha, sha, ver)
+        if r:
+            p(100, f"같은 데이터·설정·버전으로 이미 분석했습니다 ({r['name']})")
+            return {**r, "reused": True}
     ref_fa, gff = reference_files(ds)
     refname, refseq = read_fasta(ref_fa)
     cds = load_cds(gff)
-    now = datetime.now()
-    virus = nextstrain.datasets_virus_name(ds)
-    name = nextstrain.slug_name(virus, ds["name"], now.strftime("%Y%m%d-%H%M%S")).replace("-20", "-mutprofile-20", 1)
-    taken = {r["name"] for r in nextstrain.list_runs(limit=100000)}
-    base, k = name, 1
-    while name in taken:
-        k += 1
-        name = f"{base}-{k}"
-    rdir = nextstrain.runs_dir() / export.slug(virus) / name
-    (rdir / "mutprofile").mkdir(parents=True, exist_ok=True)
+    name, rdir, now = runs.new_run_dir(ds, "mutprofile", "mutprofile")
     out, logp = rdir / "mutprofile", rdir / "run.log"
     aligner = aligner_choice(ds)
     versions = {"mutation-profile": ver, "minimap2": "", "reference": refname, "annotation": gff.name if gff else "", "aligner": aligner}
@@ -330,26 +312,10 @@ def run(ds: dict, cores: int | None = None, force: bool = False, note: str = "",
         versions["minimap2"] = subprocess.run([_bin("minimap2"), "--version"], capture_output=True, text=True, timeout=30).stdout.strip()
     except Exception:
         pass
-    con = connect()
-    try:
-        rid = con.execute("INSERT INTO analysis_run(dataset_id,watch_id,name,status,started,runtime,build,rules_json,params_yaml,params_sha,members_sha,n_public,n_private,workflow_commit,run_dir,log_path,note,versions_json,dataset_name,tool)"
-                          " VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)",
-                          (ds["id"], ds["watch_id"], name, "running", now.isoformat(timespec="seconds"), "ambient", ds.get("build") or "", json.dumps(ds["rules"], ensure_ascii=False),
-                           json.dumps(settings, ensure_ascii=False), sha, msha, sum(1 for m in members if not m.startswith("private:")), sum(1 for m in members if m.startswith("private:")),
-                           ver, str(rdir), str(logp), note.strip(), json.dumps(versions), ds["name"], "mutprofile")).lastrowid
-        con.execute("UPDATE analysis_run SET content_sha=? WHERE id=?", (csha, rid))
-        con.commit()
-    finally:
-        con.close()
+    rid = runs.start(ds, "mutprofile", name, now, ds.get("build") or "", settings, sha, members, msha, csha, ver, rdir, logp, note, versions)
 
     def finish(status_: str, error: str = "", result: str = ""):
-        con = connect()
-        try:
-            con.execute("UPDATE analysis_run SET status=?, finished=?, error=?, auspice_file=? WHERE id=?", (status_, datetime.now().isoformat(timespec="seconds"), error, result, rid))
-            audit(con, "mutprofile_run", f"{name}: {status_}" + (f" ({error[:120]})" if error else ""))
-            con.commit()
-        finally:
-            con.close()
+        runs.finish(rid, "mutprofile", name, status_, error, result)
     logf = open(logp, "w", encoding="utf-8")
     try:
         fasta = rdir / "input.fasta"

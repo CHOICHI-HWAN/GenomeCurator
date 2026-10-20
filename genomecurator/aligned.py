@@ -12,9 +12,15 @@ from pathlib import Path
 
 import numpy as np
 
-from . import lineages, mutprofile
+from . import seqio, squirrel
 
 ACGT = np.frombuffer(b"ACGT", dtype=np.uint8)
+
+
+def _liftover(aln_ref_fa, target_fa) -> dict[int, int]:
+    """Column map from Squirrel's reference to the target reference (minimap2 genome-to-genome alignment, run with Squirrel's own environment)."""
+    pre = squirrel.env_prefix()
+    return seqio.liftover(Path(aln_ref_fa), Path(target_fa), str(pre / "bin" / "minimap2") if pre else "minimap2", squirrel.tool_env())
 
 
 def read_alignment(path):
@@ -48,9 +54,9 @@ def snvs_vs_target(aln_path, aln_ref_fa, target_fa, ids: set | None = None, prog
 
     -> {"snvs": [(id, pos, ref, alt)], "gaps": {id: [(first, last)]}, "n": genomes, "covered": share of the target the column map reaches, "length_ok": bool}
     Raises ValueError when a row is not as long as the alignment reference (a different alignment than the one described)."""
-    _n1, aseq = mutprofile.read_fasta(Path(aln_ref_fa))
-    _n2, tseq = mutprofile.read_fasta(Path(target_fa))
-    cmap = lineages.liftover(Path(aln_ref_fa), Path(target_fa)) if str(aln_ref_fa) != str(target_fa) else {i: i for i in range(1, len(tseq) + 1)}
+    _n1, aseq = seqio.read_fasta(Path(aln_ref_fa))
+    _n2, tseq = seqio.read_fasta(Path(target_fa))
+    cmap = _liftover(aln_ref_fa, target_fa) if str(aln_ref_fa) != str(target_fa) else {i: i for i in range(1, len(tseq) + 1)}
     qs = np.array(sorted(cmap), dtype=np.int64)
     ts = np.array([cmap[q] for q in qs], dtype=np.int64)
     ts_ok = ts <= len(tseq)
@@ -84,9 +90,9 @@ def reproject(aln_path, aln_ref_fa, target_fa, ids: set | None = None):
     """Yield (id, aligned sequence) of the Squirrel alignment *on the target reference's columns*: the sequence has exactly the target's length, a column holds the genome's base at the
     aligned Squirrel column, and every target position the column map does not reach is N. This is the shape of what Nextclade writes with `--output-fasta` (aligned to the reference,
     insertions relative to the reference removed), so a workflow that expects an alignment to its own reference can take it as it is."""
-    _n1, aseq = mutprofile.read_fasta(Path(aln_ref_fa))
-    _n2, tseq = mutprofile.read_fasta(Path(target_fa))
-    cmap = lineages.liftover(Path(aln_ref_fa), Path(target_fa)) if str(aln_ref_fa) != str(target_fa) else {i: i for i in range(1, len(tseq) + 1)}
+    _n1, aseq = seqio.read_fasta(Path(aln_ref_fa))
+    _n2, tseq = seqio.read_fasta(Path(target_fa))
+    cmap = _liftover(aln_ref_fa, target_fa) if str(aln_ref_fa) != str(target_fa) else {i: i for i in range(1, len(tseq) + 1)}
     qs = np.array(sorted(cmap), dtype=np.int64)
     ts = np.array([cmap[q] for q in qs], dtype=np.int64)
     keep = ts <= len(tseq)
@@ -105,7 +111,7 @@ def disagreement(squirrel_aln, aln_ref_fa, other_aln, target_fa) -> dict:
     """Where two aligners disagree, on the target reference's columns. `other_aln` is an alignment to the target itself (what Nextclade writes with `--output-fasta`).
 
     -> {"columns": {pos: genomes}, "per_genome": {id: n columns}, "n": genomes compared, "length": target length}. A column counts for a genome only when both give A/C/G/T and they differ (N / gap = unknown, never a disagreement)."""
-    _n, tseq = mutprofile.read_fasta(Path(target_fa))
+    _n, tseq = seqio.read_fasta(Path(target_fa))
     other = dict(read_alignment(other_aln))
     cols = np.zeros(len(tseq), dtype=np.int64)
     per: dict[str, int] = {}

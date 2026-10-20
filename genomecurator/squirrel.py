@@ -20,7 +20,7 @@ import time
 from datetime import datetime
 from pathlib import Path
 
-from . import datasets, export, log, nextstrain
+from . import datasets, export, log, nextstrain, runs
 from .db import audit, connect
 
 _log = log.get("squirrel")
@@ -245,44 +245,19 @@ def run(ds: dict, cores: int | None = None, force: bool = False, note: str = "",
     msha = datasets.members_hash(members)
     csha = nextstrain.content_sha(ds)
     if not force:
-        for r in nextstrain.list_runs(ds["id"]):
-            if r["tool"] == "squirrel" and r["status"] == "done" and r["members_sha"] == msha and r.get("content_sha") == csha and r["params_sha"] == sha and r["workflow_commit"] == ver:
-                p(100, f"같은 데이터·설정·버전으로 이미 분석했습니다 ({r['name']})")
-                return {**r, "reused": True}
-    now = datetime.now()
-    virus = nextstrain.datasets_virus_name(ds)
-    name = nextstrain.slug_name(virus, ds["name"], now.strftime("%Y%m%d-%H%M%S")).replace("-20", "-squirrel-20", 1)
-    taken = {r["name"] for r in nextstrain.list_runs(limit=100000)}
-    base, k = name, 1
-    while name in taken:
-        k += 1
-        name = f"{base}-{k}"
-    rdir = nextstrain.runs_dir() / export.slug(virus) / name
-    (rdir / "squirrel").mkdir(parents=True, exist_ok=True)
+        r = runs.reusable(ds, "squirrel", msha, csha, sha, ver)
+        if r:
+            p(100, f"같은 데이터·설정·버전으로 이미 분석했습니다 ({r['name']})")
+            return {**r, "reused": True}
+    name, rdir, now = runs.new_run_dir(ds, "squirrel", "squirrel")
     tmpdir = rdir / "tmp"
     tmpdir.mkdir(exist_ok=True)
     logp = rdir / "run.log"
     versions = tool_versions()
-    con = connect()
-    try:
-        rid = con.execute("INSERT INTO analysis_run(dataset_id,watch_id,name,status,started,runtime,build,rules_json,params_yaml,params_sha,members_sha,n_public,n_private,workflow_commit,run_dir,log_path,note,versions_json,dataset_name,tool)"
-                          " VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)",
-                          (ds["id"], ds["watch_id"], name, "running", now.isoformat(timespec="seconds"), "ambient", settings["clade"], json.dumps(ds["rules"], ensure_ascii=False),
-                           json.dumps(settings, ensure_ascii=False), sha, msha, sum(1 for m in members if not m.startswith("private:")), sum(1 for m in members if m.startswith("private:")),
-                           ver, str(rdir), str(logp), note.strip(), json.dumps(versions), ds["name"], "squirrel")).lastrowid
-        con.execute("UPDATE analysis_run SET content_sha=? WHERE id=?", (csha, rid))
-        con.commit()
-    finally:
-        con.close()
+    rid = runs.start(ds, "squirrel", name, now, settings["clade"], settings, sha, members, msha, csha, ver, rdir, logp, note, versions)
 
     def finish(status: str, error: str = "", result: str = ""):
-        con = connect()
-        try:
-            con.execute("UPDATE analysis_run SET status=?, finished=?, error=?, auspice_file=? WHERE id=?", (status, datetime.now().isoformat(timespec="seconds"), error, result, rid))
-            audit(con, "squirrel_run", f"{name}: {status}" + (f" ({error[:120]})" if error else ""))
-            con.commit()
-        finally:
-            con.close()
+        runs.finish(rid, "squirrel", name, status, error, result)
     try:
         p(6, "서열을 하나의 FASTA로 모으는 중…")
         fasta = rdir / "input.fasta"

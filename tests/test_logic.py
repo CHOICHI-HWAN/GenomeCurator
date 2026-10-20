@@ -2553,7 +2553,7 @@ def test_snvs_from_a_squirrel_alignment_and_the_aligner_choice(tmp_path, monkeyp
     tfa, afa = tmp_path / "t.fasta", tmp_path / "a.fasta"
     tfa.write_text(">T\n" + T + "\n", encoding="utf-8")
     afa.write_text(">A\n" + A + "\n", encoding="utf-8")
-    monkeypatch.setattr(lineages, "liftover", lambda q, t: {i: i - 2 for i in range(3, len(A) + 1)})          # column i of A is position i-2 of T
+    monkeypatch.setattr(aligned, "_liftover", lambda q, t: {i: i - 2 for i in range(3, len(A) + 1)})          # column i of A is position i-2 of T
     rows = {"s1": A, "s2": A[:6] + "G" + A[7:], "s3": A[:8] + "NN" + A[10:], "s4": A[:3] + "T" + A[4:]}      # s2: T pos 5 (A) -> G; s3: two N's; s4: T pos 2 (C) -> T
     aln = tmp_path / "aln.fasta.gz"
     with gzip.open(aln, "wt") as f:
@@ -2681,7 +2681,7 @@ def test_squirrel_alignment_reprojected_on_the_workflow_reference(tmp_path, monk
     tfa.write_text(">T\n" + T + "\n", encoding="utf-8")
     afa.write_text(">A\n" + A + "\n", encoding="utf-8")
     cmap = {**{i: i - 2 for i in range(3, 8)}, **{i: i - 4 for i in range(10, 15)}}                  # column of A -> position of T (A cols 8-9 have no counterpart)
-    monkeypatch.setattr(lineages, "liftover", lambda q, t: cmap)
+    monkeypatch.setattr(aligned, "_liftover", lambda q, t: cmap)
     aln = tmp_path / "aln.fasta.gz"
     seq1 = A[:5] + "C" + A[6:]                                                                        # a change at A col 6 (T pos 4)
     with gzip.open(aln, "wt") as f:

@@ -15,7 +15,7 @@ from collections import Counter, defaultdict
 from datetime import date, timedelta
 from pathlib import Path
 
-from . import config, datasets, export, geo, log, mutprofile, nextstrain, squirrel
+from . import config, datasets, export, geo, log, mutprofile, nextstrain, seqio, squirrel
 from .db import audit, connect
 
 _log = log.get("lineages")
@@ -140,33 +140,7 @@ def liftover(ref_fa: Path, nc_fa: Path) -> dict[int, int]:
     """{position in `ref_fa`'s reference: position in NC_063383.1} for the aligned (matching or substituted) columns."""
     if str(ref_fa) == str(nc_fa):
         return None
-    cmd = [mutprofile._bin("minimap2"), "-x", "asm20", "-c", "--cs", str(nc_fa), str(ref_fa)]
-    out = subprocess.run(cmd, capture_output=True, text=True, env=mutprofile.tool_env()).stdout
-    m: dict[int, int] = {}
-    for line in out.splitlines():
-        f = line.split("\t")
-        if len(f) < 12 or f[4] != "+":
-            continue
-        cs = next((x[5:] for x in f[12:] if x.startswith("cs:Z:")), None)
-        if not cs:
-            continue
-        q, t = int(f[2]), int(f[7])                          # 0-based starts
-        for tok in mutprofile._CS.findall(cs):
-            if tok[0] == ":":
-                n = int(tok[1:])
-                for i in range(n):
-                    m[q + i + 1] = t + i + 1
-                q += n
-                t += n
-            elif tok[0] == "*":
-                m[q + 1] = t + 1
-                q += 1
-                t += 1
-            elif tok[0] == "+":
-                q += len(tok) - 1
-            elif tok[0] == "-":
-                t += len(tok) - 1
-    return m
+    return seqio.liftover(ref_fa, nc_fa, mutprofile._bin("minimap2"), mutprofile.tool_env())
 
 
 def gap_intervals_from_paf(paf_lines, length: int) -> dict[str, list[tuple[int, int]]]:
