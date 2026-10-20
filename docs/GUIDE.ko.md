@@ -641,3 +641,8 @@ snippy + lofreq 호출은 `data/variantcache/<레퍼런스>-<md5>-<snippy 버전
 ### QC 우선순위
 
 도구마다 판정이 다를 때 **Squirrel > Nextclade > CheckV**(그다음 내장 서열 통계) 순서로 따릅니다. 유전체 표의 QC 열, 데이터셋의 *QC 제외* 규칙, 내보내기 필터가 쓰는 대표 상태는 *결과가 있는* 가장 우선순위 높은 도구의 판정입니다(오류가 난 도구는 판정이 없는 것으로 칩니다). 예: Squirrel이 양호이고 Nextclade가 불량이면 대표 상태는 양호입니다. 다른 도구의 판정은 QC 화면과 유전체의 상세에 그대로 남으니 의견이 갈리는 유전체를 따로 볼 수 있습니다.
+
+
+### 결과 검증: `./test.sh verify`
+
+`pytest`는 코드가 맞는지, `./test.sh check`는 도구가 도는지 봅니다. **`./test.sh verify`는 지금 데이터 폴더의 실제 결과가 맞는지** 봅니다(읽기 전용, 10초 안팎). 항목: 데이터 무결성, 용어 사전 멱등성, QC 우선순위, 비공개 유전체 유출 없음, Nextstrain 트리(멤버·clade), Squirrel(정렬·QC 제외·계통수 tip), 변이 프로파일(참조 염기·유전자·아미노산 변화·요약 개수), Nextclade 정렬과의 대조, snippy·lofreq와의 일치, Snakemake 워크플로와 직접 구현의 동일성, lineage 정의 변이 보유율, 지정 변이 타임라인, hotspot, 심은 치환 시험. 줄마다 PASS / WARN(살펴볼 것) / FAIL(나오면 안 되는 결과)이고 FAIL이 하나라도 있으면 종료 코드 1입니다. 입력이 없는 항목은 통과로 치지 않고 SKIP으로 표시합니다.

@@ -12,6 +12,7 @@ Virus Genome Metadata Curator(패키지 `genomecurator`, 이전 표시 이름 "G
 ## [Unreleased]
 
 ### 추가
+- **`./test.sh verify`**(`scripts/verify_pipeline.py`): 실제 데이터로 파이프라인의 *결과*가 맞는지 읽기 전용으로 검사합니다 — 큐레이션 데이터의 무결성, 용어 사전의 멱등성, QC 대표 상태의 우선순위, 비공개 유전체가 공개물에 없는지, Nextstrain 트리의 tip이 실행 멤버이고 clade가 큐레이션과 같은지, Squirrel 정렬 + QC 제외 = 멤버이고 정렬된 유전체가 모두 계통수 tip인지, 모든 변이의 참조 염기가 그 위치의 참조와 같은지·유전자/아미노산 변화를 독립 계산해도 같은지·요약 개수가 행 수와 같은지, 변이 프로파일을 같은 유전체의 Nextclade 정렬과 대조(무작위 60건: 정밀도 100%, 재현율 97.2%), snippy·lofreq가 이 실행과 호출의 93.2%에서 일치, Snakemake 워크플로가 직접 구현과 같음, lineage 정의 변이를 그 lineage가 보유(99.9%), 지정 변이 타임라인이 표의 보유 수와 같음, 알려진 hotspot(OPG175) 발견, 정답을 아는 심은 치환 시험. clade Ib 데이터 결과: 통과 29, 경고 2, 실패 0.
 - **QC 우선순위: Squirrel > Nextclade > CheckV**(그다음 내장 서열 통계): 유전체의 대표 QC 상태 — 유전체 표의 *QC* 열, 데이터셋의 *QC 제외* 규칙, 내보내기 필터 — 가 결과가 있는 가장 우선순위 높은 도구의 판정을 따릅니다(오류가 난 도구는 판정이 없음). 다른 도구의 판정도 그대로 보입니다(가장 나쁜 값은 `qc_worst`로 보관). 이전에는 모든 도구 중 가장 나쁜 값이 대표 상태였습니다.
 - **한 번에 분석하는 버튼**(데이터셋 화면의 *한 번에 분석*, `POST /api/datasets/<id>/analyze_all`, `genomecurator/pipeline.py`): QC → Squirrel → 변이 프로파일 → 변이 호출(snippy + lofreq) → Nextstrain 중 체크한 단계를 하나의 백그라운드 작업으로 차례로 실행합니다. 각 단계는 자기 버튼과 같은 함수라 입력이 그대로인 단계(같은 멤버·내용·설정·도구 버전)는 재사용하고, 한 단계가 실패해도 나머지는 계속합니다(변이 프로파일이 실패하면 그 호출은 건너뜀). Nextstrain이 가장 오래 걸려 마지막입니다. 분석이 준비되지 않은 바이러스(구현 상태 뱃지 참고)는 QC만 돌리고 결과에 그렇게 알립니다.
 - **CheckV 데이터베이스**: `checkv download_database`는 마지막에 환경의 `diamond`로 DIAMOND 색인을 만드는데, 환경을 켜지 않고 실행하면 1.5 GB를 다 받고도 그 단계에서 실패합니다(앱이 이제 `conda run -n gc-checkv`로 실행하라고 안내). 실제 유전체로 확인: clade Ib 6건이 15초(High-quality 5건, 완성도 90%의 Medium-quality 1건).
