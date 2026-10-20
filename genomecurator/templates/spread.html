@@ -46,16 +46,17 @@ let D=null,open={},obSet=false,CUR=-1,timer=null;
 const PAL=['#4e79a7','#f28e2b','#e15759','#76b7b2','#59a14f','#edc948','#b07aa1','#ff9da7','#9c755f','#bab0ac'];
 async function defsUi(){const s=await (await fetch('/api/lineages/status')).json();document.getElementById('defs').innerHTML=s.ok?'<span class="mut">정의 lineage-designation @ '+esc(s.commit)+' ('+s.files+'개 파일)</span> <button type="button" onclick="getDefs()">업데이트</button>':'<span style="color:var(--bad)">lineage 정의가 없습니다</span> <button type="button" class="p" onclick="getDefs()">정의 받기</button>'}
 function getDefs(){const f=document.getElementById('jf');f.action='/api/lineages/clone';runJob(f)}
-async function load(){const q=new URLSearchParams({view:document.getElementById('v').value,bin:document.getElementById('bin').value,outbreak:obSet?document.getElementById('ob').value:'',min_n:document.getElementById('mn').value||1});
+const SITES=new URLSearchParams(location.search).get('sites')||'';const isMut=()=>D&&(D.view==='mutation'||D.view==='sites');
+async function load(){const q=new URLSearchParams({view:document.getElementById('v').value,bin:document.getElementById('bin').value,outbreak:obSet?document.getElementById('ob').value:'',min_n:document.getElementById('mn').value||1});if(SITES)q.set('sites',SITES);
  const r=await fetch('/api/analyses/'+RID+'/spread?'+q);D=await r.json();if(D.error){document.getElementById('fig').innerHTML='<div class="card" style="color:var(--bad)">'+esc(D.error)+'</div>';document.getElementById('info').textContent='';return}
  if(!obSet){obSet=true;document.getElementById('ob').innerHTML=D.outbreaks.map(o=>'<option '+(o===D.outbreak?'selected':'')+'>'+esc(o)+'</option>').join('')}
  document.getElementById('info').textContent='유전체 '+D.genomes.toLocaleString()+'건 중 날짜가 있는 '+D.dated.toLocaleString()+'건(일 단위 '+D.day_precision.toLocaleString()+' · 월까지만 '+D.month_only.toLocaleString()+') · 날짜 없음 '+D.no_date+'건은 제외 · 시간 단위: '+(D.bin==='week'?'ISO 주':'월')+' · 정의 '+(D.definitions||'없음');
  const sl=document.getElementById('sl');sl.max=Math.max(0,D.periods.length-1);CUR=D.periods.length-1;sl.value=CUR;stop();draw();mapInit()}
 function firstIdxRow(r){let f=1e9;const mi=m=>{for(let i=0;i<D.starts.length;i++)if(D.starts[i].slice(0,7)===m)return i;return 1e9};r.countries.forEach(c=>{Object.keys(c.cells).forEach(p=>{const i=D.periods.indexOf(p);if(i>=0)f=Math.min(f,i)});Object.keys(c.monthly).forEach(m=>f=Math.min(f,mi(m)))});return f}
-function trackLayout(lim,cw){const items=[];D.rows.forEach((r,ri)=>{const f=firstIdxRow(r);if(f>lim||f>=1e9)return;const mut=D.view==='mutation';let t='';if(mut)t=r.label+(r.gene?' '+r.gene:'');else if(r.own&&r.own.length)t=r.label+' '+r.own.join(' ');else return;items.push({f,t,ri})});
+function trackLayout(lim,cw){const items=[];D.rows.forEach((r,ri)=>{const f=firstIdxRow(r);if(f>lim||f>=1e9)return;const mut=isMut();let t='';if(mut)t=r.label+(r.gene?' '+r.gene:'');else if(r.own&&r.own.length)t=r.label+' '+r.own.join(' ');else return;items.push({f,t,ri})});
  items.sort((a,b)=>a.f-b.f);const ends=[],MAXL=7;items.forEach(it=>{const w=it.t.length*5.6+12,x=it.f*cw;let l=ends.findIndex(e=>e+4<=x);if(l<0){l=ends.length<MAXL?ends.length:-1}if(l>=0){ends[l]=x+w;it.lane=l}else it.lane=-1});return {items,h:ends.length?ends.length*12+10:0}}
 function draw(){const P=D.periods,n=P.length;if(!n){document.getElementById('fig').innerHTML='<div class="card mut">그릴 데이터가 없습니다.</div>';return}
- const lim=document.getElementById('fl').checked&&CUR>=0?CUR:n-1,LW=380,cw=Math.max(2.5,Math.min(16,1100/n)),RH=15,TR=trackLayout(lim,cw),top=34+TR.h,all=document.getElementById('ex').checked,mut=D.view==='mutation';
+ const lim=document.getElementById('fl').checked&&CUR>=0?CUR:n-1,LW=380,cw=Math.max(2.5,Math.min(16,1100/n)),RH=15,TR=trackLayout(lim,cw),top=34+TR.h,all=document.getElementById('ex').checked,mut=isMut();
  const idx={};P.forEach((p,i)=>idx[p]=i);const mIdx={};D.starts.forEach((s,i)=>{const m=s.slice(0,7);(mIdx[m]=mIdx[m]||[]).push(i)});
  let maxc=1;D.rows.forEach(r=>r.countries.forEach(c=>Object.values(c.cells).forEach(v=>maxc=Math.max(maxc,v))));
  const rows=[];D.rows.forEach((r,ri)=>{rows.push({r,c:null,ri});if(all||open[r.key])r.countries.forEach(c=>rows.push({r,c,ri}))});
@@ -79,7 +80,7 @@ function draw(){const P=D.periods,n=P.length;if(!n){document.getElementById('fig
  o+='</svg>';document.getElementById('fig').innerHTML=o;panel();lineChart(lim)}
 function lineChart(lim){const P=D.periods,n=P.length,LW=380,cw=Math.max(2.5,Math.min(16,1100/n)),cum=document.getElementById('lcm').value==='cum',Ht=190,m={t:10,b:24},W=LW+n*cw+20;
  const series=D.rows.map((r,ri)=>{const v=new Array(n).fill(0);r.countries.forEach(c=>Object.entries(c.cells).forEach(([p,x])=>{const i=P.indexOf(p);if(i>=0)v[i]+=x}));return {ri,label:r.label,v,tot:v.reduce((a,b)=>a+b,0)}}).filter(x=>x.tot>0).sort((a,b)=>b.tot-a.tot).slice(0,8);
- const all=new Array(n).fill(0);series.forEach(x=>x.v.forEach((y,i)=>all[i]+=y));if(D.view==='mutation'||series.length>1)series.unshift({ri:-1,label:D.view==='mutation'?'(모든 변이 합)':'전체',v:all,tot:all.reduce((a,b)=>a+b,0)});
+ const all=new Array(n).fill(0);series.forEach(x=>x.v.forEach((y,i)=>all[i]+=y));if(isMut()||series.length>1)series.unshift({ri:-1,label:isMut()?'(모든 변이 합)':'전체',v:all,tot:all.reduce((a,b)=>a+b,0)});
  series.forEach(x=>{if(cum){let c=0;x.c=x.v.map(y=>c+=y)}else x.c=x.v});const mx=Math.max(1,...series.map(x=>Math.max(...x.c)));
  let o='<svg xmlns="http://www.w3.org/2000/svg" width="'+W+'" height="'+Ht+'" font-family="Helvetica,Arial,sans-serif" font-size="10.5">';const y=v=>Ht-m.b-v/mx*(Ht-m.t-m.b);
  for(let k=0;k<=4;k++){const v=mx*k/4;o+='<line x1="'+LW+'" x2="'+(LW+n*cw)+'" y1="'+y(v)+'" y2="'+y(v)+'" stroke="#eee"/><text x="'+(LW-4)+'" y="'+(y(v)+3)+'" text-anchor="end" fill="#666">'+Math.round(v)+'</text>'}
@@ -102,7 +103,7 @@ function rob(lon,lat){const a=Math.min(90,Math.abs(lat)),i=Math.min(17,Math.floo
 const MW=1000,MH=500,SCALE=MW/(2*0.8487*Math.PI),CX=MW/2,CY=MH/2+10;const px=(lon,lat)=>{const [x,y]=rob(lon,lat);return [CX+x*SCALE,CY-y*SCALE]};
 async function mapInit(){if(WORLD)return;try{WORLD=await (await fetch('/api/world')).json()}catch(e){WORLD={countries:[]}}
  BASE='<rect width="'+MW+'" height="'+MH+'" fill="#eaf2f8"/>'+WORLD.countries.map(c=>'<path d="'+c.poly.map(poly=>poly.map(ring=>'M'+ring.map(pt=>px(pt[0],pt[1]).map(v=>v.toFixed(1)).join(' ')).join('L')+'Z').join('')).join('')+'" fill="#dfe6df" stroke="#fff" stroke-width=".5"><title>'+esc(c.name)+'</title></path>').join('');
- const sel=document.getElementById('mrow');sel.innerHTML=(D.view==='mutation'?'':'<option value="">모든 행(lineage별 파이)</option>')+D.rows.map((r,i)=>'<option value="'+i+'">'+esc(r.label)+'</option>').join('');panel()}
+ const sel=document.getElementById('mrow');sel.innerHTML=(isMut()?'':'<option value="">모든 행(lineage별 파이)</option>')+D.rows.map((r,i)=>'<option value="'+i+'">'+esc(r.label)+'</option>').join('');panel()}
 function arc(cx,cy,r,a0,a1){const x0=cx+r*Math.cos(a0),y0=cy+r*Math.sin(a0),x1=cx+r*Math.cos(a1),y1=cy+r*Math.sin(a1);return 'M'+cx.toFixed(1)+' '+cy.toFixed(1)+'L'+x0.toFixed(1)+' '+y0.toFixed(1)+'A'+r.toFixed(1)+' '+r.toFixed(1)+' 0 '+((a1-a0)>Math.PI?1:0)+' 1 '+x1.toFixed(1)+' '+y1.toFixed(1)+'Z'}
 function mapDraw(lim,row){if(!WORLD||!BASE){mapInit();return}
  const size=document.getElementById('msz').value,all=mapData(lim,row),last=mapData(D.periods.length-1,row),mx=Math.max(1,...last.map(o=>size==='cum'?o.n:o.n)),skip=[];let o2='';
@@ -119,6 +120,7 @@ function stop(){if(timer){clearInterval(timer);timer=null}document.getElementByI
 function play(){if(timer){stop();return}if(CUR>=D.periods.length-1)stepTo(0);document.getElementById('pl').textContent='⏸';
  timer=setInterval(()=>{if(CUR>=D.periods.length-1){stop();return}stepTo(CUR+1)},+document.getElementById('sp').value)}
 function tog(k){open[k]=!open[k];draw()}
+(function(){if(!SITES)return;const b=document.createElement('div');b.className='card';b.style.cssText='font-size:13px';b.innerHTML='선택한 변이 <b>'+SITES.split(',').map(x=>esc(x)).join(', ')+'</b>를 가진 유전체의 나라 × 시간입니다 (이 실행의 참조 좌표). <a href="'+location.pathname+'">lineage·대표 변이 보기로 돌아가기</a>';document.getElementById('fig').parentNode.insertBefore(b,document.getElementById('fig'));const v=document.getElementById('v');v.insertAdjacentHTML('beforeend','<option value="sites">선택한 변이</option>');v.value='sites';v.onchange=()=>{if(v.value!=='sites')location.href=location.pathname;else load()}})();
 defsUi();load();
 </script>
 {% endblock %}

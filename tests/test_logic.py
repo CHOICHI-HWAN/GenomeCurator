@@ -2903,3 +2903,19 @@ def test_callcache_shares_calls_between_runs_per_sequence_and_reference(tmp_path
     n = callcache.prefill([("OTHER_NAME", "ACGTACGT"), ("B2", "TTTT"), ("NEW", "GGGG")], k, run2)       # same sequence under other ids; one new genome
     assert n == 2 and (run2 / "OTHER_NAME.tsv").read_text() == "OTHER_NAME\t10\tA\tG\t1\t1\t17\t1.0\n" and (run2 / "B2.tsv").read_text() == "" and not (run2 / "NEW.tsv").exists()
     assert callcache.prefill([("OTHER_NAME", "ACGTACGT")], k, run2) == 0                                 # never over a file that is there
+
+
+def test_mutation_sites_for_the_timeline_and_the_shared_menu():
+    import pytest
+    from pathlib import Path
+    from genomecurator import lineages, web
+    assert lineages.parse_sites("7226G, C18850C,7226G") == [(7226, "G"), (18850, "C")]            # a leading reference base is accepted, repeats are dropped
+    assert lineages.parse_sites(["a12t"]) == [(12, "T")]
+    for bad in ("zzz", "7226", "7226N", "12-3A"):
+        with pytest.raises(ValueError):
+            lineages.parse_sites(bad)
+    tdir = Path(web.__file__).parent / "templates"
+    base = (tdir / "base.html").read_text(encoding="utf-8")
+    assert "function gcMutMenu" in base.split("</head>")[0] and "function gcMenuClose" in base                    # defined in <head>: page scripts call it while the page is parsed
+    assert "gcMutMenu(ev,RID" in (tdir / "heatmap.html").read_text(encoding="utf-8") and "gcMutMenu(ev,RID" in (tdir / "snipit.html").read_text(encoding="utf-8")
+    assert "chipMenu" in (tdir / "novel.html").read_text(encoding="utf-8") and "sites=" in base

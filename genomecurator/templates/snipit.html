@@ -29,7 +29,9 @@ const RID={{ run.id }};
 const esc=s=>String(s??'').replace(/[&<>"]/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c]));
 const BASE={A:'#4e9a06',C:'#3465a4',G:'#c4a000',T:'#cc0000'};
 const PAL=['#8dd3c7','#bebada','#fb8072','#80b1d3','#fdb462','#b3de69','#fccde5','#bc80bd','#ccebc5','#ffed6f','#a6cee3','#fb9a99','#cab2d6','#e6ab02'];
-let D=null,first=true;
+let D=null,first=true;const UP=new URLSearchParams(location.search);
+document.addEventListener('contextmenu',ev=>{const r=ev.target.closest&&ev.target.closest('rect[data-pos]');if(!r)return;gcMutMenu(ev,RID,{pos:+r.dataset.pos,ref:r.dataset.ref,alt:r.dataset.alt,gene:r.dataset.gene,aa:r.dataset.aa},'snipit')});
+if(UP.get('start')){document.getElementById('f_s').value=UP.get('start')}if(UP.get('end')){document.getElementById('f_e').value=UP.get('end')}
 function q(){const sel=id=>[...document.getElementById(id).selectedOptions].map(o=>o.value).join(',');
  return new URLSearchParams({lineage:sel('f_lin'),clade:sel('f_cl'),gene:document.getElementById('f_gene').value,start:document.getElementById('f_s').value||0,end:document.getElementById('f_e').value||0,
   apobec:document.getElementById('f_ap').checked?1:0,hide_common:document.getElementById('f_hc').value,per_group:document.getElementById('f_pg').value||0,max_samples:document.getElementById('f_mx').value||60,group_by:document.getElementById('f_gb').value})}
@@ -54,7 +56,7 @@ function render(){const syn=document.getElementById('f_syn').checked,ids=documen
   o+='<rect x="'+(L+2)+'" y="'+(y+1)+'" width="'+(LIN-4)+'" height="'+(H-2)+'" fill="'+colors[groupKey(s)||'(없음)']+'" rx="2"/><text x="'+(L+6)+'" y="'+(y+10)+'">'+esc(s.lineage||'-')+(s.country?' · '+esc(s.country.slice(0,14)):'')+'</text>';
   o+='<text x="'+(L+LIN+4)+'" y="'+(y+10)+'" fill="#555">'+esc(s.clade||'-')+'</text>';
   s.snps.forEach(m=>{const [pos,ref,alt,gene,aa,eff,poi,prof,dfn]=m,bold=dfn&&document.getElementById('f_def').checked,op=(syn&&eff==='synonymous')?0.4:(eff==='intergenic'?0.3:1),xx=x(pos);
-   o+='<rect x="'+(xx-(bold?1.6:0.7)).toFixed(2)+'" y="'+(bold?y:y+1)+'" width="'+(bold?Math.max(3.2,W/span*2):Math.max(1.4,W/span)).toFixed(2)+'" height="'+(bold?H:H-2)+'" fill="'+(BASE[alt]||'#888')+'" opacity="'+(bold?1:op)+'"'+(bold?' stroke="#000" stroke-width="1"':'')+'><title>'+esc(s.id+' · '+pos+' '+ref+'>'+alt+(gene?' · '+gene:'')+(aa?' '+aa:'')+' · '+eff+(poi?' · '+prof:'')+(dfn?' · 대표 변이 ('+dfn+'에서 정의)':''))+'</title></rect>';
+   o+='<rect x="'+(xx-(bold?1.6:0.7)).toFixed(2)+'" y="'+(bold?y:y+1)+'" width="'+(bold?Math.max(3.2,W/span*2):Math.max(1.4,W/span)).toFixed(2)+'" height="'+(bold?H:H-2)+'" fill="'+(BASE[alt]||'#888')+'" data-pos="'+pos+'" data-ref="'+ref+'" data-alt="'+alt+'" data-gene="'+esc(gene||'')+'" data-aa="'+esc(aa||'')+'" opacity="'+(bold?1:op)+'"'+(bold?' stroke="#000" stroke-width="1"':'')+'><title>'+esc(s.id+' · '+pos+' '+ref+'>'+alt+(gene?' · '+gene:'')+(aa?' '+aa:'')+' · '+eff+(poi?' · '+prof:'')+(dfn?' · 대표 변이 ('+dfn+'에서 정의)':''))+'</title></rect>';
    if(poi)o+='<circle cx="'+xx.toFixed(2)+'" cy="'+(y+2.2)+'" r="2.4" fill="#d6249f" stroke="#fff" stroke-width=".5"/>'});
  });
  const gy=top+S.length*H+14;o+='<text x="6" y="'+(gy+14)+'" font-weight="bold">유전자</text>';

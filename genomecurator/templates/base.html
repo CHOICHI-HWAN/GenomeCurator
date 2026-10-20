@@ -71,6 +71,20 @@ const GC={get(k,d){try{const v=localStorage.getItem('gc_'+k);return v==null?d:JS
 function gcSyncN(id){const el=document.getElementById(id);if(!el)return;const v=String(GC.get('nlimit','0.05'));if([...el.options].some(o=>o.value===v))el.value=v;el.addEventListener('change',()=>{GC.set('nlimit',el.value)})}
 function gcCtx(d){GC.set('ctx',d);gcChip()}
 function gcChip(){const c=GC.get('ctx',null),el=document.getElementById('ctx');if(!el)return;el.innerHTML=c&&c.dataset?'데이터셋 <a href="/hub?dataset='+c.dataset+'" title="분석 허브에서 열기">'+String(c.name||c.dataset).replace(/[&<>"]/g,m=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[m]))+'</a>':''}
+
+// A small menu to go from one mutation to the other views of the same analysis run. Right-click (or click, where a page says so) on a mutation: gcMutMenu(event, runId, {pos, ref, alt}, 'current page').
+function gcMenu(ev,items,title){ev.preventDefault();ev.stopPropagation();gcMenuClose();const m=document.createElement('div');m.id='gcmenu';m.setAttribute('role','menu');
+ m.style.cssText='position:fixed;z-index:9999;min-width:230px;background:var(--card);color:var(--fg);border:1px solid var(--bd);border-radius:6px;box-shadow:0 4px 18px rgba(0,0,0,.25);padding:4px 0;font-size:13px';
+ m.innerHTML=(title?'<div style="padding:5px 12px;font-weight:600;border-bottom:1px solid var(--bd);margin-bottom:3px">'+String(title).replace(/[&<>"]/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c]))+'</div>':'')+items.map((it,i)=>it.sep?'<div style="border-top:1px solid var(--bd);margin:3px 0"></div>':'<a role="menuitem" data-i="'+i+'" '+(it.href?'href="'+it.href+'" target="_blank" ':'href="#" ')+'style="display:block;padding:6px 12px;color:inherit;text-decoration:none;cursor:pointer">'+it.label+'</a>').join('');
+ document.body.appendChild(m);const x=Math.min(ev.clientX,innerWidth-m.offsetWidth-6),y=Math.min(ev.clientY,innerHeight-m.offsetHeight-6);m.style.left=Math.max(4,x)+'px';m.style.top=Math.max(4,y)+'px';
+ m.querySelectorAll('a').forEach(a=>{a.onmouseenter=()=>a.style.background='rgba(120,120,120,.18)';a.onmouseleave=()=>a.style.background='';a.onclick=e=>{const it=items[+a.dataset.i];if(it&&it.fn){e.preventDefault();it.fn()}gcMenuClose()}})}
+function gcMenuClose(){const m=document.getElementById('gcmenu');if(m)m.remove()}
+addEventListener('click',gcMenuClose);addEventListener('scroll',gcMenuClose,true);addEventListener('keydown',e=>{if(e.key==='Escape')gcMenuClose()});addEventListener('resize',gcMenuClose);
+function gcMutItems(rid,o,here){const alt=o.alt,lab=(o.ref||'')+o.pos+alt,site=o.pos+alt,u=p=>'/analysis/'+rid+'/'+p;
+ return [{label:'전파 타임라인에서 보기 <span style="opacity:.6">('+lab+')</span>',href:u('spread?sites='+site),skip:here==='spread'},{label:'변이 히트맵에서 자세히 <span style="opacity:.6">('+lab+')</span>',href:u('heatmap?mut='+encodeURIComponent(lab)),skip:here==='heatmap'},
+  {label:'변이 그림에서 주변 보기 <span style="opacity:.6">('+Math.max(1,o.pos-1500)+'–'+(o.pos+1500)+')</span>',href:u('snipit?start='+Math.max(1,o.pos-1500)+'&end='+(o.pos+1500)),skip:here==='snipit'},{sep:1},
+  {label:'변이 이름 복사 <span style="opacity:.6">('+lab+')</span>',fn:()=>{try{navigator.clipboard.writeText(lab)}catch(e){}}}].filter(x=>!x.skip)}
+function gcMutMenu(ev,rid,o,here){gcMenu(ev,gcMutItems(rid,o,here),(o.ref||'')+o.pos+o.alt+(o.gene?' · '+o.gene:'')+(o.aa?' '+o.aa:''))}
 </script></head><body>
 {% set GROUPS = [
  ('cur', '큐레이션', [('cur', '/', '변경 검토'), ('int', '/integrity', '정합성'), ('voc', '/vocab', '용어'), ('sch', '/schema', '스키마'), ('his', '/history', '이력')]),

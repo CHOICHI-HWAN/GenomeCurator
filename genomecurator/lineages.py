@@ -313,14 +313,30 @@ def _genomes(run: dict) -> list[dict]:
              "date": r.get("date") or ""} for r in allr if not mem or r["PPX_accession"] in mem or ("private:" + r["PPX_accession"]) in mem]
 
 
-def spread(run: dict, view: str = "lineage", bin_: str = "auto", outbreak: str = "", min_n: int = 2, lineages=(), countries=()) -> dict:
+def parse_sites(text) -> list[tuple[int, str]]:
+    """`7226G,18850C` (or a list) -> [(7226, 'G'), (18850, 'C')]: positions in the run's reference and the new base. A leading reference base (`C7226G`) is accepted."""
+    items = text.split(",") if isinstance(text, str) else list(text)
+    out = []
+    for x in items:
+        m = re.fullmatch(r"\s*[ACGT]?(\d+)([ACGT])\s*", str(x).upper())
+        if not m:
+            raise ValueError(f"변이 표기를 읽을 수 없습니다: '{x}' (예: 7226G 또는 C7226G)")
+        out.append((int(m[1]), m[2]))
+    return list(dict.fromkeys(out))
+
+
+def spread(run: dict, view: str = "lineage", bin_: str = "auto", outbreak: str = "", min_n: int = 2, lineages=(), countries=(), sites=()) -> dict:
     """The data of the Gantt-like picture. Rows are lineages (view 'lineage') or defining SNPs (view 'mutation'); each row has per-country sub-rows with counts per
     period, the first / last collection date and the number of genomes. `bin_`: 'week', 'month' or 'auto' (week when the exact-day genomes give at least two per occupied
     country-week on average)."""
     gs = _genomes(run)
     ob_counts = Counter(g["outbreak"] for g in gs if g["outbreak"])
     outbreak = outbreak or (ob_counts.most_common(1)[0][0] if ob_counts else "")
-    gs = [g for g in gs if g["outbreak"] == outbreak]
+    if sites:
+        view = "sites"                                            # chosen mutations (positions of the run's own reference): every genome of the run, whatever its outbreak
+        min_n = 1
+    else:
+        gs = [g for g in gs if g["outbreak"] == outbreak]
     if lineages:
         gs = [g for g in gs if g["lineage"] in set(lineages)]
     if countries:
@@ -331,7 +347,23 @@ def spread(run: dict, view: str = "lineage", bin_: str = "auto", outbreak: str =
     dated = [g for g in gs if g["kind"]]
     rows_def: list[tuple[str, dict]] = []                     # (key, info) in the order shown
     info: dict[str, dict] = {}
-    if view == "mutation":
+    if view == "sites":
+        by_site: dict[tuple[int, str], list] = defaultdict(list)
+        meta: dict[tuple[int, str], dict] = {}
+        ids = {g["id"]: g for g in dated}
+        want_s = set(sites)
+        for r in mutprofile._load_mutations(run):
+            k = (int(r["pos"]), r["alt"].upper())
+            if k in want_s and r["sample"] in ids:
+                by_site[k].append(ids[r["sample"]])
+                meta.setdefault(k, r)
+        for k in sites:
+            r = meta.get(k, {})
+            key = f"{k[0]}{k[1]}"
+            info[key] = {"key": key, "label": f"{r.get('ref', '')}{k[0]}{k[1]}", "by": "", "gene": r.get("gene", ""), "aa": r.get("aa_change", ""), "effect": r.get("effect", ""), "snps": []}
+            rows_def.append((key, info[key]))
+        groups = {f"{k[0]}{k[1]}": by_site.get(k, []) for k in sites}
+    elif view == "mutation":
         if not defs:
             raise ValueError("정의 파일이 없습니다. 먼저 '정의 받기'를 눌러 lineage-designation을 받아 주세요.")
         ncname, ncseq, cds = nc_reference()

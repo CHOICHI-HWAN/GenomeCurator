@@ -915,13 +915,15 @@ def create_app(scheduler: bool = True) -> FastAPI:
         return render(request, "spread.html", nav="res", run=r)
 
     @app.get("/api/analyses/{rid}/spread")
-    def api_analysis_spread(rid: int, view: str = "lineage", bin: str = "auto", outbreak: str = "", min_n: int = 2, lineage: str = "", country: str = ""):
-        """Gantt-like data: lineages (or defining SNPs) x countries x ISO week / month for a mutation-profile run's dataset."""
+    def api_analysis_spread(rid: int, view: str = "lineage", bin: str = "auto", outbreak: str = "", min_n: int = 2, lineage: str = "", country: str = "", sites: str = ""):
+        """Gantt-like data: lineages (or defining SNPs) x countries x ISO week / month for a mutation-profile run's dataset. `sites` (`7226G,18850C`, positions of the run's reference):
+        the carriers of those mutations instead."""
         r = nextstrain.get_run(rid)
         if not r or r["tool"] != "mutprofile" or r["status"] != "done":
             return JSONResponse({"error": "finished mutation-profile run not found"}, 404)
         try:
-            return lineages.spread(r, view if view in ("lineage", "mutation") else "lineage", bin, outbreak, max(1, min_n), [x for x in lineage.split(",") if x], [x for x in country.split(",") if x])
+            return lineages.spread(r, view if view in ("lineage", "mutation") else "lineage", bin, outbreak, max(1, min_n), [x for x in lineage.split(",") if x], [x for x in country.split(",") if x],
+                                   lineages.parse_sites(sites) if sites else ())
         except (ValueError, RuntimeError) as e:
             return JSONResponse({"error": str(e)}, 400)
 
@@ -1060,7 +1062,7 @@ def create_app(scheduler: bool = True) -> FastAPI:
         r = nextstrain.get_run(rid)
         if not r or r["tool"] != "mutprofile" or r["status"] != "done":
             return JSONResponse({"error": "finished mutation-profile run not found"}, 404)
-        return render(request, "novel.html", nav="res", run=r)
+        return render(request, "novel.html", nav="res", run=r, runref=mutprofile.summary(r).get("reference", ""))
 
     @app.get("/api/analyses/{rid}/novel")
     def api_analysis_novel(rid: int, window_days: int = 120, min_size: int = 3, max_n: float = 1.0, homoplasy: int = 0):
