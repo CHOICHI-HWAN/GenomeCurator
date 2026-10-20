@@ -2733,3 +2733,19 @@ def test_vocab_editing_decisions_land_in_the_user_dictionary(tmp_path, monkeypat
     assert any(e["term"] == "Rattus fantasticus" for e in c.get("/api/vocab/terms", params={"field": "host_name", "q": "rattus"}).json())
     assert c.post("/api/vocab/remove", json={"field": "host_name", "term": "Rattus fantasticus"}).json() == {"removed": True}
     assert c.get("/api/vocab/terms", params={"field": "nonsense"}).status_code == 400
+
+
+def test_consensus_mask_marks_only_columns_where_aligners_disagree(tmp_path):
+    from genomecurator import aligned
+    ref = "ACGTACGTACGTACGTACGT"
+    (tmp_path / "ref.fa").write_text(f">r\n{ref}\n")
+    def mut(s, i, b):
+        return s[:i] + b + s[i + 1:]
+    sq = {"g1": mut(ref, 4, "T"), "g2": mut(ref, 4, "T"), "g3": mut(ref, 4, "T"), "g4": mut(mut(ref, 9, "N"), 12, "C")}
+    nc = {"g1": ref, "g2": ref, "g3": ref, "g4": mut(ref, 9, "C")}                                  # column 5: three genomes differ; 10: N vs base = unknown, not a disagreement; 13: only g4 differs
+    (tmp_path / "sq.fa").write_text("".join(f">{k}\n{v}\n" for k, v in sq.items()))
+    (tmp_path / "nc.fa").write_text("".join(f">{k}\n{v}\n" for k, v in nc.items()))
+    d = aligned.disagreement(tmp_path / "sq.fa", tmp_path / "ref.fa", tmp_path / "nc.fa", tmp_path / "ref.fa")
+    assert d["columns"] == {5: 3, 13: 1} and d["n"] == 4
+    assert aligned.consensus_mask(d, 3) == [(5, 5)] and aligned.consensus_mask(d, 1) == [(5, 5), (13, 13)]
+    assert aligned.mask_bed([(5, 5), (13, 14)], "r") == "r\t4\t5\nr\t12\t14\n"

@@ -99,3 +99,33 @@ def reproject(aln_path, aln_ref_fa, target_fa, ids: set | None = None):
         out = np.full(len(tseq), ord("N"), dtype=np.uint8)
         out[ts - 1] = np.frombuffer(seq.upper().encode(), dtype=np.uint8)[qs - 1]
         yield name, out.tobytes().decode()
+
+
+def disagreement(squirrel_aln, aln_ref_fa, other_aln, target_fa) -> dict:
+    """Where two aligners disagree, on the target reference's columns. `other_aln` is an alignment to the target itself (what Nextclade writes with `--output-fasta`).
+
+    -> {"columns": {pos: genomes}, "per_genome": {id: n columns}, "n": genomes compared, "length": target length}. A column counts for a genome only when both give A/C/G/T and they differ (N / gap = unknown, never a disagreement)."""
+    _n, tseq = mutprofile.read_fasta(Path(target_fa))
+    other = dict(read_alignment(other_aln))
+    cols = np.zeros(len(tseq), dtype=np.int64)
+    per: dict[str, int] = {}
+    for name, seq in reproject(squirrel_aln, aln_ref_fa, target_fa, set(other)):
+        o = other[name]
+        if len(o) != len(tseq):
+            raise ValueError(f"{name}: 비교할 정렬의 길이({len(o)})가 참조({len(tseq)})와 다릅니다.")
+        a = np.frombuffer(seq.encode(), dtype=np.uint8)
+        b = np.frombuffer(o.upper().encode(), dtype=np.uint8)
+        d = np.isin(a, ACGT) & np.isin(b, ACGT) & (a != b)
+        cols += d
+        per[name] = int(d.sum())
+    return {"columns": {int(i) + 1: int(c) for i, c in enumerate(cols) if c}, "per_genome": per, "n": len(per), "length": len(tseq)}
+
+
+def consensus_mask(dis: dict, min_genomes: int = 3) -> list[tuple[int, int]]:
+    """Columns where at least `min_genomes` genomes get a different base from the two aligners -> [(first, last)] 1-based runs, to be masked in the Nextstrain workflow (`mask.maskfile`)."""
+    return _runs(np.array(sorted(p for p, c in dis["columns"].items() if c >= min_genomes), dtype=np.int64))
+
+
+def mask_bed(runs: list[tuple[int, int]], seqid: str) -> str:
+    """BED (0-based, end-exclusive) text of 1-based runs, the format the workflow's `mask` rule reads."""
+    return "".join(f"{seqid}\t{a - 1}\t{b}\n" for a, b in runs)

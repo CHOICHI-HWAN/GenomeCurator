@@ -112,6 +112,13 @@ def _main(argv=None):
     vc = sub.add_parser("vocab", help="what the term dictionary would change in a virus's curated data (nothing is written)")
     vc.add_argument("name", help="the registered virus")
     vc.add_argument("--all", action="store_true", help="also list values that are already standard")
+    mk = sub.add_parser("mask-consensus", help="columns where Squirrel's and Nextclade's alignments disagree -> a BED for the Nextstrain workflow's mask.maskfile (nothing else is changed)")
+    mk.add_argument("squirrel_aln")
+    mk.add_argument("squirrel_ref", help="Squirrel's reference FASTA (PX667572 / NC_063383)")
+    mk.add_argument("nextclade_aln", help="Nextclade --output-fasta of the same genomes")
+    mk.add_argument("target_ref", help="the reference Nextclade aligned to (reference.fasta of its dataset)")
+    mk.add_argument("--min-genomes", type=int, default=3, help="mask a column when at least this many genomes disagree there (default 3)")
+    mk.add_argument("-o", "--out", default="", help="BED file to write (default: only a summary)")
     xc = sub.add_parser("exclude", help="leave genomes out of the final analysis dataset (nothing is deleted); --undo puts them back")
     xc.add_argument("name", help="the registered virus")
     xc.add_argument("ids", nargs="*", help="accessions (or private ids with --private)")
@@ -265,6 +272,17 @@ def _main(argv=None):
                     print(json.dumps(pathoplexus.build_package(w["id"], ids, args.terms, args.until, args.group_id), ensure_ascii=False, indent=2))
         except ValueError as e:
             raise SystemExit(str(e))
+    elif args.cmd == "mask-consensus":
+        from . import aligned, mutprofile
+        dis = aligned.disagreement(args.squirrel_aln, args.squirrel_ref, args.nextclade_aln, args.target_ref)
+        runs = aligned.consensus_mask(dis, args.min_genomes)
+        n = sum(b - a + 1 for a, b in runs)
+        worst = sorted(dis["per_genome"].items(), key=lambda x: -x[1])[:5]
+        print(f"{dis['n']}개 유전체 비교, 참조 길이 {dis['length']:,} — 마스크 {len(runs)}구간 {n}열 ({100 * n / dis['length']:.3f}%), 불일치가 가장 많은 유전체: " + ", ".join(f"{k}({v})" for k, v in worst))
+        if args.out:
+            seqid = mutprofile.read_fasta(__import__("pathlib").Path(args.target_ref))[0].split()[0]
+            __import__("pathlib").Path(args.out).write_text(aligned.mask_bed(runs, seqid), encoding="utf-8")
+            print("BED 저장:", args.out)
     elif args.cmd == "vocab":
         from . import vocab
         con = connect()

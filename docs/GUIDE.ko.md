@@ -559,3 +559,14 @@ MIT License. © 2026 CHOICHI-HWAN.
 * [NCBI Datasets](https://www.ncbi.nlm.nih.gov/datasets/) · [BV-BRC](https://www.bv-brc.org/) · [Pathoplexus](https://pathoplexus.org/) — 데이터를 내주는 고마운 곳들입니다. 요청 사이에 간격을 두는 이유입니다.
 * [Snippy](https://github.com/tseemann/snippy) — 초기 문서의 구성이 닮아 있다면 그 덕입니다. 변이 호출은 그쪽이 훨씬 잘합니다.
 * [Apache Superset](https://superset.apache.org/) — 분석 화면을 맡습니다.
+
+
+### Nextstrain 정렬의 합의 마스크
+
+원숭이두창에서 Nextclade 정렬에 오류가 있어도 워크플로(`nextclade3 run`)는 그대로 둡니다. 대신 Squirrel 정렬과 **어긋나는 열만 가립니다**.
+
+```bash
+python -m genomecurator mask-consensus <squirrel 정렬.aln.fasta.gz> <Squirrel 참조.fa> <nextclade 정렬.fasta> <워크플로 참조.fa> --min-genomes 3 -o mask.bed
+```
+
+그 BED를 데이터셋의 *추가 설정*에 `mask: {maskfile: /경로/mask.bed}`로 지정합니다. N·갭은 불일치로 세지 않습니다. clade I 1,145건에서 N≥3이면 14열(0.007%)이 가려집니다. 한계: `mpxv` 분할 빌드와 `QC_rare_mutations`는 계속 Nextclade 기준이고, 입력인 두 정렬 파일은 직접 준비해야 합니다(자동 실행 연결은 아직 없음).
