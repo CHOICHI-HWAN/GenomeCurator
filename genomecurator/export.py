@@ -159,9 +159,7 @@ def select(rows: list[dict], require_sequence: bool = True, min_length: int | No
         if completeness_in and r.get("completeness") not in completeness_in:
             continue
         if qc_not:
-            worst = max((qc.RANK.get(v["status"], 0) for v in r["_qc"].values()), default=-1)
-            names = {k for k, v in qc.RANK.items() if v == worst}
-            if names & set(qc_not):
+            if qc.overall({t: v["status"] for t, v in r["_qc"].items()}) in set(qc_not):
                 continue
         if clade and clade not in (r.get("clade"), (r["_qc"].get("nextclade") or {}).get("clade")):
             continue
@@ -331,13 +329,13 @@ def private_as_genome(rec: dict) -> dict:
     """A private genome as a row of the genome table / dashboard (same keys; clearly marked as private)."""
     row = private_row(rec)
     qcs = rec["qc"]
-    worst = max((qc.RANK.get(v["status"], 0) for v in qcs.values()), default=-1)
+    headline = qc.overall({t: v["status"] for t, v in qcs.items()})
     nc = qcs.get("nextclade") or {}
     return {"genome_id": "private:" + rec["id"], "accession": rec["id"], "genbank": rec["id"], "genome_name": "(비공개) " + (row["strain"] or rec["id"]), "strain": row["strain"],
             "genome_length": int(row["length"] or 0) or None, "genome_status": "Private", "completeness": "비공개", "ref_coverage": None,
             "collection_date": row["date"], "release_date": "", "isolation_country": row["country"], "geographic_location": ", ".join(x for x in (row["division"], row["location"]) if x),
             "host_name": row["host"], "clade": row["clade"], "lineage": row["lineage"], "outbreak": row["outbreak"], "submitter": row["institution"],
-            "has_fasta": "Yes", "has_sra": "No", "qc": ([k for k, v in qc.RANK.items() if v == worst] or ["미실행"])[0] if worst >= 0 else "미실행",
+            "has_fasta": "Yes", "has_sra": "No", "qc": headline or "미실행",
             "nc_clade": nc.get("clade"), "nc_lineage": nc.get("lineage"), "excluded": "포함", "excl_reason": "", "source_kind": "비공개", "is_private": True, "_prov": {}}
 
 

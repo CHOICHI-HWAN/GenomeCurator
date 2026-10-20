@@ -3036,3 +3036,13 @@ def test_pipeline_runs_the_steps_in_order_and_one_failure_does_not_stop_the_othe
     calls.clear()
     pipeline.run_all({"id": 1, "watch_id": 1, "name": "d"}, ["qc", "nextstrain"])
     assert calls == ["qc", "nextstrain"]
+
+
+def test_qc_headline_follows_the_tool_priority():
+    from genomecurator import qc
+    assert qc.PRIORITY[:3] == ("squirrel", "nextclade", "checkv")
+    assert qc.overall({"squirrel": "good", "nextclade": "bad", "checkv": "bad", "seqstats": "bad"}) == "good"          # Squirrel counts first
+    assert qc.overall({"nextclade": "mediocre", "checkv": "bad"}) == "mediocre"                                           # then Nextclade
+    assert qc.overall({"checkv": "bad", "seqstats": "good"}) == "bad"                                                      # CheckV before the built-in statistics
+    assert qc.overall({"squirrel": "error", "nextclade": "good"}) == "good"                                               # a tool that failed has no verdict
+    assert qc.overall({"squirrel": "error"}) == "error" and qc.overall({}) is None

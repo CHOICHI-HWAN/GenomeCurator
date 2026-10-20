@@ -23,6 +23,16 @@ from .db import audit, connect
 
 _log = log.get("qc")
 RANK = {"good": 0, "mediocre": 1, "bad": 2, "error": 3}
+PRIORITY = ("squirrel", "nextclade", "checkv", "seqstats")          # whose verdict counts first when the tools disagree: Squirrel > Nextclade > CheckV, then the built-in sequence statistics
+
+
+def overall(by_tool: dict) -> str | None:
+    """The QC status of a genome from its per-tool statuses (`by_tool` = {tool: status}): the verdict of the highest-priority tool that has a real result (a tool that errored has no verdict;
+    it only counts when nothing else has one). None when nothing was run. The statuses of the other tools stay visible - only the headline follows the priority."""
+    for t in PRIORITY:
+        if by_tool.get(t) in ("good", "mediocre", "bad"):
+            return by_tool[t]
+    return "error" if any(v == "error" for v in by_tool.values()) else None
 N_WARN, N_BAD = 1.0, 5.0              # % of N in the sequence
 IUPAC_WARN = 0.1                      # % of non-ACGTN ambiguity codes
 BATCH = 1500                          # sequences per nextclade call (bounded memory, visible progress)
@@ -595,16 +605,20 @@ def per_genome(watch_id: int) -> dict[str, dict]:
     con = connect()
     try:
         out: dict[str, dict] = {}
+        by: dict[str, dict] = {}
         for r in con.execute("SELECT accession, tool, status, clade, lineage FROM qc_result WHERE watch_id=? AND accession NOT LIKE 'private:%'", (watch_id,)):
-            d = out.setdefault(r["accession"], {"qc": "good"})
-            if RANK[r["status"]] > RANK[d["qc"]]:
-                d["qc"] = r["status"]
+            d = out.setdefault(r["accession"], {"qc": "good", "qc_worst": "good"})
+            by.setdefault(r["accession"], {})[r["tool"]] = r["status"]
+            if RANK[r["status"]] > RANK[d["qc_worst"]]:
+                d["qc_worst"] = r["status"]
             if r["tool"] == "nextclade":
                 d.update(nc_status=r["status"], nc_clade=r["clade"], nc_lineage=r["lineage"])
             elif r["tool"] == "seqstats":
                 d["stats_status"] = r["status"]
             else:                                                    # squirrel, checkv: counted in the worst status above, kept apart for the detail panel
                 d[r["tool"] + "_status"] = r["status"]
+        for acc, tools in by.items():
+            out[acc]["qc"] = overall(tools) or "good"                 # the headline follows the tool priority (squirrel > nextclade > checkv); qc_worst keeps the worst of all
         return out
     finally:
         con.close()

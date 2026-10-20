@@ -84,8 +84,7 @@ def matches(ds: dict, row: dict, genome: dict | None = None, key: str = "") -> b
         return False
     if r["qc_not"] and g.get("_qc"):
         from . import qc
-        worst = max((qc.RANK.get(v["status"], 0) for v in g["_qc"].values()), default=-1)
-        if {k for k, v in qc.RANK.items() if v == worst} & set(r["qc_not"]):
+        if qc.overall({t: v["status"] for t, v in g["_qc"].items()}) in set(r["qc_not"]):
             return False
     return True
 

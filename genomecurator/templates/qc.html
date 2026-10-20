@@ -10,6 +10,7 @@ Nextclade가 부른 clade/lineage는 소스 값과 <b>같으면</b> 아무 일�
  · 서열 통계: 내장
  · CheckV {% if checkv.ok %}<span style="color:var(--ok)">v{{ checkv.version }}</span> <span class="mut">(DB {{ checkv.db.split('/')[-1] }})</span>{% elif checkv.env %}<span style="color:var(--warn)">데이터베이스 없음</span> — <code>{{ checkv.how }}</code>{% else %}<span class="mut">없음</span> — <code>mamba env create -f variantcall/checkv.yml</code> 후 데이터베이스 받기(약 1.5 GB){% endif %}
  · Squirrel QC: 최근 끝난 Squirrel 실행의 판정을 QC 실행 때 함께 저장 (아래 카드)
+ <div class="mut" style="font-size:12.5px;margin-top:4px"><b>우선순위: Squirrel &gt; Nextclade &gt; CheckV</b> (그다음 내장 서열 통계). 한 유전체의 대표 QC 상태(유전체 표의 QC 열, 데이터셋 QC 제외 규칙)는 결과가 있는 가장 우선순위 높은 도구의 판정을 따릅니다. 다른 도구의 판정도 그대로 보이며 아무것도 숨기지 않습니다.</div>
 </div>
 
 <h3>바이러스별 상태</h3>
