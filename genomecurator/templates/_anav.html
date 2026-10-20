@@ -2,3 +2,9 @@
 {% set TABS = [('변이', [('snipit', '변이 그림'), ('heatmap', '변이 히트맵'), ('pca', '변이 묶음')]), ('계통·전파', [('spread', '타임라인·지도')]), ('통계·가설', [('insight', '변이 분석'), ('outbreak', '유행 분석'), ('novel', '신규 변이')])] %}
 <div class="anav"><div class="bc"><a href="/hub?dataset={{ run.dataset_id }}">분석 허브</a> › {{ run.dataset_name or '데이터셋' }} › 변이 프로파일 실행 <span title="{{ run.name }}">{{ run.started[:16].replace('T', ' ') }}</span> · <a href="/nextstrain?dataset={{ run.dataset_id }}">실행·이력</a></div>
 {% for g in TABS %}<div class="grp"><b>{{ g[0] }}</b>{% for t in g[1] %}<a href="/analysis/{{ run.id }}/{{ t[0] }}" class="{{ 'on' if t[0] == view }}">{{ t[1] }}</a>{% endfor %}</div>{% endfor %}</div>
+<script>
+gcCtx({dataset:{{ run.dataset_id }},name:{{ (run.dataset_name or '')|tojson }}});
+fetch('/api/analyses?dataset={{ run.dataset_id }}').then(r=>r.json()).then(l=>{const mp=l.filter(x=>x.tool==='mutprofile'&&x.status==='done');if(mp.length<2)return;const bc=document.querySelector('.anav .bc'),s=document.createElement('select');s.style.cssText='height:24px;font-size:12px;margin-left:8px';
+ s.title='같은 데이터셋의 다른 변이 프로파일 실행으로 바꿉니다';s.innerHTML=mp.map(x=>'<option value="'+x.id+'" '+(x.id==={{ run.id }}?'selected':'')+'>'+x.started.slice(0,16).replace('T',' ')+'</option>').join('');
+ s.onchange=()=>{location.href=location.pathname.replace(/\/analysis\/\d+\//,'/analysis/'+s.value+'/')};bc.appendChild(s)}).catch(()=>{});
+</script>

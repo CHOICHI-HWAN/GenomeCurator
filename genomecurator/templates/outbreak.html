@@ -2,6 +2,7 @@
 {% set view='outbreak' %}{% include "_anav.html" %}
 <div class="pagehead"><h2>유행 분석 <span class="mut" style="font-size:14px;font-weight:400">서브클러스터 · 크기 분포 · APOBEC3 누적 · 유전자 hotspot</span></h2><span class="mut">{{ run.name }}</span></div>
 <div class="help"><a href="https://doi.org/10.1080/22221751.2026.2746255" target="_blank" rel="noopener">Lee, Choi 외, <i>Emerg Microbes Infect</i> 2026</a>(한국 mpox 유행 분석)의 접근을 임의의 데이터셋에 적용합니다: 트리 토폴로지로 <b>유전체 서브클러스터</b>(5건 이상의 단계통군)를 나누고 가지 정의 변이를 보이며, 클러스터 크기의 <b>과분산</b>(포아송 대 음이항), <b>APOBEC3형 변이의 시간 누적</b>, 유전체별 변이 유형, <b>유전자별 변이 부담·hotspot·탐색용 dN/dS</b>를 계산합니다. 역학 정보(접촉 유형 등)와 저빈도 변이(Snippy/LoFreq)는 이 앱에 없어 제외했습니다.</div>
+<div class="caut">⚠ 서브클러스터와 dN/dS는 탐색용입니다. N 비율 상한을 풀면 APOBEC3 누적 추세가 달라집니다.</div>
 <div class="card" style="font-size:13px"><div style="display:flex;gap:14px;flex-wrap:wrap;align-items:end">
  <label title="이 크기 이상의 단계통군을 서브클러스터로">서브클러스터 최소 크기<br><input id="ms" type="number" min="2" value="5" style="width:70px"></label>
  <input id="hs" type="hidden" value="100">
@@ -79,6 +80,7 @@ function render(){let h='';const C=D.clusters,A=D.accumulation,S=D.spectrum,G=D.
   const rows=G.genes.filter(g=>g.ind||g.gene!=='(intergenic)').slice(0,50),mxE=Math.max(1,...rows.map(g=>g.ind?g.ind.events:0)),mxK=Math.max(1,...rows.map(g=>g.ind&&g.ind.per_kb?g.ind.per_kb:0));
   h+='<table><tr><th>유전자</th><th>기능</th><th>범주</th><th>독립 사건</th><th>건/kb</th><th>기대</th><th>보정 p</th><th>APOBEC3형</th><th>비동의 / 동의</th><th>dN/dS (탐색)</th><th></th><th>합산(참고)</th></tr>'+rows.map(g=>{const v=g.ind||{};return '<tr><td><b>'+esc(g.gene)+'</b> <span class="mut">'+esc(g.homolog)+'</span></td><td style="font-size:12px">'+esc(g.function)+'</td><td style="font-size:12px">'+esc(g.category)+'</td><td>'+(v.events!=null?bar(v.events,mxE,'#4e79a7',v.events):'-')+'</td><td>'+(v.per_kb!=null?bar(v.per_kb,mxK,'#e15759',v.per_kb):'-')+'</td><td>'+(v.expected??'-')+'</td><td>'+(v.p_bonferroni==null?'-':v.p_bonferroni<0.001?'< 0.001':v.p_bonferroni.toFixed(3))+'</td><td>'+(v.events?stk([[v.a3,'#d6249f','APOBEC3형'],[v.events-v.a3,'#bab0ac','그 외']],70)+' '+pc(v.a3/v.events):'-')+'</td><td>'+(v.events?stk([[v.nonsyn,'#2f6b3a','비동의'],[v.syn,'#a8d5a2','동의']],70)+' '+v.nonsyn+' / '+v.syn:'-')+'</td><td>'+(g.dnds&&g.dnds.ratio!=null?'<b style="color:'+(g.dnds.ratio>=1?'var(--bad)':'inherit')+'">'+g.dnds.ratio+'</b>':'<span class="mut">-</span>')+'</td><td>'+(g.hotspot_ind?'<b style="color:var(--bad)">hotspot</b>':'')+'</td><td class="mut">'+g.events.toLocaleString()+'</td></tr>'}).join('')+'</table><div class="mut" style="margin-top:4px">'+G.n_genes+'개 유전자 중 독립 사건이 많은 순 상위 50개 · 유전자 사이(intergenic)는 길이를 정할 수 없어 검정하지 않습니다</div>'}
  document.getElementById('root').innerHTML=h;document.getElementById('info').textContent='참조: '+(C.reference||G.reference||'')+' · 고정 변이 기준 '+pc(D.spectrum.fixed_share)+' · N 비율 '+(D.max_n==null||D.max_n>=1?'제한 없음':'≤ '+(D.max_n*100)+'%')+' · ITR 마스킹'}
+gcSyncN('mn');
 load();
 </script>
 {% endblock %}

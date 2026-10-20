@@ -4,6 +4,7 @@
 <div class="help"><b>변이 묶음</b>: 변이를 가진 유전체 집합이 얼마나 겹치는지(Jaccard)로 군집화합니다. 같은 가지의 변이는 한 묶음이 되고, 거의 같이 다니는 변이(몇몇 유전체만 N 등으로 빠짐)도 합쳐집니다. 변이를 묶는 데는 PCA보다 이쪽이 정확합니다.
 <b>유전체 PCA</b>: 각 유전체를 가진 변이로 배치한 그림입니다. 계통군이 덩어리로 보이고, 새 계통군 후보는 기존 덩어리에서 갈라져 나옵니다. 적재량은 어떤 변이가 그 축을 만드는지 알려 줍니다.
 <b>해석 주의</b>: "함께 나타남"은 <i>같은 가지에 있다</i>는 뜻이지 기능적 연관이나 선택압이 아닙니다. 계통과 무관하게 되풀이되는 변이(APOBEC3 hot spot 등)는 계통 축에서 벗어나 보입니다. 3건 미만 변이는 잡음이라 뺍니다.</div>
+<div class="caut">⚠ 함께 나타남 = 같은 가지에 있음이며 기능적 연관이나 선택압이 아닙니다.</div>
 <div class="card" style="font-size:13px"><div style="display:flex;gap:14px;flex-wrap:wrap;align-items:end">
  <label title="N 비율이 이보다 큰 유전체는 뺍니다(N 구간의 변이는 없음이 아니라 모름)">N 비율 상한<br><select id="mn"><option value="0.05">5% 이하</option><option value="0.01">1% 이하</option><option value="0.2">20% 이하</option><option value="1">제한 없음</option></select></label>
  <label title="이 수 미만의 유전체가 가진 변이는 뺍니다">최소 보유 유전체<br><input id="mc" type="number" min="2" value="3" style="width:70px"></label>
@@ -46,6 +47,7 @@ function render(){if(D.error||D.available===false){document.getElementById('root
  const top=c=>[...D.mutations].sort((a,b)=>Math.abs(b.loading[c])-Math.abs(a.loading[c])).slice(0,10);
  h+='<h3 style="margin-top:22px">4. 축을 만드는 변이 (적재량 상위)</h3><div style="display:flex;gap:18px;flex-wrap:wrap">'+[0,1,2].filter(c=>D.explained[c]!=null).map(c=>'<div><b>PC'+(c+1)+'</b> <span class="mut">'+pc(D.explained[c])+'</span><table style="margin-top:4px"><tr><th>변이</th><th>묶음</th><th>적재량</th></tr>'+top(c).map(m=>'<tr><td style="'+(m.apobec?'color:#d6249f;':'')+'font-weight:700">'+esc(m.label)+'<div class="mut" style="font-size:11px;font-weight:400">'+esc(m.gene||'')+' '+esc(m.aa||'')+'</div></td><td>'+m.group+'</td><td>'+bar(Math.abs(m.loading[c]),Math.max(...D.mutations.map(x=>Math.abs(x.loading[c]))),m.loading[c]>0?'#e15759':'#4e79a7',m.loading[c].toFixed(3))+'</td></tr>').join('')+'</table></div>').join('')+'</div>';
  document.getElementById('root').innerHTML=h}
+gcSyncN('mn');
 load();
 </script>
 {% endblock %}

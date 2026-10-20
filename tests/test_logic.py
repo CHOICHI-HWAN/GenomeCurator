@@ -2517,3 +2517,27 @@ def test_menu_groups_hub_and_result_tab_strip(tmp_path, monkeypatch):
         assert "{% set view='" + name + "' %}{% include \"_anav.html\" %}" in src, name
     anav = (pathlib.Path(web.__file__).parent / "templates" / "_anav.html").read_text(encoding="utf-8")
     assert all(f"('{v}'," in anav for v in ("snipit", "heatmap", "pca", "spread", "insight", "outbreak", "novel"))
+
+
+def test_page_scripts_have_no_syntax_errors_and_help_is_collapsible(tmp_path, monkeypatch):
+    """Every inline script of the analysis pages must parse (a raw newline inside a JS string once broke a page silently); needs node, skipped without it."""
+    import re, shutil, subprocess
+    node = shutil.which("node")
+    if not node:
+        import pytest
+        pytest.skip("node is not installed")
+    from pathlib import Path
+    from genomecurator import web
+    tdir = Path(web.__file__).parent / "templates"
+    for name in ("snipit", "heatmap", "pca", "spread", "insight", "outbreak", "novel", "hub", "base"):
+        html = (tdir / f"{name}.html").read_text(encoding="utf-8")
+        for k, body in enumerate(re.findall(r"<script>(.*?)</script>", html, re.S)):
+            if "{%" in body or "{{" in body:                    # Jinja inside: render-free check of the plain parts only
+                body = re.sub(r"\{\{.*?\}\}", "0", body, flags=re.S)
+                body = re.sub(r"\{%.*?%\}", "", body, flags=re.S)
+            f = tmp_path / f"{name}_{k}.js"
+            f.write_text(body, encoding="utf-8")
+            r = subprocess.run([node, "--check", str(f)], capture_output=True, text=True)
+            assert r.returncode == 0, f"{name} script {k}: {r.stderr[:300]}"
+    base = (tdir / "base.html").read_text(encoding="utf-8")
+    assert "function gcSyncN" in base.split("</head>")[0] and "function gcHelp" in base                           # the helpers the page scripts call are defined before them
