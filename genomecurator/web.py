@@ -643,6 +643,14 @@ def create_app(scheduler: bool = True) -> FastAPI:
             return JSONResponse({"error": str(e)}, 400)
 
     # ------------------------------------------------------------------------------------------------ Nextstrain analysis of a dataset
+    @app.get("/hub")
+    def analysis_hub_page(request: Request, dataset: int = 0, watch: int = 0):
+        """The landing page of the analyses: pick a dataset, see how its runs relate to the data today, and open every result view from one place."""
+        ds = datasets.get(dataset) if dataset else None
+        watches = _rows("SELECT id, name FROM watchlist ORDER BY name")
+        wid = ds["watch_id"] if ds else (watch or next((w["id"] for w in watches if "monkeypox" in w["name"].lower()), watches[0]["id"] if watches else 0))
+        return render(request, "hub.html", nav="hub", watches=watches, wid=wid, dsid=ds["id"] if ds else 0)
+
     @app.get("/nextstrain")
     def nextstrain_page(request: Request, dataset: int = 0, watch: int = 0):
         ds = datasets.get(dataset) if dataset else None
@@ -809,7 +817,7 @@ def create_app(scheduler: bool = True) -> FastAPI:
         r = nextstrain.get_run(rid)
         if not r or r["tool"] != "mutprofile" or r["status"] != "done":
             return JSONResponse({"error": "finished mutation-profile run not found"}, 404)
-        return render(request, "spread.html", nav="ns", run=r)
+        return render(request, "spread.html", nav="res", run=r)
 
     @app.get("/api/analyses/{rid}/spread")
     def api_analysis_spread(rid: int, view: str = "lineage", bin: str = "auto", outbreak: str = "", min_n: int = 2, lineage: str = "", country: str = ""):
@@ -827,7 +835,7 @@ def create_app(scheduler: bool = True) -> FastAPI:
         r = nextstrain.get_run(rid)
         if not r or r["tool"] != "mutprofile" or r["status"] != "done":
             return JSONResponse({"error": "finished mutation-profile run not found"}, 404)
-        return render(request, "insight.html", nav="ns", run=r)
+        return render(request, "insight.html", nav="res", run=r)
 
     @app.get("/api/analyses/{rid}/insight")
     def api_analysis_insight(rid: int, window_days: int = 120, min_carriers: int = 3, skip_apobec: int = 0, max_n: float = 0.05):
@@ -845,7 +853,7 @@ def create_app(scheduler: bool = True) -> FastAPI:
         r = nextstrain.get_run(rid)
         if not r or r["tool"] != "mutprofile" or r["status"] != "done":
             return JSONResponse({"error": "finished mutation-profile run not found"}, 404)
-        return render(request, "heatmap.html", nav="ns", run=r)
+        return render(request, "heatmap.html", nav="res", run=r)
 
     @app.get("/api/analyses/{rid}/heatmap")
     def api_analysis_heatmap(rid: int, group_by: str = "lineage", min_n: int = 3, max_n: float = 0.05, min_freq: float = 0.05, min_carriers: int = 2):
@@ -877,7 +885,7 @@ def create_app(scheduler: bool = True) -> FastAPI:
         r = nextstrain.get_run(rid)
         if not r or r["tool"] != "mutprofile" or r["status"] != "done":
             return JSONResponse({"error": "finished mutation-profile run not found"}, 404)
-        return render(request, "pca.html", nav="ns", run=r)
+        return render(request, "pca.html", nav="res", run=r)
 
     @app.get("/api/analyses/{rid}/pca")
     def api_analysis_pca(rid: int, max_n: float = 0.05, min_carriers: int = 3, merge: float = 0.15):
@@ -895,7 +903,7 @@ def create_app(scheduler: bool = True) -> FastAPI:
         r = nextstrain.get_run(rid)
         if not r or r["tool"] != "mutprofile" or r["status"] != "done":
             return JSONResponse({"error": "finished mutation-profile run not found"}, 404)
-        return render(request, "novel.html", nav="ns", run=r)
+        return render(request, "novel.html", nav="res", run=r)
 
     @app.get("/api/analyses/{rid}/novel")
     def api_analysis_novel(rid: int, window_days: int = 120, min_size: int = 3, max_n: float = 1.0, homoplasy: int = 0):
@@ -913,7 +921,7 @@ def create_app(scheduler: bool = True) -> FastAPI:
         r = nextstrain.get_run(rid)
         if not r or r["tool"] != "mutprofile" or r["status"] != "done":
             return JSONResponse({"error": "finished mutation-profile run not found"}, 404)
-        return render(request, "outbreak.html", nav="ns", run=r)
+        return render(request, "outbreak.html", nav="res", run=r)
 
     @app.get("/api/analyses/{rid}/outbreak")
     def api_analysis_outbreak(rid: int, min_size: int = 5, hotspot: int = 100, fixed: float = 0.9, max_n: float = 0.05):
@@ -928,7 +936,7 @@ def create_app(scheduler: bool = True) -> FastAPI:
         r = nextstrain.get_run(rid)
         if not r or r["tool"] != "mutprofile" or r["status"] != "done":
             return JSONResponse({"error": "finished mutation-profile run not found"}, 404)
-        return render(request, "snipit.html", nav="ns", run=r)
+        return render(request, "snipit.html", nav="res", run=r)
 
     @app.get("/api/analyses/{rid}/snipit")
     def api_analysis_snipit(rid: int, lineage: str = "", clade: str = "", gene: str = "", start: int = 0, end: int = 0, apobec: int = 0, hide_common: float = 0.0,
@@ -1248,7 +1256,7 @@ def create_app(scheduler: bool = True) -> FastAPI:
 
     @app.get("/analysis")
     def analysis_page(request: Request):
-        return render(request, "analysis.html", nav="ana", st=analysis.status())
+        return render(request, "analysis.html", nav="sup", st=analysis.status())
 
     @app.get("/api/superset/status")
     def api_superset_status():

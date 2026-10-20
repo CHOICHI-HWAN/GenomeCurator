@@ -1,4 +1,5 @@
 {% extends "base.html" %}{% block body %}
+{% set view='outbreak' %}{% include "_anav.html" %}
 <div class="pagehead"><h2>유행 분석 <span class="mut" style="font-size:14px;font-weight:400">서브클러스터 · 크기 분포 · APOBEC3 누적 · 유전자 hotspot</span></h2><span class="mut">{{ run.name }}</span></div>
 <div class="help"><a href="https://doi.org/10.1080/22221751.2026.2746255" target="_blank" rel="noopener">Lee, Choi 외, <i>Emerg Microbes Infect</i> 2026</a>(한국 mpox 유행 분석)의 접근을 임의의 데이터셋에 적용합니다: 트리 토폴로지로 <b>유전체 서브클러스터</b>(5건 이상의 단계통군)를 나누고 가지 정의 변이를 보이며, 클러스터 크기의 <b>과분산</b>(포아송 대 음이항), <b>APOBEC3형 변이의 시간 누적</b>, 유전체별 변이 유형, <b>유전자별 변이 부담·hotspot·탐색용 dN/dS</b>를 계산합니다. 역학 정보(접촉 유형 등)와 저빈도 변이(Snippy/LoFreq)는 이 앱에 없어 제외했습니다.</div>
 <div class="card" style="font-size:13px"><div style="display:flex;gap:14px;flex-wrap:wrap;align-items:end">

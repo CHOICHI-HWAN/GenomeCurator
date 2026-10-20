@@ -2494,3 +2494,26 @@ def test_lineage_heatmap_frequencies_defining_marks_and_gvf(tmp_path, monkeypatc
     assert sorted(z.namelist()) == ["X_annotated.gvf", "Y_annotated.gvf"]
     with __import__("pytest").raises(ValueError):
         heatmap.gvf({"dataset_id": 1}, "nope", "lineage", None)
+
+
+def test_menu_groups_hub_and_result_tab_strip(tmp_path, monkeypatch):
+    _qc_env(tmp_path, monkeypatch)
+    from fastapi.testclient import TestClient
+    from genomecurator import web
+    c = TestClient(web.create_app(scheduler=False))
+    home = c.get("/").text
+    assert home.count('<nav class="subnav">') == 1 and "변경 검토" in home and "정합성" in home                 # the active group's sub-tabs are shown
+    for url, group, tab in (("/genomes", "유전체", "유전체 표"), ("/datasets", "데이터셋", "내보내기"), ("/hub", "분석", "분석 허브"), ("/nextstrain", "분석", "실행·이력"),
+                            ("/pathoplexus", "제출·공유", "Superset"), ("/jobs", "시스템", "작업"), ("/analysis", "제출·공유", "Pathoplexus 제출")):
+        t = c.get(url).text
+        sub = t[t.index('<nav class="subnav">'):t.index("</nav>")]
+        assert f'<span class="sg">{group}</span>' in sub and tab in sub, url
+    assert c.get("/hub").status_code == 200 and 'id="jbadge"' in c.get("/hub").text                          # the jobs badge survives on every page
+    assert c.get("/analysis/999/snipit").status_code == 404                                                  # unknown runs are still refused
+    # the result pages carry the shared tab strip with every view
+    import pathlib
+    for name in ("snipit", "heatmap", "pca", "spread", "insight", "outbreak", "novel"):
+        src = (pathlib.Path(web.__file__).parent / "templates" / f"{name}.html").read_text(encoding="utf-8")
+        assert "{% set view='" + name + "' %}{% include \"_anav.html\" %}" in src, name
+    anav = (pathlib.Path(web.__file__).parent / "templates" / "_anav.html").read_text(encoding="utf-8")
+    assert all(f"('{v}'," in anav for v in ("snipit", "heatmap", "pca", "spread", "insight", "outbreak", "novel"))

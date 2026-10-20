@@ -37,6 +37,7 @@ It is for viruses only. Bacteria differ in record structure (multi-contig assemb
 
 All of it works on a saved *dataset*, keeps every run with what went into it, and tells you when the data has changed under the same ids (a content fingerprint, not only the id list). The external tools run as separate programs in their own conda environments.
 
+- **Analysis hub.** Pick a dataset and see all of its runs (and whether they still match today's data), then open every result view from one place; the menu is grouped into curation / genomes / datasets / analysis / submit and share / system.
 - **Nextstrain.** Run the Nextstrain mpox workflow on a dataset (config overlay and the dataset's own YAML settings handled for you), keep every run, see how each relates to the dataset today, open it in a local Auspice.
 - **Squirrel.** Alignment, sequence QC and an IQ-TREE tree with an HTML report; two passes so QC-flagged sequences stay out of the tree.
 - **Mutation profile.** Every SNV against the build's reference (NC_063383.1; the clade I build follows Nextstrain's KJ642613.1), with its **gene, codon, amino-acid change** and APOBEC3-type marks ([mutation_profile](https://github.com/insapathogenomics/mutation_profile)). Inverted terminal repeats are masked and a genome's N share can be limited, because both distort counts.

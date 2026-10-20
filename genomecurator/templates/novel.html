@@ -1,4 +1,5 @@
 {% extends "base.html" %}{% block body %}
+{% set view='novel' %}{% include "_anav.html" %}
 <div class="pagehead"><h2>신규 변이 탐색 <span class="mut" style="font-size:14px;font-weight:400">정의에 없는 변이를 공유하는 새 계통군</span></h2><span class="mut">{{ run.name }}</span></div>
 <div class="help">트리에서 <b>같은 가지를 공유하는 N건 이상의 유전체</b> 중, 그 가지에 <b>lineage-designation 정의에 없는 변이</b>가 있는 것을 <b>후보</b>로 찾습니다(위치는 NC_063383.1 좌표로 비교). 후보는 <span class="pill" style="background:#e15759">신규</span> 데이터의 가장 최근 날짜에서 N일 안에 처음 관찰, <span class="pill" style="background:#f28e2b">성장 중</span> 유전체의 절반 이상이 그 기간이거나 직전 기간보다 늘어남, <span class="pill" style="background:#bab0ac">정체</span> 그 외로 표시합니다.
 <b>후보는 가설입니다</b>: 트리는 지지도가 없는 IQ-TREE 한 번의 결과이고, 한 유전체에만 있는 변이(시퀀싱 오류·숙주 내 변이와 구별 불가)는 넣지 않았으며, 나라마다 시퀀싱 양이 달라 <i>처음 관찰</i>이 <i>처음 출현</i>은 아닙니다. 가장 최근 몇 달은 후보가 최소 크기에 아직 못 미쳐 <b>적게 보입니다</b>(검출 지연).</div>

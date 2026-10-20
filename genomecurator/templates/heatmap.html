@@ -1,4 +1,5 @@
 {% extends "base.html" %}{% block body %}
+{% set view='heatmap' %}{% include "_anav.html" %}
 <div class="pagehead"><h2>변이 히트맵 <span class="mut" style="font-size:14px;font-weight:400">lineage × 변이 · 자세히 보기</span></h2><span class="mut">{{ run.name }}</span></div>
 <div class="help">행은 <b>lineage</b>(또는 clade, 트리 서브클러스터), 열은 <b>변이</b>(유전체 위치 순, 간격은 같게)이고 <b>칸 색은 그 행의 유전체 중 변이를 가진 비율</b>입니다. 굵은 검정 테두리 = 그 lineage의 <b>정의 변이</b>(lineage-designation), 열 머리의 <span style="color:#d6249f;font-weight:700">분홍</span> = APOBEC3형. 위 유전자 막대의 색 띠는 유전자이며 누르면 그 유전자의 변이가 아래에 나옵니다. 칸에 마우스를 올리면 요약, 누르면 상세가 열립니다. 전체를 볼 때는 <a href="/analysis/{{ run.id }}/snipit">변이 그림</a>, 자세히 볼 때는 이 화면입니다. 개념은 <a href="https://github.com/cidgoh/VIRUS-MVP" target="_blank" rel="noopener">VIRUS-MVP</a>에서 가져왔습니다.</div>
 <div class="card" style="font-size:13px"><div style="display:flex;gap:12px;flex-wrap:wrap;align-items:end">
