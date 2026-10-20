@@ -11,6 +11,20 @@ from .db import audit_now, connect
 
 _log = log.get("web")
 _alert_cache = {"t": 0.0, "v": None}
+_STARTED = time.time()                    # when this server process started: code files newer than that are not in the running app yet
+_stale_cache = {"t": 0.0, "v": False}
+
+
+def code_is_newer_than_server() -> bool:
+    """True when a source or template file changed after this process started (the app does not reload itself): the screen then tells the user to restart. Checked at most every 20 s."""
+    if time.time() - _stale_cache["t"] > 20:
+        try:
+            root = Path(__file__).resolve().parent
+            newest = max((f.stat().st_mtime for pat in ("*.py", "templates/*.html", "resources/vocab/*.tsv") for f in root.glob(pat)), default=0)
+            _stale_cache.update(t=time.time(), v=newest > _STARTED + 1)
+        except OSError:
+            _stale_cache.update(t=time.time(), v=False)
+    return _stale_cache["v"]
 
 T = Jinja2Templates(directory=str(Path(__file__).parent / "templates"))
 
@@ -213,7 +227,7 @@ def create_app(scheduler: bool = True) -> FastAPI:
         return _alert_cache["v"]
 
     def render(request, name, **ctx):
-        resp = T.TemplateResponse(request, name, {"badge": pending_count(), "schema_alert": schema_alert(), "traffic": _alert_cache.get("tl"), "app_version": __version__, "watch": ctx.get("watch") or request.cookies.get("gc_watch", ""), **ctx})
+        resp = T.TemplateResponse(request, name, {"badge": pending_count(), "schema_alert": schema_alert(), "traffic": _alert_cache.get("tl"), "app_version": __version__, "stale_code": code_is_newer_than_server(), "watch": ctx.get("watch") or request.cookies.get("gc_watch", ""), **ctx})
         if ctx.get("watch"):
             resp.set_cookie("gc_watch", str(ctx["watch"]), max_age=86400 * 365, samesite="lax")
         return resp

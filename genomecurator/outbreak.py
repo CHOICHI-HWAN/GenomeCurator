@@ -399,6 +399,86 @@ def independent_by_gene(run: dict) -> dict | None:
             "recurrent_sites": sorted(({"label": f"{r}{p}{a}", "branches": n} for (r, p, a), n in Counter(k for _i, k in muts).items() if n >= 3), key=lambda x: -x["branches"])}
 
 
+def _pois_cdf(k: int, mu: float) -> float:
+    """P(X <= k) for X ~ Poisson(mu)."""
+    if k < 0:
+        return 0.0
+    if mu <= 0:
+        return 1.0
+    term = math.exp(-mu)
+    cdf = term
+    for i in range(1, k + 1):
+        term *= mu / i
+        cdf += term
+    return min(1.0, cdf)
+
+
+def coldspot_model(events: list[tuple[str, int, str]], seq: str, regions: list[tuple[str, int, int, list[tuple[int, int]]]], itr: int, min_expected: float = 5.0, alpha: float = 0.05) -> list[dict]:
+    """The core of the coldspot search, free of files so that it can be tested. `events` = [(ref, pos, alt)] independent mutation events, `seq` the sequence whose context is used (the tree's
+    root), `regions` = [(name, first, last, exons)] to test (exons = the spans counted; for a window just [(first, last)]), `itr` the bp at each end that are left out.
+
+    Mutations are not spread evenly: APOBEC3 events (TC>TT, GA>AA) land only on sites with that context. A region with few such sites would look cold under an even rate, so the expectation
+    uses two rates - events of APOBEC3 type per APOBEC3-context site and all other events per other site - and counts the sites of each class inside the region.
+    A region is a coldspot when it has fewer events than expected (lower-tail Poisson, Bonferroni over the regions tested), at least `min_expected` were expected (otherwise zero is not
+    surprising) and p < alpha."""
+    L = len(seq)
+    lo, hi = itr + 1, L - itr                                   # 1-based interior
+    a3site = lambda p: (seq[p - 1] == "C" and p >= 2 and seq[p - 2] == "T") or (seq[p - 1] == "G" and p < L and seq[p] == "A")
+    ev = [(r, p, a) for r, p, a in events if lo <= p <= hi]
+    ev_a3 = sum(1 for r, p, a in ev if insight._apo_branch(r, a, p, seq))
+    ev_other = len(ev) - ev_a3
+    n_a3 = sum(1 for p in range(lo, hi + 1) if a3site(p))
+    n_other = (hi - lo + 1) - n_a3
+    rate_a3 = ev_a3 / n_a3 if n_a3 else 0.0
+    rate_other = ev_other / n_other if n_other else 0.0
+    out = []
+    for name, first, last, exons in regions:
+        spans = [(max(a, lo), min(b, hi)) for a, b in exons if min(b, hi) >= max(a, lo)]
+        ln = sum(b - a + 1 for a, b in spans)
+        if ln < 1:
+            continue
+        sa3 = sum(1 for a, b in spans for p in range(a, b + 1) if a3site(p))
+        exp = rate_a3 * sa3 + rate_other * (ln - sa3)
+        k = sum(1 for r, p, a in ev if any(x <= p <= y for x, y in spans))
+        p_low = _pois_cdf(k, exp)
+        out.append({"name": name, "first": first, "last": last, "length": ln, "events": k, "expected": round(exp, 2), "per_kb": round(k / ln * 1000, 2), "a3_sites": sa3, "p": p_low})
+    n = max(1, len(out))
+    for x in out:
+        x["p_bonferroni"] = min(1.0, x["p"] * n)
+        low = x["expected"] >= min_expected and x["events"] < x["expected"]
+        x["coldspot"] = bool(low and x["p_bonferroni"] < alpha)
+        x["nominal"] = bool(low and x["p"] < alpha and not x["coldspot"])                  # below chance without the correction for the number of regions tested: a lead, not a finding
+    return out
+
+
+def coldspots(run: dict, window: int = 10000) -> dict | None:
+    """Regions with significantly **fewer** independent mutation events than expected: genes (CDS) and, to catch non-coding stretches, windows of `window` bp. Same events as the hotspot
+    search (each event once per tree branch, ITRs left out); the expectation takes the APOBEC3 sequence context into account (see `coldspot_model`). A coldspot is where mutations are
+    rarer than chance - consistent with constraint (purifying selection) or a region that is hard to mutate - not proof of function."""
+    tree, rootseq, nsrun = _tree(run)
+    if not tree:
+        return None
+    refname, refseq, cds = _tree_reference(nsrun)
+    b = insight._tree_branches(run)
+    if not b or not refseq:
+        return None
+    _root, L, muts = b
+    seq = rootseq or refseq
+    events = [m for _internal, m in muts]
+    genes = [(c["gene"], min(a for a, _ in c["exons"]), max(e for _, e in c["exons"]), c["exons"]) for c in cds]
+    wins = [(f"{s}-{min(s + window - 1, L)}", s, min(s + window - 1, L), [(s, min(s + window - 1, L))]) for s in range(1, L + 1, window)]
+    g_rows = coldspot_model(events, seq, genes, mutprofile.ITR_BP)
+    w_rows = coldspot_model(events, seq, wins, mutprofile.ITR_BP)
+    cat = categories()
+    for x in g_rows:
+        k = cat.get(x["name"], {})
+        x["function"], x["category"] = k.get("function", ""), k.get("category", "")
+    g_rows.sort(key=lambda x: (x["p"], -x["expected"]))
+    w_rows.sort(key=lambda x: x["first"])
+    return {"reference": refname, "total_events": len(events), "genes": g_rows, "windows": w_rows, "n_cold_genes": sum(1 for x in g_rows if x["coldspot"]),
+            "n_cold_windows": sum(1 for x in w_rows if x["coldspot"]), "n_nominal_genes": sum(1 for x in g_rows if x["nominal"]), "window": window}
+
+
 def genes(run: dict, hotspot: int = 100, fixed: float = 0.9, max_n: float | None = None) -> dict:
     ref = mutprofile.summary(run).get("reference", "")
     fa, gff = mutprofile.reference_by_name(ref) if ref else (None, None)
@@ -472,7 +552,7 @@ def genes(run: dict, hotspot: int = 100, fixed: float = 0.9, max_n: float | None
 def analysis(run: dict, min_size: int = 5, hotspot: int = 100, fixed: float = 0.9, max_n: float | None = None) -> dict:
     out = {"max_n": max_n}
     for name, fn in (("clusters", lambda: clusters(run, min_size)), ("accumulation", lambda: accumulation(run, fixed, max_n)), ("spectrum", lambda: spectrum(run, fixed, max_n)),
-                     ("genes", lambda: genes(run, hotspot, fixed, max_n))):
+                     ("genes", lambda: genes(run, hotspot, fixed, max_n)), ("coldspots", lambda: coldspots(run))):
         try:
             out[name] = fn()
         except Exception as e:

@@ -2920,3 +2920,47 @@ def test_mutation_sites_for_the_timeline_and_the_shared_menu():
     assert "function gcMutMenu" in base.split("</head>")[0] and "function gcMenuClose" in base                    # defined in <head>: page scripts call it while the page is parsed
     assert "gcMutMenu(ev,RID" in (tdir / "heatmap.html").read_text(encoding="utf-8") and "gcMutMenu(ev,RID" in (tdir / "snipit.html").read_text(encoding="utf-8")
     assert "chipMenu" in (tdir / "novel.html").read_text(encoding="utf-8") and "sites=" in base
+
+
+def test_coldspot_model_uses_the_apobec_context_and_corrects_for_the_number_of_regions():
+    import random
+    from genomecurator import outbreak
+    rng = random.Random(3)
+    L, itr = 12000, 1000
+    seq = "".join(rng.choice("ACGT") for _ in range(L))
+    sites = list(range(itr + 1, L - itr + 1))
+    # 500 events spread evenly over the interior, none inside region B (a cold region), twice as many inside region C (a hot one)
+    B, C = (3001, 4000), (6001, 7000)
+    events = []
+    for p in rng.sample([x for x in sites if not (B[0] <= x <= B[1])], 500):
+        events.append((seq[p - 1], p, "A" if seq[p - 1] != "A" else "C"))
+    regions = [("A", 1001, 2000, [(1001, 2000)]), ("B", *B, [B]), ("C", *C, [C]), ("D", 8001, 9000, [(8001, 9000)])]
+    rows = {r["name"]: r for r in outbreak.coldspot_model(events, seq, regions, itr)}
+    assert rows["B"]["events"] == 0 and rows["B"]["expected"] > 5 and rows["B"]["coldspot"] is True and rows["B"]["p_bonferroni"] < 0.05
+    assert not rows["A"]["coldspot"] and not rows["D"]["coldspot"] and rows["C"]["coldspot"] is False
+    # too little expected: zero events is not surprising, so no coldspot however small p looks
+    tiny = outbreak.coldspot_model(events[:3], seq, [("T", 3001, 3100, [(3001, 3100)])], itr)[0]
+    assert tiny["expected"] < 5 and tiny["coldspot"] is False
+    # the ITR is left out: a region wholly inside it is not tested
+    assert outbreak.coldspot_model(events, seq, [("ITR", 1, 900, [(1, 900)])], itr) == []
+    assert outbreak._pois_cdf(0, 2.0) == pytest_approx(0.1353352832366127) and outbreak._pois_cdf(-1, 2.0) == 0.0
+
+
+def pytest_approx(x):
+    import pytest
+    return pytest.approx(x)
+
+
+def test_the_page_says_when_the_code_is_newer_than_the_running_server(tmp_path, monkeypatch):
+    import time
+    from fastapi.testclient import TestClient
+    from genomecurator import config, web
+    monkeypatch.setattr(config, "DATA_DIR", tmp_path)
+    monkeypatch.setattr(config, "DB_PATH", tmp_path / "t.db")
+    c = TestClient(web.create_app(scheduler=False))
+    monkeypatch.setitem(web._stale_cache, "t", 0.0)
+    monkeypatch.setattr(web, "_STARTED", time.time() + 3600)                       # started "in the future": nothing is newer
+    assert "앱을 다시 시작하세요" not in c.get("/").text
+    monkeypatch.setitem(web._stale_cache, "t", 0.0)
+    monkeypatch.setattr(web, "_STARTED", 1.0)                                       # started long ago: every file is newer
+    assert "앱을 다시 시작하세요" in c.get("/").text
