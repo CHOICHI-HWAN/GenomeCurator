@@ -3003,3 +3003,36 @@ def test_dataset_made_from_a_selection_has_exactly_those_genomes(tmp_path, monke
     page = c.get(f"/dataset/{ds['id']}")
     assert page.status_code == 200 and "dsAnalysis" in page.text and "makeDs" in c.get("/genomes?watch=1").text
     assert c.get(f"/api/datasets/{ds['id']}/nextstrain").status_code == 200
+
+
+def test_pipeline_runs_the_steps_in_order_and_one_failure_does_not_stop_the_others(tmp_path, monkeypatch):
+    from genomecurator import config, datasets, mutprofile, nextstrain, pipeline, squirrel, variantflow
+    from genomecurator.db import connect
+    monkeypatch.setattr(config, "DATA_DIR", tmp_path)
+    monkeypatch.setattr(config, "DB_PATH", tmp_path / "t.db")
+    con = connect()
+    con.execute("INSERT INTO watchlist(id,name,taxon) VALUES(1,'Orthopoxvirus monkeypox','Orthopoxvirus monkeypox')")
+    con.execute("INSERT INTO watchlist(id,name,taxon) VALUES(2,'Henipavirus nipahense','Henipavirus nipahense')")
+    con.commit(); con.close()
+    calls = []
+    monkeypatch.setattr(datasets, "run_qc", lambda ds, p, force: calls.append("qc") or {"public": {"sequences": 5}})
+    monkeypatch.setattr(squirrel, "run", lambda ds, cores, force, note, p: calls.append("squirrel") or {"id": 10, "reused": True})
+    monkeypatch.setattr(mutprofile, "run", lambda ds, cores, force, note, p: calls.append("mutprofile") or (_ for _ in ()).throw(RuntimeError("alignment failed")))
+    monkeypatch.setattr(nextstrain, "run", lambda ds, rt, cores, force, note, p: calls.append("nextstrain") or {"id": 12})
+    monkeypatch.setattr(variantflow, "available", lambda r: False)
+    monkeypatch.setattr(variantflow, "run_recorded", lambda r, cores, p: calls.append("variants") or {"run": 99, "genomes": 3, "from_cache": 1})
+    prog = []
+    out = pipeline.run_all({"id": 1, "watch_id": 1, "name": "d"}, None, False, None, lambda pct, m="": prog.append(pct))
+    assert calls == ["qc", "squirrel", "mutprofile", "nextstrain"]                                       # mutprofile failed: variants are skipped, nextstrain still runs
+    s = out["steps"]
+    assert s["qc"]["status"] == "done" and s["squirrel"]["status"] == "reused" and s["mutprofile"]["status"] == "error" and "alignment failed" in s["mutprofile"]["detail"]
+    assert s["variants"]["status"] == "skipped" and s["nextstrain"]["status"] == "done"
+    assert prog[-1] == 100 and prog == sorted(prog)
+    # a virus without analyses: QC only, and the user is told
+    calls.clear()
+    out2 = pipeline.run_all({"id": 2, "watch_id": 2, "name": "n"}, None, False, None)
+    assert calls == ["qc"] and list(out2["steps"]) == ["qc"] and any("QC만" in n for n in out2["notes"])
+    # chosen steps only
+    calls.clear()
+    pipeline.run_all({"id": 1, "watch_id": 1, "name": "d"}, ["qc", "nextstrain"])
+    assert calls == ["qc", "nextstrain"]

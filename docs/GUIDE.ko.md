@@ -630,4 +630,9 @@ snippy + lofreq 호출은 `data/variantcache/<레퍼런스>-<md5>-<snippy 버전
 
 ### QC 도구: 서열 통계 · Nextclade · Squirrel · CheckV
 
-**QC 실행**은 서열 통계와 Nextclade(데이터셋이 있을 때)에 더해 최근 끝난 **Squirrel 실행의 판정**을 유전체별로 저장하고(제외 권고 = 불량, 위치 마스킹 권고 = 주의), **CheckV**가 설치되어 있으면 완성도·오염도 평가합니다. CheckV 준비: `mamba env create -f variantcall/checkv.yml` 후 `checkv download_database data/checkv`(약 1.5 GB). 데이터베이스가 없으면 CheckV만 건너뛰고 나머지는 돕니다. 모두 정보일 뿐이며 아무것도 제거하지 않습니다.
+**QC 실행**은 서열 통계와 Nextclade(데이터셋이 있을 때)에 더해 최근 끝난 **Squirrel 실행의 판정**을 유전체별로 저장하고(제외 권고 = 불량, 위치 마스킹 권고 = 주의), **CheckV**가 설치되어 있으면 완성도·오염도 평가합니다. CheckV 준비: `mamba env create -f variantcall/checkv.yml` 후 `conda run -n gc-checkv checkv download_database data/checkv`(약 1.5 GB; 환경 안에서 실행해야 마지막 DIAMOND 색인 단계가 됩니다). 데이터베이스가 없으면 CheckV만 건너뛰고 나머지는 돕니다. 모두 정보일 뿐이며 아무것도 제거하지 않습니다.
+
+
+### 한 번에 분석
+
+데이터셋 화면의 분석 패널 맨 위 **한 번에 분석**에서 단계(QC, Squirrel, 변이 프로파일, 변이 호출, Nextstrain)를 체크하고 **▶ 선택한 단계 모두 실행**을 누르면 하나의 백그라운드 작업이 차례로 실행합니다(진행은 *작업* 탭). 입력이 그대로인 단계는 다시 계산하지 않고, 한 단계가 실패해도 나머지는 계속합니다. Nextstrain은 가장 오래 걸려 마지막입니다. 끝난 결과는 같은 패널의 줄마다 링크로 엽니다. 분석이 준비되지 않은 바이러스는 QC만 실행됩니다.

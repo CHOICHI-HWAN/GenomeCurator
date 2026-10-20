@@ -6,7 +6,7 @@ from fastapi import FastAPI, Form, Request
 from fastapi.responses import FileResponse, HTMLResponse, JSONResponse, RedirectResponse, Response, StreamingResponse
 from fastapi.templating import Jinja2Templates
 
-from . import support, variantcall, variantflow, __version__, analysis, completeness, datasets, exclusions, export, cooccur, geo, heatmap, vocab, insight, lineages, mutprofile, nextstrain, novel, outbreak, pathoplexus, private, qc, squirrel, config, curate, jobs, log
+from . import pipeline, support, variantcall, variantflow, __version__, analysis, completeness, datasets, exclusions, export, cooccur, geo, heatmap, vocab, insight, lineages, mutprofile, nextstrain, novel, outbreak, pathoplexus, private, qc, squirrel, config, curate, jobs, log
 from .db import audit_now, connect
 
 _log = log.get("web")
@@ -1155,6 +1155,20 @@ def create_app(scheduler: bool = True) -> FastAPI:
             r = nextstrain.run(ds, runtime, cores or None, bool(force), note, p)
             return {"redirect": f"/nextstrain?dataset={dsid}", "result": {"run": r["id"], "name": r["name"], "reused": bool(r.get("reused"))}}
         return start_job(work, f"Nextstrain 분석 · {ds['name']}", "nextstrain")
+
+    @app.post("/api/datasets/{dsid}/analyze_all")
+    def api_ds_analyze_all(request: Request, dsid: int, steps: str = "", force: int = 0, cores: int = 0):
+        """QC, Squirrel, mutation profile, variant calls and Nextstrain for this dataset, one after the other, as one background job (steps unchanged since the last run are reused)."""
+        if not _same_origin(request):
+            return JSONResponse({"error": "cross-site request refused"}, 403)
+        ds = datasets.get(dsid)
+        if not ds:
+            return JSONResponse({"error": "unknown dataset"}, 404)
+        want = [s for s in steps.split(",") if s in pipeline.STEPS] or None
+        todo, _notes = pipeline.plan(ds, want)
+        if not todo:
+            return JSONResponse({"error": "실행할 단계가 없습니다."}, 400)
+        return start_job(lambda p: {"redirect": f"/dataset/{dsid}", "result": pipeline.run_all(ds, want, bool(force), cores or None, p)}, f"전체 분석 · {ds['name']} ({len(todo)}단계)", "pipeline")
 
     @app.get("/api/analyses")
     def api_analyses(dataset: int = 0, watch: int = 0):

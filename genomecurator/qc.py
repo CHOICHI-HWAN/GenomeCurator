@@ -275,7 +275,7 @@ def checkv_status() -> dict:
         except Exception:
             ver = ""
     return {"ok": bool(pre and db), "env": bool(pre), "db": str(db) if db else "", "version": ver,
-            "how": "mamba create -n gc-checkv -c conda-forge -c bioconda checkv   then   " + f"{pre / 'bin' / 'checkv' if pre else 'checkv'} download_database {config.DATA_DIR / 'checkv'}   (about 1.5 GB)"}
+            "how": "mamba create -n gc-checkv -c conda-forge -c bioconda checkv   then   " + f"conda run -n gc-checkv checkv download_database {config.DATA_DIR / 'checkv'}   (about 1.5 GB; run it inside the activated gc-checkv environment, because the last step builds a DIAMOND index with the environment's own diamond)"}
 
 
 def parse_checkv_summary(path: Path) -> dict[str, dict]:
