@@ -4,7 +4,7 @@ import sys
 import threading
 import webbrowser
 
-from . import config, curate
+from . import config, curate, mutprofile
 from .db import connect
 
 
@@ -119,6 +119,14 @@ def _main(argv=None):
     mk.add_argument("target_ref", help="the reference Nextclade aligned to (reference.fasta of its dataset)")
     mk.add_argument("--min-genomes", type=int, default=3, help="mask a column when at least this many genomes disagree there (default 3)")
     mk.add_argument("-o", "--out", default="", help="BED file to write (default: only a summary)")
+    vc2 = sub.add_parser("variantcall", help="call SNVs of the genomes of a FASTA with snippy (--ctgs) and lofreq and, with --squirrel-aln/--nextclade-aln, compare with those alignments (nothing is masked or removed)")
+    vc2.add_argument("fasta")
+    vc2.add_argument("ref", help="reference FASTA (the workflow's, e.g. KJ642613.1 for clade I)")
+    vc2.add_argument("--limit", type=int, default=0, help="only the first N genomes")
+    vc2.add_argument("--squirrel-aln", default="")
+    vc2.add_argument("--squirrel-ref", default="")
+    vc2.add_argument("--nextclade-aln", default="", help="Nextclade --output-fasta on the same reference")
+    vc2.add_argument("-o", "--out", default="", help="TSV of every variant and which callers found it")
     xc = sub.add_parser("exclude", help="leave genomes out of the final analysis dataset (nothing is deleted); --undo puts them back")
     xc.add_argument("name", help="the registered virus")
     xc.add_argument("ids", nargs="*", help="accessions (or private ids with --private)")
@@ -283,6 +291,35 @@ def _main(argv=None):
             seqid = mutprofile.read_fasta(__import__("pathlib").Path(args.target_ref))[0].split()[0]
             __import__("pathlib").Path(args.out).write_text(aligned.mask_bed(runs, seqid), encoding="utf-8")
             print("BED 저장:", args.out)
+    elif args.cmd == "variantcall":
+        from . import aligned, mutprofile, variantcall
+        P = __import__("pathlib").Path
+        st = variantcall.status()
+        if not st["ok"]:
+            print("환경이 없습니다:", {k: v["env"] for k, v in st.items() if isinstance(v, dict) and not v["ok"]}); return 1
+        res = variantcall.call_many(P(args.fasta), P(args.ref), limit=args.limit or None, progress=lambda i, n: print(f"\r{i}/{n}", end="", flush=True))
+        print()
+        callers = {t: {g: set(r[t]) for g, r in res.items()} for t in ("snippy", "lofreq")}
+        ids = set(res)
+        if args.squirrel_aln and args.squirrel_ref:
+            sv = aligned.snvs_vs_target(args.squirrel_aln, args.squirrel_ref, args.ref, ids)
+            callers["squirrel"] = {g: set() for g in ids if g in sv["gaps"]}
+            for g, pos, rf, alt in sv["snvs"]:
+                callers["squirrel"][g].add((pos, rf, alt))
+        if args.nextclade_aln:
+            rseq = mutprofile.read_fasta(P(args.ref))[1].upper()
+            nc = {}
+            for g, seq in aligned.read_alignment(args.nextclade_aln):
+                if g in ids:
+                    nc[g] = {(i + 1, rseq[i], b) for i, b in enumerate(seq.upper()) if b in "ACGT" and rseq[i] in "ACGT" and b != rseq[i]}
+            callers["nextclade"] = nc
+        c = variantcall.concordance(callers)
+        print(json.dumps(c["summary"], ensure_ascii=False), "callers:", ", ".join(c["callers"]))
+        for n in sorted({r["n"] for r in c["rows"]}):
+            print(f"  {n}개 도구가 호출한 변이: {sum(1 for r in c['rows'] if r['n'] == n):,}")
+        if args.out:
+            P(args.out).write_text("genome\tpos\tref\talt\tcalled_by\tn\tof\n" + "".join(f"{r['id']}\t{r['pos']}\t{r['ref']}\t{r['alt']}\t{','.join(r['by'])}\t{r['n']}\t{r['of']}\n" for r in c["rows"]), encoding="utf-8")
+            print("TSV 저장:", args.out)
     elif args.cmd == "vocab":
         from . import vocab
         con = connect()

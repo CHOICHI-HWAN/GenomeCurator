@@ -1,0 +1,8 @@
+# LoFreq (github.com/CSB5/lofreq, MIT): variant calling on snippy's BAM. Own environment, see snippy.yml.
+#   mamba env create -f variantcall/lofreq.yml          (the app finds it by name: GC_LOFREQ_ENV, default gc-lofreq)
+name: gc-lofreq
+channels:
+  - bioconda
+  - conda-forge
+dependencies:
+  - lofreq

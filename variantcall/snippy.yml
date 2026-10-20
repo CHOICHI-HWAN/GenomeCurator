@@ -1,0 +1,8 @@
+# snippy (github.com/tseemann/snippy, GPL-2.0): calls SNVs of an assembled genome (--ctgs) against a reference. Separate from lofreq: snippy 4.6.0 and lofreq cannot be installed together.
+#   mamba env create -f variantcall/snippy.yml          (the app finds it by name: GC_SNIPPY_ENV, default gc-snippy)
+name: gc-snippy
+channels:
+  - bioconda
+  - conda-forge
+dependencies:
+  - snippy=4.6.0

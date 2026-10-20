@@ -2749,3 +2749,15 @@ def test_consensus_mask_marks_only_columns_where_aligners_disagree(tmp_path):
     assert d["columns"] == {5: 3, 13: 1} and d["n"] == 4
     assert aligned.consensus_mask(d, 3) == [(5, 5)] and aligned.consensus_mask(d, 1) == [(5, 5), (13, 13)]
     assert aligned.mask_bed([(5, 5), (13, 14)], "r") == "r\t4\t5\nr\t12\t14\n"
+
+
+def test_variantcall_vcf_parsing_and_concordance(tmp_path):
+    from genomecurator import variantcall
+    v = tmp_path / "x.vcf"
+    v.write_text("##fileformat=VCFv4.2\n#CHROM\tPOS\tID\tREF\tALT\tQUAL\tFILTER\tINFO\nr\t10\t.\tA\tG\t50\tPASS\tDP=17;AF=1\nr\t20\t.\tAT\tA\t50\tPASS\tDP=9\nr\t30\t.\tC\tT\t50\tPASS\tDP=20;AF=0.4\n")
+    p = variantcall.parse_vcf(v)
+    assert set(p) == {(10, "A", "G"), (30, "C", "T")} and p[(30, "C", "T")] == {"dp": 20, "af": 0.4}
+    c = variantcall.concordance({"a": {"g": {(10, "A", "G"), (30, "C", "T")}}, "b": {"g": {(10, "A", "G")}}, "c": {"h": set()}})
+    by = {r["pos"]: r for r in c["rows"]}
+    assert by[10]["n"] == 2 and by[10]["of"] == 2 and by[30]["by"] == ["a"] and by[30]["of"] == 2        # genome g was judged by a and b only
+    assert c["summary"]["all_agree"] == 1 and c["summary"]["only_one"] == 1

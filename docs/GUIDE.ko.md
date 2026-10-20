@@ -570,3 +570,14 @@ python -m genomecurator mask-consensus <squirrel 정렬.aln.fasta.gz> <Squirrel 
 ```
 
 그 BED를 데이터셋의 *추가 설정*에 `mask: {maskfile: /경로/mask.bed}`로 지정합니다. N·갭은 불일치로 세지 않습니다. clade I 1,145건에서 N≥3이면 14열(0.007%)이 가려집니다. 한계: `mpxv` 분할 빌드와 `QC_rare_mutations`는 계속 Nextclade 기준이고, 입력인 두 정렬 파일은 직접 준비해야 합니다(자동 실행 연결은 아직 없음).
+
+
+### 독립 변이 호출 (snippy + lofreq)
+
+정렬 기반 호출(Nextclade·Squirrel)과 **독립적인** 두 번째 의견입니다. 환경 만들기: `mamba env create -f variantcall/snippy.yml`, `mamba env create -f variantcall/lofreq.yml` (activation은 conda로).
+
+```bash
+python -m genomecurator variantcall 유전체.fasta 워크플로참조.fa --limit 30 --squirrel-aln … --squirrel-ref … --nextclade-aln … -o 변이.tsv
+```
+
+snippy `--ctgs`는 조립본을 20x 모의 리드로 자르므로 lofreq가 FASTA에서도 돌아갑니다(깊이 ≈17~20, AF는 0 또는 1). **조립본의 AF·깊이는 원래 시료의 값이 아니라** 소수 변이 판정에는 쓸 수 없습니다. 결과 TSV의 `called_by`가 변이를 찾은 도구이고, 도구들이 어긋나는 변이는 가리지 않고 눈으로 확인할 대상으로 표시합니다. 30건 점검에서 네 도구 일치가 81%였고, snippy/lofreq가 놓친 변이의 상당수는 Squirrel·Nextclade만 부른 것이라 ITR·반복 구간 등 모의 리드 정렬의 한계로 보이지만 원인 분류는 아직 안 했습니다. 아직 화면(변이 목록)에는 연결하지 않았습니다.
