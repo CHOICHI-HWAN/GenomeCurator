@@ -3126,3 +3126,33 @@ def test_beast_package_subsample_xml_and_posterior_reading(tmp_path):
 def math_sin(i):
     import math
     return math.sin(i * 0.9)
+
+
+def test_bets_xml_settings_and_verdict():
+    import random
+    import xml.etree.ElementTree as ET
+    import pytest
+    from genomecurator import beastprep
+    for bad in ({"n_tips": 5}, {"path_steps": 2}, {"step_chain": 10}, {"initial_chain": 100}, {"clock": "x"}):
+        with pytest.raises(ValueError):
+            beastprep.parse_bets_settings(bad)
+    s = beastprep.parse_bets_settings({})
+    assert s["path_steps"] >= 50 and s["step_chain"] >= 250000                                              # the defaults follow the recommendation for a reliable estimate
+    rng = random.Random(4)
+    names = [f"s{i}" for i in range(12)]
+    seqs = {n: "".join(rng.choice("ACGT") for _ in range(40)) for n in names}
+    dates = {n: 2024 + i / 10 for i, n in enumerate(names)}
+    ms = {"n_tips": 12, "chain_length": 30000, "samples": 300, "clock": "strict", "tree_prior": "exponential", "seed": 1, "threads": 0}
+    xml = beastprep.build_xml(seqs, dates, {}, ms, 1e-5, mle={"chain_length": 5000, "path_steps": 20, "alpha": 0.3}, proper=True)
+    root = ET.fromstring(xml)
+    mle = root.find("marginalLikelihoodEstimator")
+    assert mle.get("pathSteps") == "20" and mle.get("chainLength") == "5000" and mle.get("pathScheme") == "betaquantile"
+    assert root.find("pathSamplingAnalysis") is not None and root.find("steppingStoneSamplingAnalysis") is not None
+    assert "oneOnXPrior" not in xml and 'gammaPrior shape="0.001"' not in xml                                       # proper priors only: a marginal likelihood needs them
+    vague = beastprep.build_xml(seqs, dates, {}, ms, 1e-5)
+    assert "oneOnXPrior" in vague and "marginalLikelihoodEstimator" not in vague                                     # the ordinary analysis is unchanged
+    same = beastprep.build_xml(seqs, {n: 2026.0 for n in names}, {}, ms, 1e-5, mle={"chain_length": 5000, "path_steps": 20}, proper=True)
+    assert len({e.find("date").get("value") for e in ET.fromstring(same).find("taxa")}) == 1                          # the isochronous analysis: one date for every genome
+    assert [beastprep.bets_verdict(x)[0] for x in (12.0, 4.0, 2.0, 0.3, -3.0, None)] == ["strong", "positive", "weak", "none", "against", "unknown"]
+    log_line = "log marginal likelihood (using path sampling) from pathLikelihood.delta = -5003.54\nlog marginal likelihood (using stepping stone sampling) from pathLikelihood.delta = -5004.2\n"
+    assert float(beastprep._MLE_RE["ps"].search(log_line)[1]) == -5003.54 and float(beastprep._MLE_RE["ss"].search(log_line)[1]) == -5004.2

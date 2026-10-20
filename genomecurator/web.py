@@ -1250,6 +1250,34 @@ def create_app(scheduler: bool = True) -> FastAPI:
             return JSONResponse({"error": str(e)}, 400)
         return start_job(lambda p: {"redirect": f"/clock/{rid}", "result": beastprep.run_recorded(r, s, p)}, f"BEAST · {r['name']}", "beast")
 
+    @app.get("/api/clock/{rid}/bets")
+    def api_clock_bets(rid: int):
+        r = nextstrain.get_run(rid)
+        if not r or r["tool"] != "clock":
+            return JSONResponse({"error": "clock run not found"}, 404)
+        b = [x for x in nextstrain.list_runs(r["dataset_id"]) if x["tool"] == "bets" and str(x.get("note") or "") == f"clock:{rid}"]
+        return {"status": beastprep.status(), "defaults": beastprep.BETS_DEFAULTS, "runs": [{k: x[k] for k in ("id", "name", "status", "started", "finished", "error")} for x in b], "result": beastprep.bets_result(r)}
+
+    @app.post("/api/clock/{rid}/bets/run")
+    async def api_clock_bets_run(request: Request, rid: int):
+        """BETS (is there a temporal signal?): two BEAST analyses of the same model, with the real dates and with all genomes at one date, and the Bayes factor of their marginal likelihoods (a long background job)."""
+        if not _same_origin(request):
+            return JSONResponse({"error": "cross-site request refused"}, 403)
+        r = nextstrain.get_run(rid)
+        if not r or r["tool"] != "clock":
+            return JSONResponse({"error": "clock run not found"}, 404)
+        if not beastprep.status()["ok"]:
+            return JSONResponse({"error": beastprep.status()["how"]}, 400)
+        try:
+            body = await request.json()
+        except ValueError:
+            body = {}
+        try:
+            s = beastprep.parse_bets_settings(body.get("settings") if isinstance(body, dict) else None)
+        except ValueError as e:
+            return JSONResponse({"error": str(e)}, 400)
+        return start_job(lambda p: {"redirect": f"/clock/{rid}", "result": beastprep.run_bets_recorded(r, s, p)}, f"BETS · {r['name']}", "bets")
+
     @app.get("/api/clock/{rid}")
     def api_clock(rid: int):
         r = nextstrain.get_run(rid)
