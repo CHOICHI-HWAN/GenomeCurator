@@ -955,6 +955,22 @@ def create_app(scheduler: bool = True) -> FastAPI:
             return {"redirect": f"/analysis/{rid}/concordance", "result": res}
         return start_job(work, f"변이 호출(snippy+lofreq) · {r['name']}", "variantcall")
 
+    @app.get("/api/variantflow/pending")
+    def api_variantflow_pending():
+        return {"pending": [{"id": r["id"], "name": r["name"], "dataset": r["dataset_name"]} for r in variantflow.pending()], "ok": variantflow.status()["ok"]}
+
+    @app.post("/api/variantflow/all")
+    def api_variantflow_all(request: Request):
+        """snippy + lofreq (Snakemake flow) for every finished mutation-profile run that has no result yet, as one background job."""
+        if not _same_origin(request):
+            return JSONResponse({"error": "cross-site request refused"}, 403)
+        if not variantflow.status()["ok"]:
+            return JSONResponse({"error": variantflow.status()["how"]}, 400)
+        todo = variantflow.pending()
+        if not todo:
+            return JSONResponse({"error": "결과가 없는 변이 프로파일 실행이 없습니다 (모두 끝났습니다)."}, 400)
+        return start_job(lambda p: {"redirect": "/nextstrain", "result": variantflow.run_all(progress=p)}, f"변이 호출(Snakemake) · 전체 {len(todo)}개 실행", "variantflow")
+
     @app.post("/api/analyses/{rid}/variantflow")
     def api_analysis_variantflow(request: Request, rid: int):
         """The same snippy + lofreq calls through the Snakemake flow (resumable); kept beside the direct implementation until the flow is complete."""

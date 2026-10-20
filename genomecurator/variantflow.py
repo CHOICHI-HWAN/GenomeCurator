@@ -151,6 +151,27 @@ def run_recorded(run: dict, cores: int | None = None, progress=None, max_n: floa
     return {**res, "run": rid, "name": name}
 
 
+def pending() -> list[dict]:
+    """The finished mutation-profile runs (of every dataset) that have no variant-call result from the flow yet, oldest first."""
+    return [r for r in reversed(nextstrain.list_runs(limit=100000)) if r["tool"] == "mutprofile" and r["status"] == "done" and not available(r)]
+
+
+def run_all(cores: int | None = None, progress=None, max_n: float | None = 0.05) -> dict:
+    """The flow for every run in `pending()`, one after the other (each run is recorded and can be resumed; one failing run does not stop the others)."""
+    p = progress or (lambda *a: None)
+    todo = pending()
+    done, failed = [], []
+    for i, r in enumerate(todo):
+        try:
+            run_recorded(r, cores, lambda pct, m, i=i, r=r: p((i + pct / 100) * 100 / len(todo), f"[{i + 1}/{len(todo)}] {r['dataset_name'] or r['name']} - {m}"), max_n)
+            done.append(r["id"])
+        except Exception as e:
+            _log.warning("variant flow failed for run %s: %s", r["id"], e)
+            failed.append({"run": r["id"], "error": str(e)[:200]})
+    p(100, f"{len(done)} runs done" + (f", {len(failed)} failed" if failed else ""))
+    return {"runs_done": done, "runs_failed": failed, "pending_before": len(todo)}
+
+
 def _calls(path: Path) -> dict:
     out = {}
     if not path.exists():

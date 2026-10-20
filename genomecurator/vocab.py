@@ -174,27 +174,27 @@ def standardize_date(raw: str) -> Std:
     s = raw.strip()
     ov = date_overrides().get(s)
     if ov:
-        return Std(ov["standard"], "mapped", "date.decided", ov["note"] or "사용자가 정한 값")
+        return Std(ov["standard"], "mapped", "date.decided", ov["note"] or "decided by a person")
     if s.lower() in EMPTY:
-        return Std("", "empty", "date.empty", "비어 있음을 뜻하는 표기")
+        return Std("", "empty", "date.empty", "a marker meaning empty")
     if "/" in s and re.fullmatch(r"\d{4}-\d{2}(-\d{2})?/\d{4}-\d{2}(-\d{2})?", s):                  # ISO interval a/b
         a, b = s.split("/")
         (va, ka), (vb, kb) = _one_date(a), _one_date(b)
         if not va or not vb:
-            return Std(raw, "flagged", "date.range", "구간의 한쪽을 읽을 수 없음")
+            return Std(raw, "flagged", "date.range", "one end of the range cannot be read")
         if va[:7] == vb[:7]:
-            return Std(va[:7], "normalized", "date.range->month", f"구간 {s}을(를) 월 단위로 (원본은 standardization 기록에 있음)")
+            return Std(va[:7], "normalized", "date.range->month", f"range {s} reduced to the month (the original is kept in the standardization record)")
         if va[:4] == vb[:4]:
-            return Std(va[:4], "normalized", "date.range->year", f"구간 {s}을(를) 연 단위로 (월이 다름)")
-        return Std(raw, "flagged", "date.range", "여러 해에 걸친 구간 — 하나의 날짜로 줄이지 않고 그대로 둠")
+            return Std(va[:4], "normalized", "date.range->year", f"range {s} reduced to the year (the months differ)")
+        return Std(raw, "flagged", "date.range", "a range over several years - kept as it is, not reduced to one date")
     v, kind = _one_date(s)
     if kind == "exact":
         return Std(s if s == raw else s, "same" if s == raw else "normalized", "" if s == raw else "date.trim")
     if kind == "format":
         return Std(v, "normalized", "date.format", f"{s} -> {v}")
     if kind == "amb":
-        return Std(raw, "flagged", "date.ambiguous", "일/월 순서가 모호한 표기(예: 05/06/2024) — 그대로 둠")
-    return Std(raw, "flagged", "date.unreadable", "날짜로 읽을 수 없는 표기 — 그대로 둠")
+        return Std(raw, "flagged", "date.ambiguous", "day/month order is ambiguous (e.g. 05/06/2024) - kept as it is")
+    return Std(raw, "flagged", "date.unreadable", "cannot be read as a date - kept as it is")
 
 
 # ------------------------------------------------------------------------------------------------ term lookup
@@ -207,7 +207,7 @@ def standardize(field: str, raw, scope: str = "*") -> Std:
         return standardize_date(s)
     clean = " ".join(s.split())
     if clean.lower() in EMPTY:
-        return Std("", "empty", f"{FILES.get(field, field)}.empty", "비어 있음을 뜻하는 표기") if clean else Std("", "empty")
+        return Std("", "empty", f"{FILES.get(field, field)}.empty", "a marker meaning empty") if clean else Std("", "empty")
     d = load(field)
     if field in MULTI:
         return _standardize_multi(field, s, clean, d)
@@ -218,13 +218,13 @@ def standardize(field: str, raw, scope: str = "*") -> Std:
         probe = clean.split(":", 1)[0].strip()
     hit = d.get((scope, key(probe))) or d.get(("*", key(probe)))
     if not hit:
-        return Std(clean if clean != s else s, "unmapped", f"{FILES.get(field, field)}.unmapped", "사전에 없는 값 — 그대로 두고 검토 대상으로 표시")
+        return Std(clean if clean != s else s, "unmapped", f"{FILES.get(field, field)}.unmapped", "not in the dictionary - kept as it is and marked for review")
     term = hit["term"]
     note = hit["note"]
     if hit["flag"]:
         return Std(term, "flagged", f"{FILES[field]}.flag:{hit['flag']}", note or hit["flag"])
     if probe != clean:
-        return Std(term, "normalized", f"{FILES[field]}.split", f"'{clean}'에서 나라만 사용")
+        return Std(term, "normalized", f"{FILES[field]}.split", f"only the country of '{clean}' is used")
     if s == term:
         return Std(term, "same")
     if clean == term:
@@ -256,7 +256,7 @@ def _standardize_multi(field: str, s: str, clean: str, d: dict) -> Std:
         for x in parts:
             h = d.get(("*", key(x)))
             if not h:
-                return Std(clean if clean != s else s, "unmapped", f"{FILES[field]}.unmapped", f"사전에 없는 부분: '{x}'" if len(parts) > 1 else "사전에 없는 값 — 그대로 두고 검토 대상으로 표시")
+                return Std(clean if clean != s else s, "unmapped", f"{FILES[field]}.unmapped", f"part not in the dictionary: '{x}'" if len(parts) > 1 else "not in the dictionary - kept as it is and marked for review")
             hits.append(h)
     terms = list(dict.fromkeys(h["term"] for h in hits))
     val = "; ".join(terms)
@@ -332,7 +332,7 @@ def _write_user(field: str, rows: list[dict]) -> None:
     cols = COLUMNS[field]
     tmp = f.with_suffix(".tmp")
     with open(tmp, "w", encoding="utf-8", newline="") as fh:
-        fh.write("# 사용자 사전 — 이 앱의 용어 탭에서 더한 항목입니다. 같은 표준 용어는 앱에 들어 있는 사전을 덮어씁니다. 손으로 고쳐도 됩니다.\n")
+        fh.write("# User dictionary - entries added in the Terms tab. A term of the same name overrides the dictionary shipped with the app. You may edit it by hand.\n")
         w = csv.DictWriter(fh, fieldnames=cols, delimiter="\t", lineterminator="\n", extrasaction="ignore")
         w.writeheader()
         w.writerows(rows)
@@ -348,15 +348,15 @@ def _owner(field: str, k: str, scope: str):
 def add_term(field: str, term: str, synonyms=(), flag: str = "", note: str = "", scope: str = "*", extra: dict | None = None) -> dict:
     """Add a standard term (and synonyms) to the user's dictionary, or update it. Refuses a writing that already belongs to another term, so one writing never means two things."""
     if field not in COLUMNS or field == "collection_date":
-        raise ValueError("이 필드는 용어 사전이 아닙니다.")
+        raise ValueError("this field has no term dictionary")
     term = " ".join(str(term).split())
     if not term:
-        raise ValueError("표준 용어가 비었습니다.")
+        raise ValueError("the standard term is empty")
     syn = [" ".join(x.split()) for x in synonyms if x and x.strip()]
     for k in [term] + syn:
         o = _owner(field, key(k), scope)
         if o and o["term"] != term:
-            raise ValueError(f"'{k}'은(는) 이미 '{o['term']}'의 표기입니다. 먼저 그쪽에서 빼거나, 그 용어의 동의어로 두세요.")
+            raise ValueError(f"'{k}' is already a writing of '{o['term']}'. Remove it there first, or keep it as a synonym of that term.")
     rows = user_entries(field)
     cur = next((r for r in rows if r["term"] == term and (r.get("scope") or "*") == scope), None)
     if cur is None:
@@ -377,7 +377,7 @@ def add_synonym(field: str, raw: str, term: str, scope: str = "*") -> dict:
     """The writing `raw` is another way of writing the standard term `term` (which must exist)."""
     ts = {e["term"]: e for k, e in load(field).items() if k[0] in (scope, "*")}
     if term not in ts:
-        raise ValueError(f"'{term}'은(는) 사전에 없는 표준 용어입니다. 먼저 새 용어로 추가하세요.")
+        raise ValueError(f"'{term}' is not a standard term in the dictionary. Add it as a new term first.")
     e = ts[term]
     return add_term(field, term, [raw], e.get("flag", ""), e.get("note", ""), e.get("scope", "*"), {k: e.get(k, "") for k in ("taxon_id", "iso3") if e.get(k)})
 
@@ -387,9 +387,9 @@ def set_date(raw: str, standard: str, note: str = "") -> dict:
     raw, standard = raw.strip(), standard.strip()
     v, kind = _one_date(standard)
     if kind != "exact":
-        raise ValueError("표준 날짜는 YYYY, YYYY-MM, YYYY-MM-DD 형식의 올바른 날짜여야 합니다.")
+        raise ValueError("the standard date must be a valid YYYY, YYYY-MM or YYYY-MM-DD")
     if not raw:
-        raise ValueError("원본 표기가 비었습니다.")
+        raise ValueError("the original writing is empty")
     rows = [r for r in user_entries("collection_date") if r["raw"].strip() != raw]
     rows.append({"raw": raw, "standard": standard, "note": note.strip()})
     _write_user("collection_date", rows)

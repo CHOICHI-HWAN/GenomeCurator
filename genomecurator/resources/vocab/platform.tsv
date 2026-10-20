@@ -1,6 +1,6 @@
-# 시퀀싱 플랫폼 사전 — term(표준 모델 이름, 모델을 모르면 기술 이름) · platform(그 모델의 기술/제조사 = `platform` 열의 표준값) · synonyms(`|`) · flag(플랫폼이 아닌 값) · note
-# `sequencing_platform` 칸은 모델 수준의 표준 이름으로 맞추고(철자·표기만 통일, 모델 정보는 유지), `platform` 칸에 기술 수준 표준값을 따로 채웁니다.
-# 한 칸에 여러 개(`Illumina; Oxford Nanopore`)면 각 부분을 찾아 `; `로 다시 이어 붙입니다. data/vocab/platform.tsv에 같은 형식으로 쓰면 덮어쓰거나 보탤 수 있습니다.
+# Sequencing platform dictionary - term (standard model name, or the technology when the model is unknown) | platform (technology / manufacturer of that model = the standard value of the `platform` column) | synonyms (`|`) | flag (not a platform) | note
+# The `sequencing_platform` column is brought to the standard model-level name (spelling only, the model information is kept); the `platform` column gets the technology-level standard value.
+# A cell with several values (`Illumina; Oxford Nanopore`) is looked up part by part and joined again with `; `. A file of the same name in data/vocab/ (same format) overrides or extends this one.
 term	platform	synonyms	flag	note
 Illumina	Illumina	illumina|illumina sequencing		
 Illumina MiSeq	Illumina	miseq|illumina miseq|illumina mi seq|illumina miseq; paired		
@@ -13,17 +13,17 @@ Illumina HiSeq	Illumina	hiseq|illumina hiseq|hiseq 1500|illumina hiseq1500|illum
 Illumina GAII	Illumina	illumina gaii|gaii		
 Illumina iSeq 100	Illumina	illumina iseq 100|iseq 100|illumina iseq|iseq		
 Illumina MiniSeq	Illumina	illumina miniseq|miniseq		
-Oxford Nanopore	Oxford Nanopore	oxford nanopore|oxford nanopore technologies|oxford nanopore technology|nanopore|ont|oxford nanopre|nanopore r10|nanopore r9	모델을 모르는 Oxford Nanopore	
+Oxford Nanopore	Oxford Nanopore	oxford nanopore|oxford nanopore technologies|oxford nanopore technology|nanopore|ont|oxford nanopre|nanopore r10|nanopore r9	Oxford Nanopore, model unknown	
 Oxford Nanopore MinION	Oxford Nanopore	minion|oxford nanopore minion|oxford nanopore technologies minion|oxford nanopore technology minion|nanopore minion|minion (oxford nanopore technologies)|minion oxford nanopore|oxford naopore minion|oxford nanopore minion v9|minion mk1c|oxford nanopore technologies minion mk1c|oxford nanopore technology technology minion|nanopore minion r 9 flowcell		
 Oxford Nanopore GridION	Oxford Nanopore	gridion|oxford nanopore gridion|oxford nanopore technologies gridion|oxford nanopore technology gridion|nanopore gridion		
 Oxford Nanopore PromethION	Oxford Nanopore	promethion|oxford nanopore promethion|oxford nanopore technologies promethion|nanopore promethion		
 Oxford Nanopore Flongle	Oxford Nanopore	flongle|oxford nanopore flongle		
 Ion Torrent	Ion Torrent	iontorrent|ion torrent|ion torrent s5|ion s5|ion proton|ion gene studio s5|ion torrent pgm|ion pgm|ion gene studio		
 MGI	MGI	mgi|bgi|mgiseq		
-MGI DNBSEQ	MGI	dnbseq		모델 번호를 모르는 DNBSEQ
+MGI DNBSEQ	MGI	dnbseq		DNBSEQ, model number unknown
 MGI DNBSEQ-G99	MGI	mgi dnbseq-g99|mgi dnbseq g99|dnbseq-g99		
 MGI DNBSEQ-G400	MGI	mgi dnbseq-g400|dnbseq-g400		
 Sanger	Sanger	sanger|sanger dideoxy sequencing|sanger sequencing|capillary sequencing|abi 3730|abi3730		
 PacBio	PacBio	pacbio|pacific biosciences|pacbio sequel|pacbio sequel ii|pacbio revio|pacbio rs ii		
 454	454	454|roche 454|454 gs flx|roche 454 gs flx|454 life sciences|454 gs junior		
-WGS		wgs|whole genome sequencing|wgs (whole genome sequencing)	시퀀싱 방법(전장 서열)이지 플랫폼이 아님	
+WGS		wgs|whole genome sequencing|wgs (whole genome sequencing)	a sequencing approach (whole genome), not a platform	

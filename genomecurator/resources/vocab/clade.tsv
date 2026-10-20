@@ -1,11 +1,11 @@
-# clade 사전 — scope(바이러스 그룹: mpox, 또는 *=모든 바이러스) · term(표준) · synonyms · flag · note
-# 사전이 없는 바이러스의 clade 값은 손대지 않습니다. 사전에 없는 값은 원본 그대로 두고 '검토 필요'로 보입니다.
+# Clade dictionary - scope (virus group: mpox, or * = every virus) | term (standard) | synonyms | flag | note
+# The clade values of a virus without a dictionary are left alone. A value that is not in the dictionary is kept as it is and shown as "needs review".
 scope	term	synonyms	flag	note
-mpox	Ia	clade ia|clade 1a|1a|i a|clade i a|cladeia		
-mpox	Ib	clade ib|clade 1b|1b|i b|clade i b|cladeib		
-mpox	IIa	clade iia|clade 2a|2a|ii a|clade ii a|cladeiia		
-mpox	IIb	clade iib|clade 2b|2b|ii b|clade ii b|cladeiib		
-mpox	I	clade i|clade 1|cladei|1	broad	Ia/Ib를 구분하지 않은 상위 clade
-mpox	II	clade ii|clade 2|cladeii|2	broad	IIa/IIb를 구분하지 않은 상위 clade
-mpox	Ib/IIb	ib/iib|recombinant ib/iib	recombinant	재조합 — 한 clade로 표준화하지 않음
-mpox	unassigned	unclassified|undetermined|na	unassigned	clade 미배정
+mpox	Ia	clade ia|clade 1a|1a|i a|clade i a|cladeia
+mpox	Ib	clade ib|clade 1b|1b|i b|clade i b|cladeib
+mpox	IIa	clade iia|clade 2a|2a|ii a|clade ii a|cladeiia
+mpox	IIb	clade iib|clade 2b|2b|ii b|clade ii b|cladeiib
+mpox	I	clade i|clade 1|cladei|1	broad	the parent clade; Ia and Ib are not told apart
+mpox	II	clade ii|clade 2|cladeii|2	broad	the parent clade; IIa and IIb are not told apart
+mpox	Ib/IIb	ib/iib|recombinant ib/iib	recombinant	recombinant - not standardised to one clade
+mpox	unassigned	unclassified|undetermined|na	unassigned	no clade assigned

@@ -12,6 +12,8 @@ Virus Genome Metadata Curator(패키지 `genomecurator`, 이전 표시 이름 "G
 ## [Unreleased]
 
 ### 추가
+- **모든 실행에 변이 호출 돌리기**(호출 일치도 화면의 *모든 실행에 돌리기 (백그라운드)* 버튼, `POST /api/variantflow/all`): 결과가 아직 없는 모든 변이 프로파일 실행에 Snakemake 워크플로로 snippy + lofreq를 차례로 돌리는 백그라운드 작업 하나입니다(실행마다 기록되고 이어서 가능하며, 한 실행이 실패해도 나머지는 계속). 새 데이터는 실행마다 하나씩 그 실행의 버튼으로 돌립니다. 직접 구현 결과가 없으면 Snakemake 결과로 자동 전환하고, 허브와 실행 목록에도 진입 버튼을 달았습니다.
+- **용어 사전은 영어**: 내장 사전 파일(`resources/vocab/*.tsv`의 주석·비고·flag), 표준화된 값마다 저장되는 비고, 사용자 사전 머리글을 영어로 바꿨습니다. 주변 화면은 한국어 그대로입니다.
 - **`setup.sh`와 `test.sh`**: `./setup.sh`가 mamba로 conda 환경 6개를 만듭니다(`--core`, `--only a,b`, `--update`, `--dry-run`; 활성화는 `conda activate`로). `./test.sh unit`은 단위 테스트, `./test.sh check`는 설치가 실제로 동작하는지 점검(환경, 각 도구의 응답, 심어 둔 치환 3개를 찾아야 하는 Snakemake 변이 호출의 작은 실제 종단 실행), `./test.sh`는 둘 다 실행합니다. 없어도 되는 부분은 WARN, 필수 부분의 누락·고장은 FAIL입니다.
 - **Snakemake 워크플로의 호출 일치도**: 위치별 보고서(`concordance.json`)와 검토할 위치 BED(`review_sites.bed` — 도구들의 호출이 3개 이상 유전체에서 어긋나는 위치, **마스크가 아님**)가 Snakefile 규칙이 되었습니다. 계산은 순수 파이썬 모듈 하나(`flowlogic.py`)를 워크플로와 앱이 같이 써서 어긋날 수 없습니다(1,142건에서 워크플로 보고서와 앱 계산이 같음). 워크플로 실행은 `analysis_run`에 기록되어(도구 `variantflow`, 메모 `mutprofile:<id>`) 다른 실행과 함께 보입니다.
 - **라이선스: 이제부터 GPL-3.0 이상**(v0.2.0까지는 MIT, 그 릴리스는 받은 사람에게 MIT로 남음). `LICENSE`는 GPL-3.0 전문과 통상의 고지문이고, README·`docs/LICENSES.md`·`pyproject.toml`도 같게 고쳤습니다.
