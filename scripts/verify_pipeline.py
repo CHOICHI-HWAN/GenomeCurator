@@ -264,6 +264,7 @@ def main() -> int:
         rec("SKIP", "clock checks", "no finished clock run")
     planted_clock()
     planted_bets()
+    planted_adaptive()
 
     # ---- 6. a planted-mutation test with a known answer
     try:
@@ -327,6 +328,37 @@ def planted_clock() -> None:
         rd = float(mm[1]) if mm else None
         good = c["rate"] and abs(c["rate"] - rate) / rate < 0.15 and rd is not None and abs(rd - root_t) < 1.0
         ok(bool(good), "planted clock: TreeTime recovers a known rate and root date", f"{len(names)} tips; rate {c['rate']:.2e} (true {rate:.0e}), root {rd} (true {root_t}), R2 {c['r2']}")
+
+def planted_adaptive() -> None:
+    """Recovery test of the neutral baseline (docs/ADAPTIVE.md section 5): simulated settled-origin counts, 600 neutral and 600 protein-changing mutations drawn from the same distribution (the null: no
+    selection), plus 6 planted protein-changing mutations that arose independently five times. The planted ones should come out with q < 0.05, the null ones about 5% of the time or less."""
+    from genomecurator import mutprofile, origins
+    rnd = random.Random(11)
+    refseq = "A" * 4000
+    fp, tested, found = 0, 0, 0
+    orig_annotate = mutprofile.annotate
+    mutprofile.annotate = lambda pos, ref, alt, cds, seq: {"effect": "synonymous" if pos < 2000 else "nonsynonymous"}
+    try:
+        for seed in range(20):
+            rnd.seed(seed)
+            o = {}
+            pois = lambda lam: sum(1 for _ in range(int(lam * 20)) if rnd.random() < 0.05)      # about Poisson(lam)
+            for i in range(600):
+                o[(100 + i, "G")] = {"events": 0, "settled": pois(0.4), "singles": 0, "tips": 0, "lineages": {}, "countries": {}}
+                o[(2100 + i, "G")] = {"events": 0, "settled": pois(0.4), "singles": 0, "tips": 0, "lineages": {}, "countries": {}}
+            for i in range(6):
+                o[(3500 + i, "G")] = {"events": 5, "settled": 5, "singles": 0, "tips": 20, "lineages": {}, "countries": {}}
+            origins.neutral_baseline(o, refseq, [])
+            for (pos, _a), e in o.items():
+                if 2100 <= pos < 2700:
+                    tested += 1
+                    fp += e["q_neutral"] < 0.05
+                elif pos >= 3500:
+                    found += e["q_neutral"] < 0.05
+    finally:
+        mutprofile.annotate = orig_annotate
+    ok(found / (20 * 6) >= 0.9, "adaptive (planted): mutations with 5 independent origins come out above the neutral baseline", f"{found}/{20 * 6} recovered at q < 0.05")
+    ok(fp / tested <= 0.05, "adaptive (null): protein-changing mutations drawn from the neutral distribution are rarely called", f"{fp}/{tested} = {fp / tested:.1%} at q < 0.05 (expected <= 5%)")
 
 
 def planted_bets() -> None:

@@ -28,10 +28,10 @@ No study testing positive selection of clade Ib genes or recurrent mutations per
 | E2 | Recurrence: appears in several lineages that do not define it | replaced by E7 when a tree exists; lineage-name approximation only without a tree (on real data it counted ancestral mutations as recurring in 7 lineages) |
 | E3 | Geographic spread: >= 3 countries | implemented |
 | E4 | Protein change (non-synonymous / stop) | implemented |
-| E5 | Frequency: rare early, common now; share holds up | implemented, not corrected for sampling by country |
+| E5 | Frequency: rare early, common now; share holds up; **country-fixed logistic slope** (`trend.py`) | implemented; cannot correct sampling that changes inside a country |
 | E6 | Classes: ancestral (nearly all genomes), lineage-defining, APOBEC3-type | implemented, kept apart |
 | E7 | Number of independent origins on the tree | **implemented** (`origins.py`; only when the tree's reference is the run's reference) |
-| E8 | Neutral baseline: recurrence of synonymous / non-coding mutations | **not implemented** |
+| E8 | Neutral baseline: independent-origin distribution of synonymous / non-coding mutations (Poisson / negative binomial), BH q | **implemented** (`origins.neutral_baseline`; the tail is a fitted model, extrapolated) |
 | E9 | Linkage: separate mutations that travel together | partly (groups are shown, not split) |
 | E10 | Selection tests: dN/dS, site-wise | exploratory per-gene dN/dS only |
 
@@ -58,10 +58,10 @@ Keep **"adaptive candidate"** (never shorten to "adaptive mutation"); show per c
 
 ## 7. To do (priority order)
 1. ~~E7 independent origins (tree-based)~~ - done. On run 5 (clade Ib) few mutations arose independently twice or more and no non-APOBEC mutation was both persistent, protein-changing and recurrent (the lineage proxy had counted ancestral mutations as recurrent in 7 lineages)
-2. E8 neutral baseline with q values
-3. E5 country-stratified growth regression
-4. Evidence-tick UI; score as a sort aid
-5. Recovery test on simulated data in `./test.sh verify`
-6. E9 regularised regression for linked mutations (when data allow)
-7. E10 HyPhy input export
-8. Read the predecessor papers and tools in full; write the comparison table
+2. ~~E8 neutral baseline with q values~~ - done (Poisson / negative-binomial tail); no mutation reaches q < 0.05 on run 5
+3. ~~E5 country-stratified growth regression~~ - done (per mutation, shown as "adjusted rise" in the candidate table)
+4. ~~Evidence-tick UI; score as a sort aid~~ - done (columns persistence, recurrence, above neutral, spread, protein, rise, adjusted rise)
+5. ~~Recovery test on simulated data in `./test.sh verify`~~ - done (`planted_adaptive`: planted five-origin mutations recovered 120/120, null false positives 0/12000)
+6. E9 regularised regression for linked mutations - **not done** (linked groups are only marked; on the current data most candidates form one group, so there is little to separate)
+7. E10 HyPhy input export - **not done** (a codon alignment needs the Squirrel alignment's reference / annotation coordinates verified first)
+8. Read the predecessor papers and tools in full; write the comparison table - **not done** (the search was abstract level)

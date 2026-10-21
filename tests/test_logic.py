@@ -3480,7 +3480,7 @@ def test_independent_origins_count_settled_events_on_the_tree(monkeypatch):
     monkeypatch.setattr(nextstrain, "auspice_dir", lambda: type("P", (), {"__truediv__": lambda s, o: F()})())
     origins._CACHE.clear()
     o = origins.independent_origins({"id": 1})
-    assert o[(100, "T")] == {"events": 3, "settled": 2, "singles": 1, "tips": 6, "lineages": {"L1": 4, "L2": 2}, "countries": o[(100, "T")]["countries"]}
+    assert {k: o[(100, "T")][k] for k in ("events", "settled", "singles", "tips", "lineages")} == {"events": 3, "settled": 2, "singles": 1, "tips": 6, "lineages": {"L1": 4, "L2": 2}}
     assert o[(200, "G")]["settled"] == 1 and o[(200, "G")]["tips"] == 4 and o[(300, "A")]["settled"] == 0 and o[(300, "A")]["singles"] == 1
     monkeypatch.setattr(mutprofile, "summary", lambda run: {"reference": "OTHER"})
     origins._CACHE.clear()
@@ -3499,3 +3499,50 @@ def test_independent_origins_count_settled_events_on_the_tree(monkeypatch):
     one = mutgantt.adaptive_traits((1, "T"), cs, ms, pool, set(months[-6:]), meta, {}, row, 120, {"events": 1, "settled": 1, "singles": 0, "tips": 30}, True)
     assert rec["tier"] == "strong" and rec["origins"]["settled"] == 3 and one["tier"] != "strong" and rec["score"] - one["score"] == 3
     assert any("독립적으로 3번" in w for w in rec["why"]) and any("한 번만" in w for w in one["why"])
+
+
+def test_neutral_baseline_judges_recurrence_against_synonymous_mutations(monkeypatch):
+    from genomecurator import mutprofile, origins
+    # 60 neutral (synonymous) transitions: 54 never settled twice... 6 settled once; protein-changing: one settled 4 times, one settled once, one never
+    refseq = "A" * 3000
+    o = {}
+    for i in range(60):
+        o[(100 + i, "G")] = {"events": 1, "settled": 1 if i < 6 else 0, "singles": 0 if i < 6 else 1, "tips": 2, "lineages": {}, "countries": {}}
+    o[(1000, "G")] = {"events": 4, "settled": 4, "singles": 0, "tips": 12, "lineages": {}, "countries": {}}
+    o[(1001, "G")] = {"events": 1, "settled": 1, "singles": 0, "tips": 3, "lineages": {}, "countries": {}}
+    o[(1002, "G")] = {"events": 1, "settled": 0, "singles": 1, "tips": 0, "lineages": {}, "countries": {}}
+    monkeypatch.setattr(mutprofile, "annotate", lambda pos, ref, alt, cds, seq: {"effect": "synonymous" if pos < 1000 else "nonsynonymous"})
+    origins.neutral_baseline(o, refseq, [])
+    hi, one, none = o[(1000, "G")], o[(1001, "G")], o[(1002, "G")]
+    assert hi["class"] == "transition" and hi["neutral_n"] == 60
+    assert hi["p_neutral"] < 1e-3 and hi["q_neutral"] < 0.05                                 # no neutral mutation reached 4 origins: surprising
+    assert 0.05 < one["p_neutral"] < 0.2 and one["q_neutral"] > 0.05 and none["p_neutral"] == 1.0   # one origin is common among neutral mutations too
+    assert abs(origins._count_sf(2, 0.4, 0.4) - 0.0616) < 1e-3 and origins._count_sf(2, 0.4, 1.0) > origins._count_sf(2, 0.4, 0.4)   # overdispersion widens the tail
+    few = {(100 + i, "G"): {"events": 1, "settled": 0, "singles": 1, "tips": 0, "lineages": {}, "countries": {}} for i in range(5)}
+    few[(1000, "G")] = {"events": 3, "settled": 3, "singles": 0, "tips": 9, "lineages": {}, "countries": {}}
+    origins.neutral_baseline(few, refseq, [])
+    assert few[(1000, "G")]["p_neutral"] is None                                              # fewer than 20 neutral mutations of the class: no p value
+    assert o[(100, "G")]["p_neutral"] is None                                                # neutral mutations themselves are not tested
+
+
+def test_trend_holds_the_country_mix_fixed():
+    import random
+    from genomecurator import trend
+    rnd = random.Random(3)
+    ids, month_of, country_of, carriers_mix, carriers_real = [], {}, {}, set(), set()
+    for i in range(400):
+        c = "A" if i < 200 else "B"                                        # A sampled in months 0-5, B in months 6-11
+        m = rnd.randrange(0, 6) if c == "A" else rnd.randrange(6, 12)
+        s = f"g{i}"
+        ids.append(s)
+        month_of[s], country_of[s] = m, c
+        if rnd.random() < (0.1 if c == "A" else 0.7):                          # carrying depends on the country only: a rise that is just the country mix
+            carriers_mix.add(s)
+        if rnd.random() < 0.05 + 0.07 * m:                                      # carrying rises with time in both countries: a real rise
+            carriers_real.add(s)
+    ctx = trend.context(ids, month_of, country_of)
+    mix = trend.carrier_trend(carriers_mix, ctx)
+    real = trend.carrier_trend(carriers_real, ctx)
+    assert mix["lo"] < 0 < mix["hi"]                                          # the country mix explains it: the interval spans 0
+    assert real["lo"] > 0 and real["slope"] > 0.1
+    assert trend.carrier_trend({"g0"}, ctx) is None                           # too few carriers

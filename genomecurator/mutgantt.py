@@ -11,7 +11,7 @@ from collections import Counter, defaultdict
 
 import logging
 
-from . import continents, insight, lineages, mutprofile, origins, outbreak
+from . import continents, insight, lineages, mutprofile, origins, outbreak, trend
 
 _log = logging.getLogger("genomecurator.mutgantt")
 
@@ -63,7 +63,7 @@ def _definitional(meta: dict, s: str, introducers: list[str]) -> bool:
     return bool(names & set(introducers))
 
 
-def adaptive_traits(k, cs, ds_months, pool_by_month, recent, meta, dmap, row, n_pool=0, orig=None, have_tree=False) -> dict:
+def adaptive_traits(k, cs, ds_months, pool_by_month, recent, meta, dmap, row, n_pool=0, orig=None, have_tree=False, tr=None) -> dict:
     """Exploratory evidence that a mutation is *kept* by the virus, from the sampled genomes: it is seen in many months and still in the most recent ones, it was rare early and common now (a spread rather than an ancestral change), it turns up in several lineages that it does not
     define (an independent origin is likely) and in several countries, it changes the protein, and its share among the genomes sampled stays up. Points are added up; this ranks candidates, it does not
     show selection - a mutation that rides on a successful branch (hitchhiking) or sits in a heavily sampled place scores high as well, and the mutation's real age and origin are not known."""
@@ -96,6 +96,12 @@ def adaptive_traits(k, cs, ds_months, pool_by_month, recent, meta, dmap, row, n_
             if o["settled"] >= 2:
                 score += 2 + (1 if o["settled"] >= 3 else 0)
                 why.append(f"트리에서 독립적으로 {o['settled']}번 생김(각각 자손 2건 이상)")
+                qn = o.get("q_neutral")
+                if qn is not None and qn < 0.05:
+                    score += 1
+                    why.append(f"같은 종류의 중립 변이보다 독립 출현이 많음(q={qn:.3f})")
+                elif qn is not None:
+                    why.append(f"독립 출현 횟수는 중립 변이에서도 흔한 수준(q={qn:.2f})")
             elif o["settled"] == 1:
                 why.append("트리에서 한 번만 생김(한 가지가 퍼진 것일 수 있음)")
             elif o["events"] == 0:
@@ -115,6 +121,9 @@ def adaptive_traits(k, cs, ds_months, pool_by_month, recent, meta, dmap, row, n_
         if rising:
             score += 2
             why.append(f"초기 {early_freq:.0%} → 최근 {rec_freq:.0%}로 퍼짐")
+        if tr and tr["lo"] > 0:
+            score += 1
+            why.append(f"나라 구성을 고정해도 증가(월 로그오즈 +{tr['slope']:.2f}, 95% {tr['lo']:+.2f}~{tr['hi']:+.2f})")
     defining = bool(intro)
     fixed = n_pool >= 20 and (len(cs) / n_pool >= FIXED_SHARE or (early_freq >= 0.8 and rec_freq >= 0.8))                       # carried by nearly every genome of the set: ancestral to it (a clade marker against the reference), not a change within it
     tier = "fixed" if fixed else "defining" if defining else ("strong" if score >= 6 and rising else "candidate" if score >= 4 else "")
@@ -124,7 +133,9 @@ def adaptive_traits(k, cs, ds_months, pool_by_month, recent, meta, dmap, row, n_
         score, why = 0, ["거의 모든 유전체가 가짐(이 데이터셋의 조상형)"]
     if tier in ("strong", "candidate", "recurrent") and row.get("profile_of_interest", "") not in ("", "other"):
         tier = "apobec"                                               # APOBEC3-type changes are edits by the host: lasting and widespread, but no evidence of selection
-    return {"score": score, "tier": tier, "months_seen": obs, "last_seen": last_seen, "persistent": persistent, "lineages": n_lin, "origins": ({**o, "source": "tree"} if have_tree else {"source": "lineage"}), "countries": n_ctry, "recent_n": rec_n, "peak_freq": round(peak, 4), "early_freq": round(early_freq, 4), "rising": rising,
+    evidence = {"persist": persistent, "recur": bool(have_tree and o["settled"] >= 2) if have_tree else bool(n_lin is not None and n_lin >= 2), "neutral": bool(have_tree and (o.get("q_neutral") is not None and o["q_neutral"] < 0.05)),
+                "spread": n_ctry >= 3, "protein": changes, "rise": rising, "adjusted": bool(tr and tr["lo"] > 0)}
+    return {"score": score, "tier": tier, "evidence": evidence, "months_seen": obs, "last_seen": last_seen, "persistent": persistent, "lineages": n_lin, "origins": ({**o, "source": "tree"} if have_tree else {"source": "lineage"}), "countries": n_ctry, "recent_n": rec_n, "peak_freq": round(peak, 4), "early_freq": round(early_freq, 4), "trend": ({k_: round(v_, 4) for k_, v_ in tr.items()} if tr else None), "rising": rising,
             "recent_freq": round(rec_freq, 4), "changes_protein": changes, "why": why}
 
 
@@ -187,6 +198,8 @@ def build(run: dict, bin_: str = "month", lineage_set=(), clade_set=(), gene: st
     recent = set(sorted(pool_by_month)[-RECENT_MONTHS:]) if pool_by_month else set()
     cats = outbreak.categories()
     origs = origins.independent_origins(run)
+    month_of = {s_: {m: i for i, m in enumerate(sorted(pool_by_month))}[dated[s_][2]] for s_ in dated}
+    tctx = trend.context(sorted(dated), month_of, {s_: meta[s_]["country"] for s_ in dated})
     out = []
     for k, cs in carriers.items():
         if len(cs) < min_carriers or (hide_common and len(cs) / n_pool >= hide_common):
@@ -213,7 +226,7 @@ def build(run: dict, bin_: str = "month", lineage_set=(), clade_set=(), gene: st
                     "by_continent": dict(Counter(_cont(meta[s]["country"]) for s in cs if _cont(meta[s]["country"]))),
                     "_cs": cs,
                     "category": (cats.get(r["gene"], {}).get("category") or ("(유전자 밖)" if not r["gene"] else "(분류 없음)")), "function": cats.get(r["gene"], {}).get("function", ""),
-                    "adaptive": adaptive_traits(k, cs, [d[2] for d, _s in ds], pool_by_month, recent, meta, dmap, r, len(pool), origs.get((k[0], k[1])) if origs else None, origs is not None),
+                    "adaptive": adaptive_traits(k, cs, [d[2] for d, _s in ds], pool_by_month, recent, meta, dmap, r, len(pool), origs.get((k[0], k[1])) if origs else None, origs is not None, trend.carrier_trend(cs, tctx)),
                     "_key": _key_date(first[0], first[3], first[2])})
     total_rows = len(out)
     if sort == "pos":
