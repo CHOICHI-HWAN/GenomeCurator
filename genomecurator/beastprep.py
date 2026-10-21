@@ -445,7 +445,7 @@ def run_recorded(clock_run: dict, settings: dict | None = None, progress=None) -
     members = nextstrain.run_members(clock_run)
     from datetime import datetime
     rid = runs.start(ds, "beast", name, datetime.now(), ds.get("build") or "", s, "beast-v1", members, clock_run["members_sha"] or "", clock_run.get("content_sha") or "", st["version"], d, d / "beast.screen.log",
-                     f"clock:{clock_run['id']}", {"beast": st["version"], "settings": s})
+                     f"clock:{clock_run['id']}" + (":models" if s["compare"] else ""), {"beast": st["version"], "settings": s})
     try:
         res = run(clock_run, s, progress)
     except Exception as e:
@@ -456,7 +456,7 @@ def run_recorded(clock_run: dict, settings: dict | None = None, progress=None) -
 
 
 # ------------------------------------------------------------------------------------------------ BETS: is there a temporal signal at all?
-BETS_DEFAULTS = {"n_tips": 60, "clock": "relaxed", "tree_prior": "exponential", "initial_chain": 1000000, "path_steps": 50, "step_chain": 250000, "estimator": "both", "seed": 1, "threads": 0}
+BETS_DEFAULTS = {"n_tips": 60, "clock": "relaxed", "tree_prior": "exponential", "initial_chain": 1000000, "path_steps": 50, "step_chain": 250000, "estimator": "both", "seed": 1, "threads": 0, "compare": False}
 ESTIMATORS = ("both", "gss", "ps_ss")
 _MLE_RE = {"ps": re.compile(r"log marginal likelihood \(using path sampling\)[^=]*=\s*(-?[0-9.eE+-]+)"), "ss": re.compile(r"log marginal likelihood \(using stepping stone sampling\)[^=]*=\s*(-?[0-9.eE+-]+)"),
            "gss": re.compile(r"log marginal likelihood \(using generalized stepping stone sampling\)[^=]*=\s*(-?[0-9.eE+-]+)")}
@@ -471,6 +471,7 @@ def parse_bets_settings(raw: dict | None) -> dict:
     except (TypeError, ValueError):
         raise ValueError("BETS 설정의 숫자가 올바르지 않습니다.")
     out["clock"], out["tree_prior"], out["estimator"] = str(s["clock"]), str(s["tree_prior"]), str(s["estimator"])
+    out["compare"] = bool(s.get("compare"))
     if not 10 <= out["n_tips"] <= 300:
         raise ValueError("표본 유전체 수는 10~300입니다.")
     if out["initial_chain"] < 10000 or out["step_chain"] < 1000 or not 4 <= out["path_steps"] <= 500:
@@ -482,6 +483,22 @@ def parse_bets_settings(raw: dict | None) -> dict:
 
 def bets_folder(clock_run: dict) -> Path:
     return Path(clock_run["run_dir"]) / "beast" / "bets"
+
+
+def _root(clock_run: dict, s: dict) -> Path:
+    """Where this BETS flavour keeps its analyses: `bets/` (dated vs undated) or `bets/models/` (the four-model comparison)."""
+    return bets_folder(clock_run) / ("models" if s.get("compare") else "")
+
+
+def _models(s: dict) -> list[dict]:
+    """The analyses of one run: BETS = the same model with real and with identical dates; comparison = the four clock x tree-prior models, all with the real dates (their marginal likelihoods are compared)."""
+    if s.get("compare"):
+        return [{"tag": f"{c}-{t}", "dated": True, "clock": c, "tree_prior": t} for c in CLOCKS for t in PRIORS]
+    return [{"tag": "dated", "dated": True, "clock": s["clock"], "tree_prior": s["tree_prior"]}, {"tag": "undated", "dated": False, "clock": s["clock"], "tree_prior": s["tree_prior"]}]
+
+
+def _model(s: dict, tag: str) -> dict:
+    return next(m for m in _models(s) if m["tag"] == tag)
 
 
 def _bets_data(clock_run: dict, s: dict) -> tuple[dict, dict, float, int, float]:
@@ -510,10 +527,11 @@ def bets_prepare(clock_run: dict, settings: dict | None = None) -> dict:
     s = parse_bets_settings(settings)
     seqs, real, rate0, n, span = _bets_data(clock_run, s)
     same = {k: max(real.values()) for k in real}
-    ms = {**s, "chain_length": s["initial_chain"], "samples": 1000}
     out = {}
-    for tag, dates in (("dated", real), ("undated", same)):
-        base = bets_folder(clock_run) / tag
+    for m in _models(s):
+        tag, dates = m["tag"], (real if m["dated"] else same)
+        ms = {**s, "chain_length": s["initial_chain"], "samples": 1000, "clock": m["clock"], "tree_prior": m["tree_prior"]}
+        base = _root(clock_run, s) / tag
         if s["estimator"] in ("both", "ps_ss"):
             (base / "psss").mkdir(parents=True, exist_ok=True)
             (base / "psss" / "beast.xml").write_text(build_xml(seqs, dates, {}, ms, rate0, "beast", mle={"chain_length": s["step_chain"], "path_steps": s["path_steps"], "alpha": 0.3}, proper=True, fixed_freq=True), encoding="utf-8")
@@ -521,21 +539,23 @@ def bets_prepare(clock_run: dict, settings: dict | None = None) -> dict:
             (base / "mcmc").mkdir(parents=True, exist_ok=True)
             (base / "mcmc" / "beast.xml").write_text(build_xml(seqs, dates, {}, ms, rate0, "beast", proper=True, fixed_freq=True), encoding="utf-8")
         out[tag] = str(base)
-    (bets_folder(clock_run) / "settings.json").write_text(json.dumps(s), encoding="utf-8")
+    _root(clock_run, s).mkdir(parents=True, exist_ok=True)
+    (_root(clock_run, s) / "settings.json").write_text(json.dumps(s), encoding="utf-8")
     return {"n": n, "settings": s, "folders": out, "span_years": span}
 
 
 def gss_xml(clock_run: dict, tag: str, s: dict) -> str:
     """The generalized stepping-stone XML of one BETS analysis, from the finished ordinary chain in `<tag>/mcmc/`: the working prior is made from that chain's posterior, and the new chain starts from its middle."""
     seqs, real, rate0, _n, _span = _bets_data(clock_run, s)
-    dates = real if tag == "dated" else {k: max(real.values()) for k in real}
-    d = bets_folder(clock_run) / tag / "mcmc"
+    m = _model(s, tag)
+    dates = real if m["dated"] else {k: max(real.values()) for k in real}
+    d = _root(clock_run, s) / tag / "mcmc"
     post = read_log(d / "beast.log", 0.5)["params"]
     init = {k: post[k]["median"] for k in GSS_PARAMS if k in post}
     flat = [k for k in GSS_PARAMS if k in post and post[k]["hi"] - post[k]["lo"] <= 0]
     if flat:                                                  # a parameter that never moved has no density to build a working prior from (BEAST would give NaN)
         raise RuntimeError(f"일반 체인에서 {', '.join(flat)} 값이 변하지 않았습니다 — 체인이 너무 짧거나 섞이지 않아 작업 사전분포를 만들 수 없습니다. 초기 체인을 늘려 다시 실행하세요.")
-    ms = {**s, "chain_length": GSS_BURN, "samples": 100}
+    ms = {**s, "chain_length": GSS_BURN, "samples": 100, "clock": m["clock"], "tree_prior": m["tree_prior"]}
     return build_xml(seqs, dates, {}, ms, rate0, "gss", proper=True, fixed_freq=True, init=init,
                      gss={"log": "beast.log", "burnin": s["initial_chain"] // 2, "chain_length": s["step_chain"], "path_steps": s["path_steps"], "alpha": 0.3})
 
@@ -579,11 +599,12 @@ def run_bets(clock_run: dict, settings: dict | None = None, progress=None) -> di
     p = progress or (lambda *a: None)
     info = bets_prepare(clock_run, settings)
     s = info["settings"]
-    root = bets_folder(clock_run)
+    root = _root(clock_run, s)
+    tags = [m["tag"] for m in _models(s)]
     pre = env_prefix()
     use_psss, use_gss = s["estimator"] in ("both", "ps_ss"), s["estimator"] in ("both", "gss")
     jobs = []                                    # (tag, kind, folder, xml name, states)
-    for tag in ("dated", "undated"):
+    for tag in tags:
         if use_psss:
             jobs.append((tag, "psss", root / tag / "psss", "beast.xml", s["initial_chain"] + (s["path_steps"] + 1) * s["step_chain"]))
         if use_gss:
@@ -594,7 +615,7 @@ def run_bets(clock_run: dict, settings: dict | None = None, progress=None) -> di
             if (kind == "gss") == f.startswith("gss") or kind == "psss" and not f.startswith("gss") or kind == "mcmc" and not f.startswith("gss"):
                 (d / f).unlink(missing_ok=True)
     (root / "summary.json").unlink(missing_ok=True)
-    n_threads = s["threads"] or max(2, (os.cpu_count() or 4) // 4)
+    n_threads = s["threads"] or max(2, (os.cpu_count() or 4) // (12 if s["compare"] else 4))
     total = sum(j[4] for j in jobs)
     procs: dict[tuple, tuple] = {}
     t0 = time.time()
@@ -642,7 +663,7 @@ def run_bets(clock_run: dict, settings: dict | None = None, progress=None) -> di
                 except subprocess.TimeoutExpired:
                     pr.kill()
             lf.close()
-    res = {"settings": s, "seconds": round(time.time() - t0), "n_tips": info["n"], "span_years": info["span_years"], "dated": {}, "undated": {}}
+    res = {"settings": s, "seconds": round(time.time() - t0), "n_tips": info["n"], "span_years": info["span_years"], **{t: {} for t in tags}}
     for (tag, kind), (pr, _lf) in procs.items():
         d = root / tag / ("psss" if kind == "psss" else "mcmc")
         out = (d / ("gss.screen.txt" if kind == "gss" else "screen.txt")).read_text(encoding="utf-8")
@@ -655,6 +676,11 @@ def run_bets(clock_run: dict, settings: dict | None = None, progress=None) -> di
         elif kind == "gss":
             m = _MLE_RE["gss"].search(out)
             res[tag]["gss"] = float(m[1]) if m else None
+    if s["compare"]:
+        res["models"] = compare_models({t: res[t] for t in tags})
+        (root / "summary.json").write_text(json.dumps(res, ensure_ascii=False), encoding="utf-8")
+        p(100, "모델 비교 완료")
+        return res
     for k in ("ps", "ss", "gss"):
         a, b = res["dated"].get(k), res["undated"].get(k)
         res["log_bf_" + k] = (a - b) if a is not None and b is not None else None
@@ -669,8 +695,30 @@ def run_bets(clock_run: dict, settings: dict | None = None, progress=None) -> di
     return res
 
 
-def bets_result(clock_run: dict) -> dict:
-    f = bets_folder(clock_run) / "summary.json"
+def compare_models(res: dict) -> dict:
+    """Rank the models by marginal likelihood (GSS if there is one, else SS, else PS) and give each one's log Bayes factor against the best; the estimators' disagreement is reported per model.
+    Kass & Raftery: a log BF of 1-3 is weak, 3-5 positive, over 5 strong evidence for the better model."""
+    est = next((k for k in ("gss", "ss", "ps") if all(r.get(k) is not None for r in res.values())), None)
+    if est is None:
+        return {"estimator": None, "ranking": [], "text": "한계우도를 추정하지 못했습니다."}
+    ranking = sorted(({"model": t, "ml": r[est], "ps": r.get("ps"), "ss": r.get("ss"), "gss": r.get("gss")} for t, r in res.items()), key=lambda x: -x["ml"])
+    best = ranking[0]["ml"]
+    for x in ranking:
+        x["log_bf_vs_best"] = round(x["ml"] - best, 2)
+        vals = [v for v in (x["ps"], x["ss"], x["gss"]) if v is not None]
+        x["estimator_spread"] = round(max(vals) - min(vals), 2) if len(vals) > 1 else None
+    gap = ranking[0]["ml"] - ranking[1]["ml"] if len(ranking) > 1 else None
+    level, _t = bets_verdict(gap)
+    text = f"{ranking[0]['model']}이(가) 가장 높습니다(추정기 {est.upper()})."
+    if gap is not None:
+        text += f" 2위({ranking[1]['model']})와의 로그 베이즈 인수 {gap:.1f}: " + {"strong": "뚜렷한 차이", "positive": "차이의 증거가 있으나 결정적이지 않음", "weak": "약한 차이", "none": "차이가 없음", "against": "차이가 없음"}.get(level, "")
+    if any((x["estimator_spread"] or 0) > 2 for x in ranking):
+        text += " 추정기들의 값이 2 이상 다른 모델이 있습니다 — 경로 단계와 단계당 체인을 늘려 다시 돌리세요."
+    return {"estimator": est, "ranking": ranking, "text": text}
+
+
+def bets_result(clock_run: dict, compare: bool = False) -> dict:
+    f = (bets_folder(clock_run) / ("models" if compare else "") / "summary.json")
     try:
         return json.loads(f.read_text(encoding="utf-8")) if f.exists() else {}
     except ValueError:
@@ -684,7 +732,7 @@ def run_bets_recorded(clock_run: dict, settings: dict | None = None, progress=No
     ds = datasets.get(clock_run["dataset_id"])
     st = status()
     s = parse_bets_settings(settings)
-    name = f"{clock_run['name']}-bets"
+    name = f"{clock_run['name']}-{'models' if s['compare'] else 'bets'}"
     taken = {r["name"] for r in nextstrain.list_runs(limit=100000)}
     base, k = name, 1
     while name in taken:
@@ -693,7 +741,7 @@ def run_bets_recorded(clock_run: dict, settings: dict | None = None, progress=No
     d = bets_folder(clock_run)
     d.mkdir(parents=True, exist_ok=True)
     rid = runs.start(ds, "bets", name, datetime.now(), ds.get("build") or "", s, "bets-v2", nextstrain.run_members(clock_run), clock_run["members_sha"] or "", clock_run.get("content_sha") or "", st["version"], d,
-                     d / "dated" / "psss" / "screen.txt", f"clock:{clock_run['id']}", {"beast": st["version"], "settings": s})
+                     _root(clock_run, s) / _models(s)[0]["tag"] / "psss" / "screen.txt", f"clock:{clock_run['id']}", {"beast": st["version"], "settings": s})
     try:
         res = run_bets(clock_run, s, progress)
     except Exception as e:

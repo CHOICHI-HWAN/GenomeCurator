@@ -3566,3 +3566,32 @@ def test_hyphy_export_cuts_codons_in_coding_direction_and_writes_a_pruned_tree()
     tree = mk("root", 0, [mk("n1", 10, [mk("a", 12), mk("b", 15)]), mk("c", 4), mk("private:x", 3)])
     nw = hyphyexport.newick(tree, {"a", "b", "c"}, 100)
     assert nw.count("(") == 2 and "private:x" not in nw and nw.startswith("((a:0.02000000,b:0.05000000):0.10000000,c:0.04000000):0.00000000;")
+
+
+def test_four_model_comparison_prepares_four_analyses_and_ranks_them(tmp_path, monkeypatch):
+    import random
+    import pytest
+    from genomecurator import beastprep
+    s = beastprep.parse_bets_settings({"compare": True})
+    assert s["compare"] and [m["tag"] for m in beastprep._models(s)] == ["strict-constant", "strict-exponential", "relaxed-constant", "relaxed-exponential"] and all(m["dated"] for m in beastprep._models(s))
+    assert [m["tag"] for m in beastprep._models(beastprep.parse_bets_settings({}))] == ["dated", "undated"]            # BETS keeps its two analyses
+    rng = random.Random(2)
+    names = [f"s{i}" for i in range(12)]
+    seqs = {n: "".join(rng.choice("ACGT") for _ in range(60)) for n in names}
+    real = {n: 2024 + i / 10 for i, n in enumerate(names)}
+    monkeypatch.setattr(beastprep, "_bets_data", lambda cr, st: (seqs, real, 1e-5, 12, 1.1))
+    cr = {"run_dir": str(tmp_path)}
+    info = beastprep.bets_prepare(cr, {"compare": True, "estimator": "both"})
+    root = tmp_path / "beast" / "bets" / "models"
+    assert set(info["folders"]) == {"strict-constant", "strict-exponential", "relaxed-constant", "relaxed-exponential"} and (root / "settings.json").exists()
+    x = {t: (root / t / "psss" / "beast.xml").read_text(encoding="utf-8") for t in info["folders"]}
+    assert "ucld" in x["relaxed-constant"] and "ucld" not in x["strict-constant"]                                    # the clock differs
+    assert x["strict-constant"] != x["strict-exponential"] and (root / "relaxed-exponential" / "mcmc" / "beast.xml").exists()   # so does the tree prior
+    assert all(len({e.get("value") for e in __import__("xml.etree.ElementTree", fromlist=["x"]).fromstring(v).find("taxa").iter("date")}) > 1 for v in x.values())   # all with the real dates
+    res = {"strict-constant": {"ps": -105.0, "ss": -105.4, "gss": -105.2}, "strict-exponential": {"ps": -101.0, "ss": -101.1, "gss": -101.0},
+           "relaxed-constant": {"ps": -99.0, "ss": -99.2, "gss": -99.1}, "relaxed-exponential": {"ps": -90.0, "ss": -95.0, "gss": -93.0}}
+    cmp = beastprep.compare_models(res)
+    assert cmp["estimator"] == "gss" and [r["model"] for r in cmp["ranking"]] == ["relaxed-exponential", "relaxed-constant", "strict-exponential", "strict-constant"]
+    assert cmp["ranking"][0]["log_bf_vs_best"] == 0 and cmp["ranking"][1]["log_bf_vs_best"] == -6.1 and cmp["ranking"][0]["estimator_spread"] == 5.0
+    assert "relaxed-exponential" in cmp["text"] and "추정기들의 값이 2 이상" in cmp["text"]                           # the estimators disagree for the top model: said so
+    assert beastprep.compare_models({"a": {"ps": None, "ss": None, "gss": None}})["ranking"] == []
