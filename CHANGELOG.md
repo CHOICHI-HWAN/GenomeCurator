@@ -12,6 +12,7 @@ re-pinned (the full list with licences is in [docs/DEPENDENCIES.md](docs/DEPENDE
 ## [Unreleased]
 
 ### Added
+- **Heat map: the time view and the spread timeline share one x axis** (same periods, same width and left edge, month/week switch moves both), so the carrier counts and the reported-genomes curve can be read against each other. Both span the first to the last carrier of the mutation.
 - **Heat map: the spread timeline under the time view.** The same mutation's country × time chart and cumulative curve (the map is left out) (the *Timeline · map* page restricted to that mutation) is embedded below the time view; the spread page takes `?embed=1` to drop its page chrome.
 - **Heat map: a time view under the lineage-frequency matrix.** Clicking a mutation now also shows, per month or ISO week, how many genomes carry it (stacked by lineage) with the share of the genomes sampled in that period as a line, so a rise from heavier sampling can be told from a real one. Genomes without a collection date are counted separately.
 - **Mutation PCA** on the mutation-groups page (below the genome PCA, which was already there): each mutation placed by the genomes that carry it; right-click gives the usual mutation menu.

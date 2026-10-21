@@ -146,7 +146,8 @@ def series(run: dict, pos: int, alt: str, bin_: str = "month", max_n: float | No
         sampled[key] += 1
         if s in carriers:
             by_lin[m["lineage"] or "(none)"][key] += 1
-    keys = sorted(sampled)
+    ckeys = sorted({k for c in by_lin.values() for k in c})                                                       # the span of the carriers: the same span the spread timeline draws, so the two line up
+    keys = [k for k in sorted(sampled) if ckeys and ckeys[0] <= k <= ckeys[-1]] or ckeys
     if bin_ == "week":
         periods = lineages._weeks(keys[0], keys[-1]) if keys else []
         starts = [lineages.week_monday(k).isoformat() for k in periods]

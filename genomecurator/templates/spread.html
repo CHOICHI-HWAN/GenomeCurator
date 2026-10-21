@@ -1,12 +1,13 @@
 {% extends "base.html" %}{% block body %}
-{% set view='spread' %}{% if request.query_params.get('embed') %}<style>.pagehead,.help,.caut,#mapcard{display:none}</style>{% else %}{% include "_anav.html" %}{% endif %}
+{% set view='spread' %}{% include "_anav.html" %}
+{% if request.query_params.get('embed') %}<style>.anav,.pagehead,.help,.caut,#mapcard{display:none}main{display:flex;flex-direction:column}main>*{order:9}#fig{order:1}#lcard{order:2}#ctry{order:3}#selcard{order:4}#ctlcard{order:5}</style>{% endif %}
 <div class="pagehead"><h2>전파 타임라인 <span class="mut" style="font-size:14px;font-weight:400">lineage · 대표 변이 × 나라 × 시간</span></h2><span class="mut">{{ run.name }}</span></div>
 <div class="help">행은 <b>lineage</b>(또는 lineage 정의의 <b>대표 변이</b>), 펼치면 <b>나라</b>별 줄이 나옵니다. 가로축은 수집일의 <b>ISO 주</b>이고, 일 단위 날짜가 적으면 자동으로 <b>월</b> 단위로 바뀝니다(직접 고를 수도 있음).
 막대 안의 진하기는 그 기간의 유전체 수, 가는 선은 <b>처음~마지막 관찰</b>, ◆는 첫 관찰입니다. <b>월까지만 있는 날짜</b>는 주에 넣지 않고 그 달 전체를 <b>옅은 띠</b>로 그립니다.
 <b>대표 변이</b> 보기는 그 변이를 가진 유전체를 lineage 이름과 무관하게 세므로, lineage가 새로 나뉘거나 이름이 바뀌어도 그림이 유지됩니다.
 <b>주의: 첫 관찰은 유입 시점이 아닙니다</b> — 나라마다 시퀀싱 양이 달라 표집 편향이 큽니다(나라별 건수를 함께 보세요).</div>
 <div class="caut">⚠ 첫 관찰은 유입 시점이 아닙니다 — 나라마다 시퀀싱 양이 다릅니다.</div>
-<div class="card" style="font-size:13px">
+<div class="card" id="ctlcard" style="font-size:13px">
  <div style="display:flex;gap:14px;flex-wrap:wrap;align-items:end">
   <label>보기<br><select id="v" onchange="load()"><option value="lineage">lineage별</option><option value="mutation">대표 변이별</option></select></label>
   <label>outbreak<br><select id="ob" onchange="load()"></select></label>
@@ -46,7 +47,7 @@ let D=null,open={},obSet=false,CUR=-1,timer=null;
 const PAL=['#4e79a7','#f28e2b','#e15759','#76b7b2','#59a14f','#edc948','#b07aa1','#ff9da7','#9c755f','#bab0ac'];
 async function defsUi(){const s=await (await fetch('/api/lineages/status')).json();document.getElementById('defs').innerHTML=s.ok?'<span class="mut">정의 lineage-designation @ '+esc(s.commit)+' ('+s.files+'개 파일)</span> <button type="button" onclick="getDefs()">업데이트</button>':'<span style="color:var(--bad)">lineage 정의가 없습니다</span> <button type="button" class="p" onclick="getDefs()">정의 받기</button>'}
 function getDefs(){const f=document.getElementById('jf');f.action='/api/lineages/clone';runJob(f)}
-const SITES=new URLSearchParams(location.search).get('sites')||'';const isMut=()=>D&&(D.view==='mutation'||D.view==='sites');
+const SITES=new URLSearchParams(location.search).get('sites')||'';(function(){const b=new URLSearchParams(location.search).get('bin');if(b==='week'||b==='month'){const e=document.getElementById('bin');e.value=b;if(new URLSearchParams(location.search).get('embed'))e.disabled=true}})();const isMut=()=>D&&(D.view==='mutation'||D.view==='sites');
 async function load(){const q=new URLSearchParams({view:document.getElementById('v').value,bin:document.getElementById('bin').value,outbreak:obSet?document.getElementById('ob').value:'',min_n:document.getElementById('mn').value||1});if(SITES)q.set('sites',SITES);
  const r=await fetch('/api/analyses/'+RID+'/spread?'+q);D=await r.json();if(D.error){document.getElementById('fig').innerHTML='<div class="card" style="color:var(--bad)">'+esc(D.error)+'</div>';document.getElementById('info').textContent='';return}
  if(!obSet){obSet=true;document.getElementById('ob').innerHTML=D.outbreaks.map(o=>'<option '+(o===D.outbreak?'selected':'')+'>'+esc(o)+'</option>').join('')}
@@ -120,7 +121,7 @@ function stop(){if(timer){clearInterval(timer);timer=null}document.getElementByI
 function play(){if(timer){stop();return}if(CUR>=D.periods.length-1)stepTo(0);document.getElementById('pl').textContent='⏸';
  timer=setInterval(()=>{if(CUR>=D.periods.length-1){stop();return}stepTo(CUR+1)},+document.getElementById('sp').value)}
 function tog(k){open[k]=!open[k];draw()}
-(function(){if(!SITES)return;const b=document.createElement('div');b.className='card';b.style.cssText='font-size:13px';b.innerHTML='선택한 변이 <b>'+SITES.split(',').map(x=>esc(x)).join(', ')+'</b>를 가진 유전체의 나라 × 시간입니다 (이 실행의 참조 좌표). <a href="'+location.pathname+'">lineage·대표 변이 보기로 돌아가기</a>';document.getElementById('fig').parentNode.insertBefore(b,document.getElementById('fig'));const v=document.getElementById('v');v.insertAdjacentHTML('beforeend','<option value="sites">선택한 변이</option>');v.value='sites';v.onchange=()=>{if(v.value!=='sites')location.href=location.pathname;else load()}})();
+(function(){if(!SITES)return;const b=document.createElement('div');b.className='card';b.id='selcard';b.style.cssText='font-size:13px';b.innerHTML='선택한 변이 <b>'+SITES.split(',').map(x=>esc(x)).join(', ')+'</b>를 가진 유전체의 나라 × 시간입니다 (이 실행의 참조 좌표). <a href="'+location.pathname+'">lineage·대표 변이 보기로 돌아가기</a>';document.getElementById('fig').parentNode.insertBefore(b,document.getElementById('fig'));const v=document.getElementById('v');v.insertAdjacentHTML('beforeend','<option value="sites">선택한 변이</option>');v.value='sites';v.onchange=()=>{if(v.value!=='sites')location.href=location.pathname;else load()}})();
 defsUi();load();
 </script>
 {% endblock %}

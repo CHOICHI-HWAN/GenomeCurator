@@ -3235,7 +3235,7 @@ def test_mutation_gantt_orders_by_first_observation_and_counts_per_period(tmp_pa
     assert sr["periods"] == ["2025-01", "2025-02", "2025-03"] and sr["sampled"] == [2, 0, 2] and sr["carriers"] == [2, 0, 1] and sr["n_carriers"] == 3 and sr["undated"] == 1
     assert sr["lineages"][0]["lineage"] == "A" and sr["lineages"][0]["counts"] == [2, 0, 0] and sr["lineages"][1]["lineage"] == "B" and sr["lineages"][1]["counts"] == [0, 0, 1]
     sw = mutgantt.series({}, 100, "T", "week")
-    assert sum(sw["carriers"]) == 1 and sum(sw["sampled"]) == 3                                                 # the month-only genome is left out of the weekly view
+    assert sum(sw["carriers"]) == 1 and len(sw["periods"]) == 1 and sum(sw["sampled"]) == 1                                                 # the month-only genome is left out of the weekly view
     assert mutgantt.series({}, 999, "A", "month")["n_carriers"] == 0
 
 
