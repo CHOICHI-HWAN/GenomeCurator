@@ -12,7 +12,7 @@ re-pinned (the full list with licences is in [docs/DEPENDENCIES.md](docs/DEPENDE
 ## [Unreleased]
 
 ### Added
-- **Heat map: the spread timeline under the time view.** The same mutation's country × time chart, map and cumulative curve (the *Timeline · map* page restricted to that mutation) is embedded below the time view; the spread page takes `?embed=1` to drop its page chrome.
+- **Heat map: the spread timeline under the time view.** The same mutation's country × time chart and cumulative curve (the map is left out) (the *Timeline · map* page restricted to that mutation) is embedded below the time view; the spread page takes `?embed=1` to drop its page chrome.
 - **Heat map: a time view under the lineage-frequency matrix.** Clicking a mutation now also shows, per month or ISO week, how many genomes carry it (stacked by lineage) with the share of the genomes sampled in that period as a line, so a rise from heavier sampling can be told from a real one. Genomes without a collection date are counted separately.
 - **Mutation PCA** on the mutation-groups page (below the genome PCA, which was already there): each mutation placed by the genomes that carry it; right-click gives the usual mutation menu.
 - **Mutation Gantt: lineage-defining mutations are marked** (a tag with the lineage they define) and can be filtered (*lineage-defining only / without them*). The lineage and clade filters are now searchable chip pickers (counts shown, sub-lineages can be included with one switch, the chart redraws by itself).
