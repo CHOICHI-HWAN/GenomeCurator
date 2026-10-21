@@ -3422,3 +3422,32 @@ def test_new_genomes_for_an_existing_dataset(tmp_path, monkeypatch):
     import pytest
     with pytest.raises(ValueError):
         datasets.add_manual(ds["id"], ["NOT-A-GENOME"])
+
+
+def test_adaptive_candidates_need_persistence_spread_and_are_not_ancestral(monkeypatch):
+    from collections import Counter
+    from genomecurator import lineages, mutgantt
+    monkeypatch.setattr(lineages, "chain", lambda ob, lin: [{"name": lin}])
+    months = [f"2025-{m:02d}" for m in range(1, 13)]
+    pool = Counter({m: 10 for m in months})                                       # 10 sampled genomes per month, 120 in all
+    meta = {}
+    cs_spread, cs_anc, cs_def = set(), set(), set()
+    for i in range(120):
+        m = months[i // 10]
+        meta[f"g{i}"] = {"lineage": f"L{i % 4}", "country": f"C{i % 5}", "outbreak": "o", "clade": "Ib", "date": m + "-15"}
+        if m >= "2025-07" and i % 3 != 0:                                       # rare early, common late: a spread over four lineages and five countries
+            cs_spread.add(f"g{i}")
+        cs_anc.add(f"g{i}")                                                       # in every genome
+        if i % 4 == 0:
+            cs_def.add(f"g{i}")                                                   # only L0: a lineage's own mutation
+    def tr(cs, key, effect="nonsynonymous", gene="OPG1", apo=""):
+        ms = [meta[s]["date"][:7] for s in cs]
+        return mutgantt.adaptive_traits(key, cs, ms, pool, set(months[-6:]), meta, {(2, "G"): ["L0"]}, {"effect": effect, "gene": gene, "profile_of_interest": apo}, len(meta))
+    a = tr(cs_spread, (1, "T"))
+    assert a["tier"] in ("strong", "candidate") and a["rising"] and a["persistent"] and a["lineages"] == 4 and a["countries"] == 5 and a["score"] >= 6
+    assert tr(cs_anc, (3, "T"))["tier"] == "fixed" and tr(cs_anc, (3, "T"))["score"] == 0                    # carried by every genome: ancestral, not an adaptation
+    assert tr(cs_def, (2, "G"))["tier"] == "defining"                                                         # L0's own defining mutation
+    assert tr(cs_spread, (1, "T"), effect="synonymous")["score"] == a["score"] - 1                           # no protein change: one point less
+    assert tr(cs_spread, (1, "T"), apo="apobec")["tier"] == "apobec"                                          # APOBEC3-type: kept apart (a host edit, not evidence of selection)
+    old = {f"g{i}" for i in range(0, 20)}                                                                     # seen only in the first two months: gone, not kept
+    assert tr(old, (4, "A"))["persistent"] is False and tr(old, (4, "A"))["tier"] == ""

@@ -11,7 +11,7 @@ from collections import Counter, defaultdict
 
 import logging
 
-from . import continents, insight, lineages, mutprofile
+from . import continents, insight, lineages, mutprofile, outbreak
 
 _log = logging.getLogger("genomecurator.mutgantt")
 
@@ -48,6 +48,73 @@ def defining_map(run: dict, meta: dict, fa) -> dict[tuple, list[str]]:
         _log.warning("lineage definitions could not be placed on the reference", exc_info=True)
         return {}
     return {k: sorted(v) for k, v in out.items()}
+
+
+RECENT_MONTHS = 6
+FIXED_SHARE = 0.9
+
+
+def _definitional(meta: dict, s: str, introducers: list[str]) -> bool:
+    """Does genome `s` carry the mutation because its lineage (or an ancestor lineage) is defined by it?"""
+    m = meta[s]
+    if not introducers or not m["lineage"]:
+        return False
+    names = {c["name"] for c in lineages.chain(m.get("outbreak", ""), m["lineage"])}
+    return bool(names & set(introducers))
+
+
+def adaptive_traits(k, cs, ds_months, pool_by_month, recent, meta, dmap, row, n_pool=0) -> dict:
+    """Exploratory evidence that a mutation is *kept* by the virus, from the sampled genomes: it is seen in many months and still in the most recent ones, it was rare early and common now (a spread rather than an ancestral change), it turns up in several lineages that it does not
+    define (an independent origin is likely) and in several countries, it changes the protein, and its share among the genomes sampled stays up. Points are added up; this ranks candidates, it does not
+    show selection - a mutation that rides on a successful branch (hitchhiking) or sits in a heavily sampled place scores high as well, and the mutation's real age and origin are not known."""
+    months = Counter(ds_months)
+    obs = len(months)
+    last_seen = max(months) if months else ""
+    persistent = obs >= 3 and last_seen in recent
+    rec_n = sum(v for m, v in months.items() if m in recent)
+    rec_tot = sum(pool_by_month.get(m, 0) for m in recent)
+    fr = [months[m] / pool_by_month[m] for m in months if pool_by_month.get(m)]
+    peak = max(fr) if fr else 0.0
+    rec_freq = rec_n / rec_tot if rec_tot else 0.0
+    sustained = rec_n >= 3 and peak > 0 and rec_freq >= 0.5 * peak
+    allm = sorted(pool_by_month)
+    early = set(allm[:max(3, len(allm) // 3)])
+    e_tot = sum(pool_by_month[m] for m in early)
+    early_freq = sum(v for m, v in months.items() if m in early) / e_tot if e_tot else 0.0
+    rising = early_freq < 0.5 and rec_freq >= 0.5 and rec_n >= 3
+    intro = dmap.get(k, [])
+    nondef = Counter(meta[s]["lineage"] or "(없음)" for s in cs if not _definitional(meta, s, intro))
+    n_lin = sum(1 for v in nondef.values() if v >= 2) if dmap else None
+    n_ctry = len({meta[s]["country"] for s in cs if meta[s]["country"]})
+    syn = (row["effect"] or "").lower().startswith("syn")
+    changes = bool(row["gene"]) and not syn and row["effect"] not in ("", "intergenic")
+    score = 0
+    why = []
+    if persistent:
+        if n_lin is not None and n_lin >= 2:
+            score += 2 + (1 if n_lin >= 3 else 0)
+            why.append(f"정의하지 않는 lineage {n_lin}곳에서 나타남")
+        if n_ctry >= 3:
+            score += 1
+            why.append(f"{n_ctry}개 나라")
+        if changes:
+            score += 1
+            why.append("단백질을 바꿈")
+        if sustained:
+            score += 1
+            why.append("최근에도 비율 유지")
+        if rising:
+            score += 2
+            why.append(f"초기 {early_freq:.0%} → 최근 {rec_freq:.0%}로 퍼짐")
+    defining = bool(intro)
+    fixed = n_pool >= 20 and (len(cs) / n_pool >= FIXED_SHARE or (early_freq >= 0.8 and rec_freq >= 0.8))                       # carried by nearly every genome of the set: ancestral to it (a clade marker against the reference), not a change within it
+    tier = "fixed" if fixed else "defining" if defining else ("strong" if score >= 6 and rising else "candidate" if score >= 4 else "")
+    if fixed:
+        score, why = 0, ["거의 모든 유전체가 가짐(이 데이터셋의 조상형)"]
+    if tier in ("strong", "candidate") and row.get("profile_of_interest", "") not in ("", "other"):
+        tier = "apobec"                                               # APOBEC3-type changes are edits by the host: lasting and widespread, but no evidence of selection
+    return {"score": score, "tier": tier, "months_seen": obs, "last_seen": last_seen, "persistent": persistent, "lineages": n_lin, "countries": n_ctry, "recent_n": rec_n, "peak_freq": round(peak, 4), "early_freq": round(early_freq, 4), "rising": rising,
+            "recent_freq": round(rec_freq, 4), "changes_protein": changes, "why": why}
 
 
 def build(run: dict, bin_: str = "month", lineage_set=(), clade_set=(), gene: str = "", start: int = 0, end: int = 0, apobec_only: bool = False, hide_common: float = 0.0,
@@ -89,6 +156,9 @@ def build(run: dict, bin_: str = "month", lineage_set=(), clade_set=(), gene: st
         if kind:
             dated[s] = (kind, week, month, shown)
     n_pool = max(1, len(pool))
+    pool_by_month = Counter(v[2] for v in dated.values())
+    recent = set(sorted(pool_by_month)[-RECENT_MONTHS:]) if pool_by_month else set()
+    cats = outbreak.categories()
     out = []
     for k, cs in carriers.items():
         if len(cs) < min_carriers or (hide_common and len(cs) / n_pool >= hide_common):
@@ -113,6 +183,8 @@ def build(run: dict, bin_: str = "month", lineage_set=(), clade_set=(), gene: st
                     "countries": dict(Counter(meta[s]["country"] for _d, s in ds if meta[s]["country"]).most_common(3)),
                     "by_lineage": dict(Counter(meta[s]["lineage"] or "(없음)" for s in cs)), "by_country": dict(Counter(meta[s]["country"] for s in cs if meta[s]["country"])),
                     "by_continent": dict(Counter(_cont(meta[s]["country"]) for s in cs if _cont(meta[s]["country"]))),
+                    "category": (cats.get(r["gene"], {}).get("category") or ("(유전자 밖)" if not r["gene"] else "(분류 없음)")), "function": cats.get(r["gene"], {}).get("function", ""),
+                    "adaptive": adaptive_traits(k, cs, [d[2] for d, _s in ds], pool_by_month, recent, meta, dmap, r, len(pool)),
                     "_key": _key_date(first[0], first[3], first[2])})
     total_rows = len(out)
     if sort == "pos":
