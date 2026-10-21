@@ -35,6 +35,7 @@
  <div class="mut" id="info" style="margin-top:8px"></div>
 </div>
 <div id="fig" style="overflow:auto;background:#fff;border:1px solid var(--bd);border-radius:6px;margin-top:10px"></div>
+<div id="spd" class="card" style="margin-top:10px;display:none"></div>
 <script>
 const RID={{ run.id }};
 const esc=s=>String(s??'').replace(/[&<>"]/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c]));
@@ -149,6 +150,10 @@ function drawPT(G){const tr=document.getElementById('g_tr').checked,P=G.periods,
  const lg=Object.entries(LC);if(lg.length)o+=lg.map(([l,c],i)=>'<text x="'+(L+i*110)+'" y="'+(H-10)+'" fill="'+c+'">■ '+esc(l)+' 정의 변이</text>').join('');
  o+='</svg>';document.getElementById('fig').innerHTML=o;
  document.getElementById('info').textContent=G.shown_rows+'개 변이를 위치 × 시간으로 보여 줍니다'+(G.shown_rows<G.total_rows?'(전체 '+G.total_rows+'개 중 앞쪽만 — 최대 행 수를 늘리거나 유전자·구간으로 확대)':'')+'. 19만 bp를 한 화면에 그려 가까운 변이는 겹칩니다 — 유전자나 구간으로 확대하세요. 변이를 우클릭하면 히트맵·전파 타임라인으로 갑니다.'}
+document.getElementById('fig').addEventListener('click',ev=>{const r=ev.target.closest&&ev.target.closest('rect[data-pos]');if(!r)return;showSpread(+r.dataset.pos,r.dataset.alt,r.dataset.ref,r.dataset.gene,r.dataset.aa)});
+function showSpread(pos,alt,ref,gene,aa){const el=document.getElementById('spd');el.style.display='block';const site=pos+alt,bin=(document.getElementById('g_bin')||{}).value==='week'?'week':'month';
+ el.innerHTML='<div style="display:flex;justify-content:space-between;align-items:baseline;gap:10px"><b>'+esc((ref||'')+pos+alt)+(gene?' · '+esc(gene)+(aa?' '+esc(aa):''):'')+' <span class="mut" style="font-weight:400">전파 타임라인(이 변이를 가진 유전체의 나라 × 시간 · 누적 곡선)</span></b><span><a href="/analysis/'+RID+'/spread?sites='+encodeURIComponent(site)+'" target="_blank">새 창으로 열기</a> · <a href="#" onclick="document.getElementById(\'spd\').style.display=\'none\';return false">닫기</a></span></div><iframe id="spdf" src="/analysis/'+RID+'/spread?embed=1&bin='+bin+'&sites='+encodeURIComponent(site)+'" style="width:100%;height:520px;border:1px solid var(--bd);border-radius:6px;margin-top:6px;background:#fff"></iframe>';
+ const f=document.getElementById('spdf'),fit=()=>{try{const h=f.contentDocument.documentElement.scrollHeight;if(h>200)f.style.height=(h+8)+'px'}catch(e){}};f.addEventListener('load',()=>{fit();const t=setInterval(()=>{if(document.getElementById('spdf')!==f){clearInterval(t);return}fit()},1500)});el.scrollIntoView({behavior:'smooth',block:'nearest'})}
 function dl(name,blob){const a=document.createElement('a');a.href=URL.createObjectURL(blob);a.download=name;a.click();setTimeout(()=>URL.revokeObjectURL(a.href),2000)}
 function saveSvg(){const s=document.getElementById('svg');if(s)dl('snipit_{{ run.name }}.svg',new Blob([new XMLSerializer().serializeToString(s)],{type:'image/svg+xml'}))}
 function savePng(){const s=document.getElementById('svg');if(!s)return;const w=s.width.baseVal.value,h=s.height.baseVal.value,img=new Image();
