@@ -288,3 +288,230 @@ def facets(watch_id: int) -> dict:
     return {"virus": w["name"], "taxon": w["taxon"], "genomes": n, "with_sequence": n_seq, "private": pn,
             "fields": {k: [{"value": v, "n": c, "with_seq": seq[k].get(v, 0)} for v, c in sorted(out[k].items(), key=lambda x: (-x[1], x[0]))][:200] for k in out},
             "presets": PRESETS.get((w["taxon"] or "").lower(), [])}
+
+
+# ------------------------------------------------------------------------------------------------ new genomes and the existing datasets
+_RULE_NAMES = {"clade": "clade", "lineage": "lineage", "outbreak": "outbreak", "region": "대륙·지역", "country": "나라", "host": "숙주", "completeness": "completeness", "qc_not": "QC 결과",
+               "year": "수집 연도", "length": "길이", "sequence": "서열 파일 없음"}
+
+
+def why_not(ds: dict, row: dict, g: dict | None) -> tuple[str, str]:
+    """(rule key, the genome's value) of the first rule that keeps a genome out of the dataset ('' when it is a member). A manual include / exclude is not a rule and is judged first by `matches`."""
+    if matches(ds, row, g):
+        return "", ""
+    r = normalize(ds.get("rules"))
+    base = {**ds, "manual_include": [], "manual_exclude": []}
+    for k, field in (("clade", "clade"), ("lineage", "lineage"), ("outbreak", "outbreak"), ("region", "region"), ("country", "country"), ("host", "host")):
+        if r[k] and str(row.get(field) or "") not in r[k]:
+            return k, str(row.get(field) or "")
+    for k in ("completeness", "qc_not"):
+        if r[k] and not matches({**base, "rules": {k: r[k]}}, row, g):
+            return k, str((g or {}).get("completeness") or "") if k == "completeness" else ""
+    if (r["year_min"] or r["year_max"]) and not matches({**base, "rules": {"year_min": r["year_min"], "year_max": r["year_max"]}}, row, g):
+        return "year", str(row.get("date") or "")[:4]
+    if (r["min_length"] or r["max_length"]) and not matches({**base, "rules": {"min_length": r["min_length"], "max_length": r["max_length"]}}, row, g):
+        return "length", str(row.get("length") or "")
+    return "manual", ""
+
+
+def baseline(ds: dict) -> tuple[str, str]:
+    """When this dataset was last put to use - its latest analysis run or export, else its creation: genomes that came in after it are 'new' for the dataset. -> (ISO time, what it is)."""
+    con = connect()
+    try:
+        run = con.execute("SELECT id, started FROM analysis_run WHERE dataset_id=? ORDER BY started DESC LIMIT 1", (ds["id"],)).fetchone()
+        exp = con.execute("SELECT exported FROM dataset_export WHERE dataset_id=? ORDER BY exported DESC LIMIT 1", (ds["id"],)).fetchone()
+    finally:
+        con.close()
+    cand = [(ds["created"] or "", "데이터셋 생성")]
+    if run:
+        cand.append((run["started"] or "", f"분석 실행 #{run['id']}"))
+    if exp:
+        cand.append((exp["exported"] or "", "내보내기"))
+    return max(cand)
+
+
+def newcomers(ds: dict, since: str = "", limit: int = 400) -> dict:
+    """The genomes that entered the curated table after `since` (default: the dataset's baseline): which of them the dataset takes in by its rules, and which it does not, with the first rule that
+    keeps each out - so they can be added by hand (manual include) or the dataset's QC / rules can be adjusted."""
+    from . import export, exclusions, private
+    since = since or baseline(ds)[0]
+    src = "지정한 시각" if since and since != baseline(ds)[0] else baseline(ds)[1]
+    _w, rows = export._load(ds["watch_id"])
+    new = [g for g in rows if (g.get("date_inserted") or "") > since]
+    members, out = 0, []
+    reasons: Counter = Counter()
+    for g in new:
+        row = export.nextstrain_row(g)
+        why, val = why_not(ds, row, g)
+        needs_seq = normalize(ds.get("rules"))["require_sequence"] and not g.get("file_path")
+        if g.get("_excluded"):
+            why, val = "excluded", "데이터셋 제외 표시"
+        k = why or ("sequence" if needs_seq else "")
+        if not k:
+            members += 1
+            continue
+        reasons[k] += 1
+        out.append({"id": g["accession"], "private": False, "why": k, "value": val if why else "", "clade": row.get("clade") or "", "country": row.get("country") or "", "date": row.get("date") or "",
+                    "length": row.get("length") or "", "no_seq": not g.get("file_path")})
+    if ds.get("include_private"):
+        ex = exclusions.marked(watch_id, "private")
+        for r in private.rows_for_export(watch_id):
+            if r["id"] not in ex and matches(ds, export.private_row(r), None, key=r["id"]):
+                priv.add(r["id"])
+    return pub, priv
+
+
+def run_qc(ds: dict, progress=None, force: bool = False) -> dict:
+    """QC (sequence statistics, Nextclade) for exactly this dataset's members - the public genomes that have a sequence file and, when the
+    dataset includes them, the private ones - instead of the whole virus."""
+    from . import qc
+    p = progress or (lambda *a: None)
+    pub, priv = member_ids(ds["watch_id"], ds)
+    res = {"dataset": ds["name"], "public": None, "private": None}
+    res["public"] = qc.run(ds["watch_id"], lambda pct, m: p(pct * (0.8 if priv else 1), m), force, accessions=pub)
+    if priv:
+        res["private"] = qc.run_private(ds["watch_id"], lambda pct, m: p(80 + pct * 0.2, m), force, ids=priv)
+    return res
+
+
+# ------------------------------------------------------------------------------------------------ what values exist (for the rule builder)
+def facets(watch_id: int) -> dict:
+    """Value counts over the genomes the dataset rules can pick from (curated, not Removed, not marked excluded) - and the private store -
+    split into 'with a sequence file' (what an export needs) and all."""
+    from . import config, export, exclusions, private
+    w, rows = export._load(watch_id)
+    out: dict[str, Counter] = {k: Counter() for k in ("clade", "lineage", "outbreak", "region", "country", "host", "completeness", "year")}
+    seq: dict[str, Counter] = {k: Counter() for k in out}
+    n = n_seq = 0
+    for g in rows:
+        if g.get("_excluded"):
+            continue
+        r = export.nextstrain_row(g)
+        has = bool(g.get("file_path") and config.data_path(g["file_path"]).exists())
+        n += 1
+        n_seq += has
+        for k in out:
+            v = g.get("completeness") if k == "completeness" else (_year(r) if k == "year" else r.get(k))
+            v = "" if v is None else str(v)
+            out[k][v] += 1
+            if has:
+                seq[k][v] += 1
+    ex_priv = exclusions.marked(watch_id, "private")
+    pn = sum(1 for p in private.rows_for_export(watch_id) if p["id"] not in ex_priv)
+    return {"virus": w["name"], "taxon": w["taxon"], "genomes": n, "with_sequence": n_seq, "private": pn,
+            "fields": {k: [{"value": v, "n": c, "with_seq": seq[k].get(v, 0)} for v, c in sorted(out[k].items(), key=lambda x: (-x[1], x[0]))][:200] for k in out},
+            "presets": PRESETS.get((w["taxon"] or "").lower(), [])}
+
+
+# ------------------------------------------------------------------------------------------------ new genomes and the existing datasets
+_RULE_NAMES = {"clade": "clade", "lineage": "lineage", "outbreak": "outbreak", "region": "대륙·지역", "country": "나라", "host": "숙주", "completeness": "completeness", "qc_not": "QC 결과",
+               "year": "수집 연도", "length": "길이", "sequence": "서열 파일 없음"}
+
+
+def why_not(ds: dict, row: dict, g: dict | None) -> tuple[str, str]:
+    """(rule key, the genome's value) of the first rule that keeps a genome out of the dataset ('' when it is a member). A manual include / exclude is not a rule and is judged first by `matches`."""
+    if matches(ds, row, g):
+        return "", ""
+    r = normalize(ds.get("rules"))
+    base = {**ds, "manual_include": [], "manual_exclude": []}
+    for k, field in (("clade", "clade"), ("lineage", "lineage"), ("outbreak", "outbreak"), ("region", "region"), ("country", "country"), ("host", "host")):
+        if r[k] and str(row.get(field) or "") not in r[k]:
+            return k, str(row.get(field) or "")
+    for k in ("completeness", "qc_not"):
+        if r[k] and not matches({**base, "rules": {k: r[k]}}, row, g):
+            return k, str((g or {}).get("completeness") or "") if k == "completeness" else ""
+    if (r["year_min"] or r["year_max"]) and not matches({**base, "rules": {"year_min": r["year_min"], "year_max": r["year_max"]}}, row, g):
+        return "year", str(row.get("date") or "")[:4]
+    if (r["min_length"] or r["max_length"]) and not matches({**base, "rules": {"min_length": r["min_length"], "max_length": r["max_length"]}}, row, g):
+        return "length", str(row.get("length") or "")
+    return "manual", ""
+
+
+def baseline(ds: dict) -> tuple[str, str]:
+    """When this dataset was last put to use - its latest analysis run or export, else its creation: genomes that came in after it are 'new' for the dataset. -> (ISO time, what it is)."""
+    con = connect()
+    try:
+        run = con.execute("SELECT id, started FROM analysis_run WHERE dataset_id=? ORDER BY started DESC LIMIT 1", (ds["id"],)).fetchone()
+        exp = con.execute("SELECT exported FROM dataset_export WHERE dataset_id=? ORDER BY exported DESC LIMIT 1", (ds["id"],)).fetchone()
+    finally:
+        con.close()
+    cand = [(ds["created"] or "", "데이터셋 생성")]
+    if run:
+        cand.append((run["started"] or "", f"분석 실행 #{run['id']}"))
+    if exp:
+        cand.append((exp["exported"] or "", "내보내기"))
+    return max(cand)
+
+
+def newcomers(ds: dict, since: str = "", limit: int = 400) -> dict:
+    """The genomes that entered the curated table after `since` (default: the dataset's baseline): which of them the dataset takes in by its rules, and which it does not, with the first rule that
+    keeps each out - so they can be added by hand (manual include) or the dataset's QC / rules can be adjusted."""
+    from . import export, exclusions, private
+    since = since or baseline(ds)[0]
+    src = "지정한 시각" if since and since != baseline(ds)[0] else baseline(ds)[1]
+    _w, rows = export._load(ds["watch_id"])
+    new = [g for g in rows if (g.get("date_inserted") or "") > since]
+    members, out = 0, []
+    reasons: Counter = Counter()
+    for g in new:
+        row = export.nextstrain_row(g)
+        why, val = why_not(ds, row, g)
+        needs_seq = normalize(ds.get("rules"))["require_sequence"] and not g.get("file_path")
+        if g.get("_excluded"):
+            why, val = "excluded", "데이터셋 제외 표시"
+        if not why:
+            members += 1
+            if needs_seq:
+                reasons["sequence"] += 0
+        if why or needs_seq:
+            k = why or "sequence"
+            if not why:
+                members -= 1
+            reasons[k] += 1
+            out.append({"id": g["accession"], "private": False, "why": k, "value": val if why else "", "clade": row.get("clade") or "", "country": row.get("country") or "", "date": row.get("date") or "",
+                        "length": row.get("length") or "", "no_seq": not g.get("file_path")})
+    if ds.get("include_private"):
+        ex = exclusions.marked(ds["watch_id"], "private")
+        con = connect()
+        try:
+            imported = {r["id"]: r["imported"] or "" for r in con.execute("SELECT id, imported FROM private_genome WHERE watch_id=?", (ds["watch_id"],))}
+        finally:
+            con.close()
+        for r in private.rows_for_export(ds["watch_id"]):
+            if imported.get(r["id"], "") <= since:
+                continue
+            row = export.private_row(r)
+            why, val = ("excluded", "데이터셋 제외 표시") if r["id"] in ex else why_not(ds, row, None)
+            new.append(r)
+            if why:
+                reasons[why] += 1
+                out.append({"id": r["id"], "private": True, "why": why, "value": val, "clade": row.get("clade") or "", "country": row.get("country") or "", "date": row.get("date") or "", "length": row.get("length") or "",
+                            "no_seq": False})
+            else:
+                members += 1
+    return {"since": since, "baseline": src, "new_total": len(new), "members": members, "outside": len(out), "reasons": {_RULE_NAMES.get(k, k): n for k, n in reasons.items() if n},
+            "reason_keys": dict(reasons), "rows": out[:limit], "more": max(0, len(out) - limit)}
+
+
+def add_manual(dataset_id: int, ids: list[str]) -> dict:
+    """Put genomes into the dataset whatever its rules say (manual include) and take them off its manual-exclude list. Only ids of this virus's genomes (public accessions or private ids) are taken."""
+    ds = get(dataset_id)
+    if not ds:
+        raise ValueError("데이터셋을 찾을 수 없습니다.")
+    from . import export, private
+    _w, rows = export._load(ds["watch_id"])
+    valid = {g["accession"] for g in rows} | {r["id"] for r in private.rows_for_export(ds["watch_id"])}
+    want = [i for i in dict.fromkeys(str(x).strip() for x in ids) if i in valid]
+    if not want:
+        raise ValueError("추가할 유전체가 없습니다(이 바이러스의 유전체 ID가 아닙니다).")
+    inc = list(dict.fromkeys(ds["manual_include"] + want))
+    exc = [x for x in ds["manual_exclude"] if x not in set(want)]
+    con = connect()
+    try:
+        con.execute("UPDATE dataset SET manual_include_json=?, manual_exclude_json=?, updated=? WHERE id=?",
+                    (json.dumps(inc), json.dumps(exc), datetime.now().isoformat(timespec="seconds"), dataset_id))
+        audit(con, "dataset_add_manual", f"{ds['name']}: {len(want)}건을 직접 넣기에 추가")
+        con.commit()
+    finally:
+        con.close()
+    return {"added": len(want), "manual_include": len(inc), "removed_from_exclude": len(ds["manual_exclude"]) - len(exc)}

@@ -591,6 +591,25 @@ def create_app(scheduler: bool = True) -> FastAPI:
             return JSONResponse({"error": "cross-site request refused"}, 403)
         return {"deleted": datasets.delete(dsid)}
 
+    @app.get("/api/datasets/{dsid}/new")
+    def api_datasets_new(dsid: int, since: str = ""):
+        """Genomes that came into the table after the dataset was last used (or after `since`), and which of them its rules take in."""
+        ds = datasets.get(dsid)
+        if not ds:
+            return JSONResponse({"error": "unknown dataset"}, 404)
+        return datasets.newcomers(ds, since)
+
+    @app.post("/api/datasets/{dsid}/add")
+    async def api_datasets_add(request: Request, dsid: int):
+        """Add genomes to a dataset whatever its rules say (manual include)."""
+        if not _same_origin(request):
+            return JSONResponse({"error": "cross-site request refused"}, 403)
+        body = await request.json()
+        try:
+            return datasets.add_manual(dsid, body.get("ids") or [])
+        except ValueError as e:
+            return JSONResponse({"error": str(e)}, 400)
+
     @app.get("/api/datasets/{dsid}/qc")
     def api_datasets_qc(dsid: int):
         ds = datasets.get(dsid)

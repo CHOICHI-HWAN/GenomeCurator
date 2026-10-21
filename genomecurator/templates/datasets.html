@@ -38,6 +38,7 @@
   </div>
 
   <div class="card" id="pv" style="border-left:4px solid var(--acc)"><span class="mut">규칙을 고르면 멤버 수가 여기에 바로 나타납니다.</span></div>
+  <div class="card" id="nw" style="display:none;border-left:4px solid #2a9d8f"></div>
   <div style="display:flex;gap:8px;flex-wrap:wrap;margin-bottom:14px">
    <button type="button" class="p" onclick="saveDs()">저장</button>
    <button type="button" onclick="exportDs()" title="멤버를 확정해 metadata.tsv, sequences.fasta, manifest.json, 설정을 폴더에 만듭니다 (서버 작업)">내보내기 (폴더 만들기)</button>
@@ -73,7 +74,7 @@ function fill(ds){CUR=ds&&ds.id?ds:null;const r=(ds&&ds.rules)||{};document.getE
  document.querySelectorAll('.qn').forEach(x=>x.checked=(r.qc_not||[]).includes(x.value));document.getElementById('mi').value=((ds&&ds.manual_include)||[]).join('\n');document.getElementById('me').value=((ds&&ds.manual_exclude)||[]).join('\n');
  renderRules(r);document.getElementById('bdel').disabled=!CUR;links();preview()}
 async function qcDs(){if(!CUR)return;const f=document.getElementById('jf');f.action='/api/datasets/'+CUR.id+'/qc';runJob(f)}
-function links(){document.getElementById('bq').disabled=!CUR;const a=document.getElementById('dm'),b=document.getElementById('df'),v=document.getElementById('vw'),d=document.getElementById('vd');
+function links(){document.getElementById('bq').disabled=!CUR;loadNew();const a=document.getElementById('dm'),b=document.getElementById('df'),v=document.getElementById('vw'),d=document.getElementById('vd');
  if(CUR){v.href='/dataset/'+CUR.id;d.href='/dashboard?watch='+WID+'&dataset='+CUR.id;v.firstChild.disabled=d.firstChild.disabled=false}else{v.removeAttribute('href');d.removeAttribute('href');v.firstChild.disabled=d.firstChild.disabled=true}
  if(CUR){a.href='/api/export/'+WID+'/metadata.tsv?dataset='+CUR.id;b.href='/api/export/'+WID+'/sequences.fasta?dataset='+CUR.id;a.firstChild.disabled=b.firstChild.disabled=false}else{a.removeAttribute('href');b.removeAttribute('href');a.firstChild.disabled=b.firstChild.disabled=true}}
 function changed(){clearTimeout(timer);timer=setTimeout(preview,350)}
@@ -104,5 +105,20 @@ async function loadHist(){if(!CUR){document.getElementById('hist').innerHTML='';
  document.getElementById('presets').innerHTML=F.presets.length?'<div class="mut" style="margin-bottom:3px">프리셋으로 시작:</div>'+F.presets.map((p,i)=>'<button type="button" onclick="usePreset('+i+')" style="margin:2px 4px 2px 0">'+esc(p.name)+'</button>').join(''):'';
  await loadList();fill(null)})();
 function usePreset(i){const p=F.presets[i];fill({name:p.name,build:p.build,rules:Object.assign({require_sequence:true},p.rules),description:'',include_private:false,manual_include:[],manual_exclude:[]})}
+
+const NWHINT={clade:'clade가 비어 있으면 QC(Nextclade)를 돌려 보세요 — 분류되면 규칙에 맞을 수 있습니다',sequence:'서열 파일이 없습니다 — 유전체 보기에서 Get FASTA로 받으세요',excluded:'전역 “데이터셋 제외” 표시가 있습니다',manual:'직접 빼기 목록에 있습니다'};
+async function loadNew(since){const el=document.getElementById('nw');if(!CUR||!CUR.id){el.style.display='none';return}el.style.display='block';el.innerHTML='<span class="mut">새 유전체 확인 중…</span>';
+ let D;try{D=await (await fetch('/api/datasets/'+CUR.id+'/new'+(since?'?since='+encodeURIComponent(since):''))).json()}catch(e){el.innerHTML='';return}
+ if(D.error){el.innerHTML='<span class="mut">'+esc(D.error)+'</span>';return}
+ let h='<b>새로 들어온 유전체</b> <span class="mut">('+esc(D.baseline)+' 이후 '+esc(D.since.replace('T',' '))+' · 표에 들어온 시각 기준)</span><div style="margin-top:4px">새 유전체 <b>'+D.new_total.toLocaleString()+'</b>건 중 규칙에 맞아 <b style="color:var(--ok)">이 데이터셋에 이미 들어간 것 '+D.members.toLocaleString()+'건</b>'+(D.outside?' · <b style="color:var(--warn)">들어가지 않은 것 '+D.outside+'건</b> ('+Object.entries(D.reasons).map(([k,v])=>esc(k)+' '+v).join(', ')+')':'')+'</div>';
+ if(D.members)h+='<div class="mut" style="font-size:12.5px">규칙에 맞는 새 유전체는 자동으로 멤버입니다. 이미 만든 분석 실행에는 들어 있지 않으니 <a href="/hub?dataset='+CUR.id+'">분석 허브</a>에서 다시 실행하세요(서열이 있어야 합니다).</div>';
+ if(D.outside){const keys=Object.keys(D.reason_keys||{});h+='<div class="mut" style="font-size:12.5px;margin:4px 0">'+keys.filter(k=>NWHINT[k]).map(k=>'· '+esc(NWHINT[k])).join('<br>')+'</div>'
+  +'<div style="max-height:220px;overflow:auto"><table><tr><th><input type="checkbox" onchange="document.querySelectorAll(\'.nwc\').forEach(c=>c.checked=this.checked)"></th><th>유전체</th><th>안 들어간 이유</th><th>clade</th><th>나라</th><th>수집일</th><th>길이</th></tr>'+D.rows.map(r=>'<tr><td><input type="checkbox" class="nwc" value="'+esc(r.id)+'"></td><td>'+(r.private?'🔒 ':'')+esc(r.id)+'</td><td>'+esc(({clade:'clade',lineage:'lineage',outbreak:'outbreak',region:'대륙·지역',country:'나라',host:'숙주',completeness:'completeness',qc_not:'QC 결과',year:'수집 연도',length:'길이',sequence:'서열 파일 없음',excluded:'제외 표시',manual:'직접 빼기'})[r.why]||r.why)+(r.value?' ('+esc(r.value)+')':(r.why==='clade'?' (미정)':''))+'</td><td>'+esc(r.clade)+'</td><td>'+esc(r.country)+'</td><td>'+esc(r.date)+'</td><td>'+esc(r.length)+'</td></tr>').join('')+'</table></div>'+(D.more?'<div class="mut">… 외 '+D.more+'건(표시 제한)</div>':'')
+  +'<div style="margin-top:6px;display:flex;gap:8px;flex-wrap:wrap"><button type="button" class="p" onclick="addNew(false)">선택한 유전체를 이 데이터셋에 추가</button><button type="button" onclick="addNew(true)">들어가지 않은 새 유전체를 모두 추가</button><span class="mut" style="font-size:12px;align-self:center">“직접 넣기”에 올라가며, 규칙과 상관없이 멤버가 됩니다(서열 파일이 없으면 FASTA에서는 빠집니다)</span></div>'}
+ el.innerHTML=h;window._NW=D}
+async function addNew(all){const ids=all?(window._NW.rows||[]).map(r=>r.id):[...document.querySelectorAll('.nwc:checked')].map(c=>c.value);if(!ids.length){alert('추가할 유전체를 고르세요.');return}
+ if(!confirm(ids.length+'건을 "'+CUR.name+'" 데이터셋에 직접 넣기로 추가합니다. 규칙과 상관없이 멤버가 됩니다. 계속할까요?'))return;
+ const r=await fetch('/api/datasets/'+CUR.id+'/add',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({ids})});const d=await r.json();if(d.error){alert(d.error);return}
+ const id=CUR.id;await loadList();fill(window._L.find(x=>x.id===id));preview();loadNew()}
 </script>
 {% endblock %}

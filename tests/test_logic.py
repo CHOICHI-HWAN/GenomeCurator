@@ -3391,3 +3391,33 @@ def test_intake_history_counts_intake_and_collection_dates(tmp_path, monkeypatch
     assert w["added"] == [2, 3] and w["coarse_skipped"] == 1                        # the month-only date cannot be put on a week
     s = intake.history(1, "day", "month", sel="2026-10-19")
     assert s["sel_n"] == 3 and sum(s["collected"]) == 1 and s["year_only"] == 1
+
+
+def test_new_genomes_for_an_existing_dataset(tmp_path, monkeypatch):
+    from genomecurator import config, datasets, db, export, private
+    monkeypatch.setattr(config, "DB_PATH", tmp_path / "t.db")
+    with db.connect() as con:
+        con.execute("INSERT INTO watchlist(id,name,taxon) VALUES(1,'V','v')")
+    ds = datasets.save(1, "Ib", {"clade": ["Ib"], "country": ["Uganda", "Rwanda"], "year_min": 2023, "require_sequence": True})
+    base = datasets.baseline(ds)
+    assert base[1] == "데이터셋 생성"
+    g = lambda acc, clade, country, date, seq=True, ins="2999-01-01T00:00:00": {"accession": acc, "date_inserted": ins, "clade": clade, "isolation_country": country, "collection_date": date, "file_path": "x" if seq else None,
+                                                                         "_qc": {}, "_excluded": False}
+    rows = [g("OK", "Ib", "Uganda", "2024-05-01"), g("NOCLADE", "", "Uganda", "2024-05-01"), g("IIB", "IIb", "Uganda", "2024-05-01"), g("FOREIGN", "Ib", "Peru", "2024-05-01"),
+            g("OLD", "Ib", "Uganda", "2019-05-01"), g("NOSEQ", "Ib", "Uganda", "2024-05-01", seq=False), g("BEFORE", "IIb", "Peru", "2024-05-01", ins="2000-01-01T00:00:00")]
+    monkeypatch.setattr(export, "_load", lambda wid: ({}, rows))
+    monkeypatch.setattr(export, "nextstrain_row", lambda r: {"clade": r["clade"], "country": r["isolation_country"], "date": r["collection_date"], "length": 190000, "PPX_accession": r["accession"]})
+    monkeypatch.setattr(private, "rows_for_export", lambda wid: [])
+    n = datasets.newcomers(ds, since="2001-01-01T00:00:00")
+    assert n["new_total"] == 6 and n["members"] == 1                                         # BEFORE came in earlier; only OK matches every rule
+    why = {r["id"]: r["why"] for r in n["rows"]}
+    assert why == {"NOCLADE": "clade", "IIB": "clade", "FOREIGN": "country", "OLD": "year", "NOSEQ": "sequence"}
+    a = datasets.add_manual(ds["id"], ["NOCLADE", "OLD", "NOT-A-GENOME"])
+    assert a["added"] == 2
+    ds2 = datasets.get(ds["id"])
+    assert set(ds2["manual_include"]) == {"NOCLADE", "OLD"}
+    n2 = datasets.newcomers(ds2, since="2001-01-01T00:00:00")
+    assert n2["members"] == 3 and {r["id"] for r in n2["rows"]} == {"IIB", "FOREIGN", "NOSEQ"}      # added by hand: members whatever the rules say
+    import pytest
+    with pytest.raises(ValueError):
+        datasets.add_manual(ds["id"], ["NOT-A-GENOME"])
