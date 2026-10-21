@@ -6,7 +6,7 @@ from fastapi import FastAPI, Form, Request
 from fastapi.responses import FileResponse, HTMLResponse, JSONResponse, RedirectResponse, Response, StreamingResponse
 from fastapi.templating import Jinja2Templates
 
-from . import beastprep, clock, pipeline, support, variantcall, variantflow, __version__, analysis, completeness, datasets, exclusions, export, cooccur, geo, heatmap, vocab, insight, lineages, mutprofile, nextstrain, novel, outbreak, pathoplexus, private, qc, squirrel, config, curate, jobs, log
+from . import beastprep, clock, mutgantt, pipeline, support, variantcall, variantflow, __version__, analysis, completeness, datasets, exclusions, export, cooccur, geo, heatmap, vocab, insight, lineages, mutprofile, nextstrain, novel, outbreak, pathoplexus, private, qc, squirrel, config, curate, jobs, log
 from .db import audit_now, connect
 
 _log = log.get("web")
@@ -1130,6 +1130,19 @@ def create_app(scheduler: bool = True) -> FastAPI:
         try:
             return mutprofile.snipit_data(r, [x for x in lineage.split(",") if x], [x for x in clade.split(",") if x], gene, start, end, bool(apobec), hide_common,
                                           per_group, min(max_samples, 300), group_by if group_by in ("lineage", "clade") else "lineage", sort)
+        except ValueError as e:
+            return JSONResponse({"error": str(e)}, 400)
+
+    @app.get("/api/analyses/{rid}/mutation_gantt")
+    def api_analysis_mutation_gantt(rid: int, bin: str = "month", lineage: str = "", clade: str = "", gene: str = "", start: int = 0, end: int = 0, apobec: int = 0, hide_common: float = 0.0,
+                                    min_carriers: int = 3, max_rows: int = 150, sort: str = "first", max_n: float = 0.05):
+        """The mutations of a run as a Gantt chart: one row per mutation, time in ISO weeks or months, ordered by when each was first observed (collection dates of the carrying genomes)."""
+        r = nextstrain.get_run(rid)
+        if not r or r["tool"] != "mutprofile" or r["status"] != "done":
+            return JSONResponse({"error": "finished mutation-profile run not found"}, 404)
+        try:
+            return mutgantt.build(r, bin, [x for x in lineage.split(",") if x], [x for x in clade.split(",") if x], gene, start, end, bool(apobec), hide_common, max(1, min_carriers),
+                                  min(max(1, max_rows), 600), sort if sort in ("first", "pos", "n") else "first", min(1.0, max(0.0, max_n)))
         except ValueError as e:
             return JSONResponse({"error": str(e)}, 400)
 

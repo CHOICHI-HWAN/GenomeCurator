@@ -3188,3 +3188,39 @@ def test_gss_xml_has_a_working_prior_for_every_free_parameter():
     with pytest.raises(ValueError):
         beastprep.parse_bets_settings({"estimator": "harmonic"})
     assert float(beastprep._MLE_RE["gss"].search("log marginal likelihood (using generalized stepping stone sampling) from (pathLikelihood.source - pathLikelihood.destination) = -1220.4")[1]) == -1220.4
+
+
+def test_mutation_gantt_orders_by_first_observation_and_counts_per_period(tmp_path, monkeypatch):
+    import csv
+    import pytest
+    from genomecurator import insight, mutgantt, mutprofile
+    # three mutations carried by genomes collected on known dates; M2 first observed earliest, M3 only from a genome with a month-only date
+    meta = {"g1": ("2025-01-05", "A"), "g2": ("2025-01-20", "A"), "g3": ("2025-03-02", "B"), "g4": ("2025-03", "B"), "g5": ("", "B")}
+    monkeypatch.setattr(mutprofile, "_run_meta", lambda run: {k: {"clade": "Ib", "lineage": l, "country": "X", "date": d, "outbreak": ""} for k, (d, l) in meta.items()})
+    monkeypatch.setattr(mutprofile, "summary", lambda run: {"reference": ""})
+    monkeypatch.setattr(mutprofile, "reference_by_name", lambda ref: (None, None))
+    monkeypatch.setattr(mutprofile, "read_fasta", lambda fa: ("", ""))
+    def row(s, pos, alt, apo=""):
+        return {"sample": s, "pos": str(pos), "ref": "A", "alt": alt, "gene": "G1" if pos < 200 else "", "aa_change": "", "effect": "synonymous", "profile_of_interest": apo}
+    rows = [row("g3", 100, "T"), row("g4", 100, "T"), row("g5", 100, "T"),                       # M1 (100T): first seen 2025-03-02
+            row("g1", 300, "C", "apobec"), row("g2", 300, "C", "apobec"), row("g3", 300, "C", "apobec"),  # M2 (300C): first seen 2025-01-05
+            row("g4", 50, "G"), row("g5", 50, "G"), row("g3", 50, "G")]                                 # M3 (50G): g4 has only a month
+    monkeypatch.setattr(insight, "_mutations", lambda run, max_n=None: rows)
+    g = mutgantt.build({}, "month", min_carriers=2)
+    assert [x["key"] for x in g["rows"]] == ["300C", "50G", "100T"] and g["total_rows"] == 3                      # earliest first observation on top
+    by = {x["key"]: x for x in g["rows"]}
+    assert by["300C"]["first"] == "2025-01-05" and by["300C"]["last"] == "2025-03-02" and by["300C"]["cells"] == {"2025-01": 2, "2025-03": 1} and by["300C"]["apobec"] == 1
+    assert by["100T"]["n"] == 3 and by["100T"]["n_dated"] == 2 and by["100T"]["first"] == "2025-03"               # g5 has no date: counted as a carrier, not placed in time; a month-only date counts as the start of its month, so it is the earliest possible
+    assert g["periods"] == ["2025-01", "2025-02", "2025-03"] and g["no_date"] == 1 and g["month_only"] == 1
+    w = mutgantt.build({}, "week", min_carriers=2)
+    assert w["periods"][0] == "2025-W01" and w["rows"][0]["key"] == "300C" and sum(w["rows"][0]["cells"].values()) == 3
+    assert {sum(x["cells"].values()) for x in w["rows"] if x["key"] == "50G"} == {1}                              # the month-only genome is not on a week
+    assert [x["key"] for x in mutgantt.build({}, "month", min_carriers=2, sort="pos")["rows"]] == ["50G", "100T", "300C"]
+    assert [x["key"] for x in mutgantt.build({}, "month", min_carriers=2, sort="n")["rows"]] == ["300C", "50G", "100T"]               # equal counts: the earlier first observation first
+    assert [x["key"] for x in mutgantt.build({}, "month", min_carriers=2, apobec_only=True)["rows"]] == ["300C"]
+    assert [x["key"] for x in mutgantt.build({}, "month", min_carriers=2, start=1, end=120)["rows"]] == ["50G", "100T"]
+    assert mutgantt.build({}, "month", min_carriers=4)["total_rows"] == 0                                         # a mutation needs enough carriers
+    assert [x["key"] for x in mutgantt.build({}, "month", min_carriers=2, lineage_set=["A"])["rows"]] == ["300C"]
+    assert len(mutgantt.build({}, "month", min_carriers=2, max_rows=2)["rows"]) == 2
+    with pytest.raises(ValueError):
+        mutgantt.build({}, "month", gene="NOPE")
