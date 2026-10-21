@@ -23,11 +23,33 @@ COMPARE = ["accession_version"] + config.TRACKED_FIELDS
 
 
 # ------------------------------------------------------------------ watchlist
+class AlreadyWatched(ValueError):
+    """The virus (by name, or by the NCBI taxon it resolves to) is already on the watchlist. Not a failure: `.name` / `.watch_id` say which entry it is."""
+
+    def __init__(self, name: str, watch_id: int):
+        super().__init__(f"이미 워치리스트에 있습니다: {name}")
+        self.name, self.watch_id = name, watch_id
+
+
 def add_watch(name: str, taxon: str | None = None, filters: dict | None = None) -> int:
+    con0 = connect()
+    try:
+        dup = con0.execute("SELECT id, name FROM watchlist WHERE name=?", (name,)).fetchone()
+    finally:
+        con0.close()
+    if dup:
+        raise AlreadyWatched(dup["name"], dup["id"])
     tid, taxon = sources.ncbi_resolve_virus(taxon or name)  # ValueError if not a virus / no records
     sp = sources.ncbi_species_scope(tid)
     if sp:  # watch the species so records tagged at the species node are not missed
         tid, taxon = sp
+    con0 = connect()
+    try:
+        dup = con0.execute("SELECT id, name FROM watchlist WHERE taxon_id=?", (tid,)).fetchone()
+    finally:
+        con0.close()
+    if dup:                                                   # another name for a taxon that is already watched: one entry per taxon
+        raise AlreadyWatched(dup["name"], dup["id"])
     with tx() as con:
         cur = con.execute(
             "INSERT INTO watchlist(name, taxon, taxon_id, filters_json) VALUES(?,?,?,?)",

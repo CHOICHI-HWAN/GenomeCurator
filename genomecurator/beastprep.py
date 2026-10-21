@@ -146,7 +146,8 @@ def build_xml(seqs: dict[str, str], dates: dict[str, float], groups: dict[str, l
     if fixed_freq:
         cnt = {b: sum(q.count(b) for q in seqs.values()) for b in "ACGT"}
         tot = max(1, sum(cnt.values()))
-        freq_value = " ".join(f"{cnt[b] / tot:.6f}" for b in "ACGT")
+        fr = [round(cnt[b] / tot, 10) for b in "ACG"]
+        freq_value = " ".join(f"{x:.10f}" for x in fr) + f" {1 - sum(fr):.10f}"                 # the last one is the remainder: BEAST refuses frequencies that do not sum to 1 (6 decimals gave 1.000001)
     else:
         freq_value = "0.25 0.25 0.25 0.25"
     w('\t<HKYModel id="hky"><frequencies><frequencyModel dataType="nucleotide"><frequencies><parameter id="frequencies" value="' + freq_value + '"/></frequencies></frequencyModel></frequencies>'
@@ -531,6 +532,9 @@ def gss_xml(clock_run: dict, tag: str, s: dict) -> str:
     d = bets_folder(clock_run) / tag / "mcmc"
     post = read_log(d / "beast.log", 0.5)["params"]
     init = {k: post[k]["median"] for k in GSS_PARAMS if k in post}
+    flat = [k for k in GSS_PARAMS if k in post and post[k]["hi"] - post[k]["lo"] <= 0]
+    if flat:                                                  # a parameter that never moved has no density to build a working prior from (BEAST would give NaN)
+        raise RuntimeError(f"일반 체인에서 {', '.join(flat)} 값이 변하지 않았습니다 — 체인이 너무 짧거나 섞이지 않아 작업 사전분포를 만들 수 없습니다. 초기 체인을 늘려 다시 실행하세요.")
     ms = {**s, "chain_length": GSS_BURN, "samples": 100}
     return build_xml(seqs, dates, {}, ms, rate0, "gss", proper=True, fixed_freq=True, init=init,
                      gss={"log": "beast.log", "burnin": s["initial_chain"] // 2, "chain_length": s["step_chain"], "path_steps": s["path_steps"], "alpha": 0.3})

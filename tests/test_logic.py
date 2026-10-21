@@ -3224,3 +3224,45 @@ def test_mutation_gantt_orders_by_first_observation_and_counts_per_period(tmp_pa
     assert len(mutgantt.build({}, "month", min_carriers=2, max_rows=2)["rows"]) == 2
     with pytest.raises(ValueError):
         mutgantt.build({}, "month", gene="NOPE")
+    # lineage-defining mutations: tagged, and filtered with defining=only/none
+    monkeypatch.setattr(mutgantt, "defining_map", lambda run, meta, fa: {(300, "C"): ["A"]})
+    d = mutgantt.build({}, "month", min_carriers=2)
+    assert {x["key"]: x["defines"] for x in d["rows"]} == {"300C": ["A"], "50G": [], "100T": []} and d["n_defining_shown"] == 1 and d["definitions"]
+    assert [x["key"] for x in mutgantt.build({}, "month", min_carriers=2, defining="only")["rows"]] == ["300C"]
+    assert [x["key"] for x in mutgantt.build({}, "month", min_carriers=2, defining="none")["rows"]] == ["50G", "100T"]
+    # one mutation over time: carriers per period by lineage against the genomes sampled in that period
+    sr = mutgantt.series({}, 300, "C", "month")
+    assert sr["periods"] == ["2025-01", "2025-02", "2025-03"] and sr["sampled"] == [2, 0, 2] and sr["carriers"] == [2, 0, 1] and sr["n_carriers"] == 3 and sr["undated"] == 1
+    assert sr["lineages"][0]["lineage"] == "A" and sr["lineages"][0]["counts"] == [2, 0, 0] and sr["lineages"][1]["lineage"] == "B" and sr["lineages"][1]["counts"] == [0, 0, 1]
+    sw = mutgantt.series({}, 100, "T", "week")
+    assert sum(sw["carriers"]) == 1 and sum(sw["sampled"]) == 3                                                 # the month-only genome is left out of the weekly view
+    assert mutgantt.series({}, 999, "A", "month")["n_carriers"] == 0
+
+
+def test_empirical_base_frequencies_sum_to_one_for_beast():
+    import random
+    import xml.etree.ElementTree as ET
+    from genomecurator import beastprep
+    for seed in range(40):                                                   # rounding to few decimals made some sets sum to 1.000001, which BEAST refuses
+        rng = random.Random(seed)
+        w = [rng.random() + 0.1 for _ in range(4)]
+        seqs = {f"s{i}": "".join(rng.choices("ACGT", weights=w, k=777)) for i in range(5)}
+        xml = beastprep.build_xml(seqs, {n: 2024.0 for n in seqs}, {}, {"n_tips": 5, "chain_length": 1000, "samples": 100, "clock": "strict", "tree_prior": "constant", "seed": 1, "threads": 0}, 1e-5, fixed_freq=True)
+        f = [float(x) for x in [e for e in ET.fromstring(xml).iter("parameter") if e.get("id") == "frequencies"][0].get("value").split()]
+        assert len(f) == 4 and abs(sum(f) - 1.0) < 1e-9
+
+
+def test_adding_a_virus_that_is_already_watched_is_not_an_error(tmp_path, monkeypatch):
+    import pytest
+    from genomecurator import config, curate, sources
+    monkeypatch.setattr(config, "DATA_DIR", tmp_path)
+    monkeypatch.setattr(config, "DB_PATH", tmp_path / "t.db")
+    monkeypatch.setattr(sources, "ncbi_resolve_virus", lambda q: (3052458, "Orthoebolavirus bundibugyoense"))
+    monkeypatch.setattr(sources, "ncbi_species_scope", lambda tid: None)
+    first = curate.add_watch("Orthoebolavirus bundibugyoense")
+    with pytest.raises(curate.AlreadyWatched) as e:                              # same name: caught before the database refuses it with a traceback
+        curate.add_watch("Orthoebolavirus bundibugyoense")
+    assert e.value.watch_id == first and e.value.name == "Orthoebolavirus bundibugyoense" and isinstance(e.value, ValueError)
+    with pytest.raises(curate.AlreadyWatched) as e2:                             # another name for the same taxon
+        curate.add_watch("Bundibugyo virus", "Orthoebolavirus bundibugyoense")
+    assert e2.value.watch_id == first

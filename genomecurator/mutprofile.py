@@ -586,4 +586,5 @@ def snipit_data(run: dict, lineages=(), clades=(), gene: str = "", start: int = 
         samples.append({"id": i, **m_, "n_total": len(by[i]), "snps": snps})
     win = run_itr(run)
     return {"reference": refname or ref, "length": len(refseq), "start": start, "end": end, "itr_masked": ([1, win[0] - 1], [win[1] + 1, len(refseq)]) if win else None, "genes": genes, "samples": samples, "available": len(ids), "all_samples": len(by), "definitions": have_defs,
-            "lineages": sorted({m["lineage"] for i, m in meta.items() if i in by and m["lineage"]}), "clades": sorted({m["clade"] for i, m in meta.items() if i in by and m["clade"]})}
+            "lineages": sorted({m["lineage"] for i, m in meta.items() if i in by and m["lineage"]}), "clades": sorted({m["clade"] for i, m in meta.items() if i in by and m["clade"]}),
+            "lineage_counts": dict(Counter(m["lineage"] for i, m in meta.items() if i in by and m["lineage"])), "clade_counts": dict(Counter(m["clade"] for i, m in meta.items() if i in by and m["clade"]))}

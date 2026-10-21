@@ -344,7 +344,10 @@ def create_app(scheduler: bool = True) -> FastAPI:
 
         def work(p):
             p(10, f"'{nm}'을(를) NCBI에서 바이러스로 확인하는 중…")
-            curate.add_watch(nm, tx)
+            try:
+                curate.add_watch(nm, tx)
+            except curate.AlreadyWatched as e:                  # already there: say so and go to it, it is not an error
+                return f"/genomes?watch={e.watch_id}&msg=이미 워치리스트에 있습니다: {e.name} (유전체 화면으로 이동했습니다)"
             p(95, "워치리스트에 등록했습니다")
             return f"/?msg=추가했습니다: {nm}"
         return start_job(work, f"바이러스 추가 · {nm}", "watch_add")
@@ -1135,16 +1138,24 @@ def create_app(scheduler: bool = True) -> FastAPI:
 
     @app.get("/api/analyses/{rid}/mutation_gantt")
     def api_analysis_mutation_gantt(rid: int, bin: str = "month", lineage: str = "", clade: str = "", gene: str = "", start: int = 0, end: int = 0, apobec: int = 0, hide_common: float = 0.0,
-                                    min_carriers: int = 3, max_rows: int = 150, sort: str = "first", max_n: float = 0.05):
+                                    min_carriers: int = 3, max_rows: int = 150, sort: str = "first", max_n: float = 0.05, defining: str = "all"):
         """The mutations of a run as a Gantt chart: one row per mutation, time in ISO weeks or months, ordered by when each was first observed (collection dates of the carrying genomes)."""
         r = nextstrain.get_run(rid)
         if not r or r["tool"] != "mutprofile" or r["status"] != "done":
             return JSONResponse({"error": "finished mutation-profile run not found"}, 404)
         try:
             return mutgantt.build(r, bin, [x for x in lineage.split(",") if x], [x for x in clade.split(",") if x], gene, start, end, bool(apobec), hide_common, max(1, min_carriers),
-                                  min(max(1, max_rows), 600), sort if sort in ("first", "pos", "n") else "first", min(1.0, max(0.0, max_n)))
+                                  min(max(1, max_rows), 600), sort if sort in ("first", "pos", "n") else "first", min(1.0, max(0.0, max_n)), defining if defining in ("all", "only", "none") else "all")
         except ValueError as e:
             return JSONResponse({"error": str(e)}, 400)
+
+    @app.get("/api/analyses/{rid}/mutation_series")
+    def api_analysis_mutation_series(rid: int, pos: int, alt: str, bin: str = "month", max_n: float = 0.05):
+        """One mutation over time: carriers per month/ISO week (by lineage) against the genomes sampled in that period."""
+        r = nextstrain.get_run(rid)
+        if not r or r["tool"] != "mutprofile" or r["status"] != "done":
+            return JSONResponse({"error": "finished mutation-profile run not found"}, 404)
+        return mutgantt.series(r, pos, alt, bin, min(1.0, max(0.0, max_n)))
 
     @app.get("/api/analyses/{rid}/files/{path:path}")
     def api_analysis_file(rid: int, path: str):
