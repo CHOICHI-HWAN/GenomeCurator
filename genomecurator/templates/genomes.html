@@ -6,11 +6,6 @@
 <div class="bvh"><div class="ico">{{ 'D' if dataset else 'T' }}</div><div><small>{{ 'Dataset View' if dataset else 'Taxon View' }}</small>
  <div class="crumb">{% for l in data.lineage[:-1] %}{{ l }} › {% endfor %}{% if dataset %}<b>{{ dataset.name }}</b>{% else %}<b>{{ data.watch }}</b>{% endif %} <em>( {{ data.rows|length }} Genomes )</em></div></div>
  {% if not dataset %}<select style="margin-left:auto" onchange="location.href='/genomes?watch='+this.value">{% for w in watches %}<option value="{{ w.id }}" {{ 'selected' if w.id==watch }}>{{ w.name }} ({{ w.n }})</option>{% endfor %}</select>{% endif %}</div>
-{% if not dataset and watch %}<details id="ih" class="card" style="margin:6px 0;padding:8px 12px" open><summary style="cursor:pointer"><b>유입 이력</b> <span class="mut">큐레이션을 거쳐 표에 들어온 시점과 채집일</span></summary>
- <div style="display:flex;gap:14px;flex-wrap:wrap;align-items:end;margin:6px 0;font-size:13px"><label>유입 단위 <select id="ib" onchange="ihLoad(true)"><option value="day">일</option><option value="week">ISO 주</option><option value="month">월</option></select></label>
- <label><input type="checkbox" id="isq" checked onchange="ihLoad()"> 제곱근 눈금(작은 날도 보이게)</label><label>채집일 단위 <select id="icb" onchange="ihLoad()"><option value="day">일</option><option value="week">ISO 주</option><option value="month" selected>월</option></select></label><span class="mut" id="ihi"></span></div>
- <div id="ih1"></div><div id="ih2" style="margin-top:8px"></div></details>
-{% endif %}
 {% if dataset %}<div class="card" style="margin:6px 0;padding:8px 12px;border-left:4px solid var(--acc)"><b>데이터셋 {{ dataset.name }}</b>{% if dataset.description %} <span class="mut">— {{ dataset.description }}</span>{% endif %}
  <div class="mut" style="font-size:12.5px">정의: {{ ds_summary }} · 공개 <b>{{ ds_info.public }}건</b>{% if dataset.include_private %} · 🔒 비공개 <b>{{ ds_info.private }}건</b>{% endif %}
   {% if ds_info.no_seq %} · <span style="color:var(--warn)">서열이 없는 {{ ds_info.no_seq }}건은 내보내기에서 빠집니다 (아래 배너의 <b>모두 받기</b>가 이 데이터셋의 서열만 받습니다)</span>{% endif %}
@@ -92,24 +87,10 @@ function getSeq(all){const DD=JSON.parse(document.getElementById('gdata').textCo
  if(!confirm('FASTA가 없는 '+todo.length.toLocaleString()+'건의 서열을 NCBI에서 받습니다.'+(all===true?' (이 바이러스의 서열 없는 전체)':(sel.length?'':' (선택이 없어 현재 필터에 보이는 전체 대상)'))+'\n\n용량 약 '+e.gb+' · 예상 '+e.min+'분 안팎(네트워크에 따라 다릅니다)\n서버에서 진행되므로 다른 메뉴로 가도 되고, 중간에 멈춰도 이어받습니다.\n\n계속할까요?'))return;
  document.getElementById('sqids').value=todo.map(r=>r.genome_id).join(',');runJob(document.getElementById('sqf'))}
 </script>
-<script>
-let IH_SEL='';
-const IHE=s=>String(s??'').replace(/[&<>"]/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c]));
-function ihBars(per,series,opts){const n=per.length,L=46,H=opts.h||110,CW=Math.max(2,Math.min(26,1000/Math.max(1,n))),W=L+n*CW+16,tot=i=>series.reduce((a,s)=>a+s.v[i],0),mx=Math.max(1,...per.map((_,i)=>tot(i))),sc=opts.sqrt?(t=>Math.sqrt(t/mx)*(H-6)/Math.max(1,1)):(t=>t/mx*(H-6));
- let s='<svg width="'+W+'" height="'+(H+34)+'" font-family="Helvetica,Arial,sans-serif" font-size="10"><text x="'+(L-4)+'" y="12" text-anchor="end" fill="#666">'+mx.toLocaleString()+'</text><text x="'+(L-4)+'" y="'+(H+6)+'" text-anchor="end" fill="#666">0</text><line x1="'+L+'" y1="'+(H+8)+'" x2="'+(L+n*CW)+'" y2="'+(H+8)+'" stroke="#999"/>';
- per.forEach((p,i)=>{let y=H+8;series.forEach(se=>{const v=se.v[i];if(!v)return;const h=tot(i)?sc(tot(i))*v/tot(i):0;y-=h;s+='<rect x="'+(L+i*CW+0.5)+'" y="'+y+'" width="'+Math.max(1,CW-1)+'" height="'+h+'" fill="'+se.c+'"'+(opts.click?' style="cursor:pointer" onclick="ihSel(\''+p+'\')"':'')+'><title>'+IHE(p+' · '+se.name+' '+v.toLocaleString())+'</title></rect>'});
-  if(opts.sel===p)s+='<rect x="'+(L+i*CW-1)+'" y="8" width="'+(CW+1)+'" height="'+H+'" fill="none" stroke="#000"/>';
-  if(n<=45||i%Math.ceil(n/40)===0)s+='<text x="'+(L+i*CW+CW/2)+'" y="'+(H+20)+'" text-anchor="end" transform="rotate(-40 '+(L+i*CW+CW/2)+' '+(H+20)+')" fill="#666">'+IHE(opts.lab?opts.lab(p):p)+'</text>'});
- (opts.marks||[]).forEach(m=>{const i=per.indexOf(m.period);if(i>=0)s+='<path d="M'+(L+i*CW+CW/2)+' '+(H+9)+'l4 4l-4 4l-4-4z" fill="#d6249f"><title>'+IHE('변경 #'+m.id+' 적용 '+m.at)+'</title></path>'});
- return s+'</svg>'}
-function ihSel(p){IH_SEL=IH_SEL===p?'':p;ihLoad(false)}
-async function ihLoad(reset){if(reset)IH_SEL='';const q=new URLSearchParams({bin:document.getElementById('ib').value,cbin:document.getElementById('icb').value,sel:IH_SEL});
- const D=await (await fetch('/api/watch/{{ watch }}/intake?'+q)).json();const u={day:'일',week:'주',month:'월'};
- document.getElementById('ihi').textContent='표의 유전체 '+D.total.toLocaleString()+'건(비공개 '+D.private+')'+(D.unusable_intake?' · 유입 시각을 읽지 못한 '+D.unusable_intake+'건':'');
- const leg=(c,t)=>'<span style="margin-right:12px"><i style="display:inline-block;width:10px;height:10px;background:'+c+';margin-right:3px"></i>'+t+'</span>';
- document.getElementById('ih1').innerHTML=D.periods.length?'<b>① 표에 들어온 유전체 수 (유입일 기준, '+u[D.bin]+'별)</b> <span class="mut">막대를 누르면 아래 채집일 분포가 그 기간에 들어온 유전체만으로 바뀝니다 · ◆ = 변경 적용</span><div style="overflow-x:auto">'+ihBars(D.periods,[{name:'신규(공개)',v:D.added,c:'#1f77b4'},{name:'신규(비공개)',v:D.added_private,c:'#d6249f'},{name:'기존 유전체 수정',v:D.changed,c:'#f2a33a'}],{click:true,sel:IH_SEL,marks:D.applied,sqrt:document.getElementById('isq').checked})+'</div><div style="font-size:12px">'+leg('#1f77b4','신규(공개)')+leg('#d6249f','신규(비공개)')+leg('#f2a33a','기존 유전체 수정')+'</div>':'<div class="mut">유입 기록이 없습니다.</div>';
- document.getElementById('ih2').innerHTML='<b>② 채집일 분포 ('+u[D.cbin]+'별)</b> <span class="mut">'+(IH_SEL?'유입 '+IHE(IH_SEL)+'에 들어온 '+D.sel_n.toLocaleString()+'건 <a href="#" onclick="ihSel(\''+IHE(IH_SEL)+'\');return false">전체 보기</a>':'모든 유전체')+'</span>'+(D.cperiods.length?'<div style="overflow-x:auto">'+ihBars(D.cperiods,[{name:'채집',v:D.collected,c:'#2a9d8f'}],{lab:p=>p})+'</div>':'<div class="mut">채집일이 있는 유전체가 없습니다.</div>')
-  +'<div class="mut" style="font-size:12px">채집일 없음 '+D.no_date.toLocaleString()+'건 · 연도만 있음 '+D.year_only.toLocaleString()+'건'+(D.coarse_skipped?' · 이 단위로 그릴 수 없는 날짜(월까지만 있는 날짜 등) '+D.coarse_skipped.toLocaleString()+'건은 그래프에서 빠짐 — 월 단위로 바꾸면 들어갑니다':'')+'</div>'}
-document.getElementById('ih')&&ihLoad(true);
-</script>
+{% if not dataset and watch %}<details id="ih" class="card" style="margin:6px 0;padding:8px 12px" open><summary style="cursor:pointer"><b>유입 이력</b> <span class="mut">큐레이션을 거쳐 표에 들어온 시점과 채집일</span></summary>
+ <div style="display:flex;gap:14px;flex-wrap:wrap;align-items:end;margin:6px 0;font-size:13px"><label>유입 단위 <select id="ib" onchange="ihLoad(true)"><option value="day">일</option><option value="week">ISO 주</option><option value="month">월</option></select></label>
+ <label><input type="checkbox" id="isq" checked onchange="ihLoad()"> 제곱근 눈금(작은 날도 보이게)</label><label>채집일 단위 <select id="icb" onchange="ihLoad()"><option value="day">일</option><option value="week">ISO 주</option><option value="month" selected>월</option></select></label><span class="mut" id="ihi"></span></div>
+ <div id="ih1"></div><div id="ih2" style="margin-top:8px"></div></details>
+{% endif %}
+{% if not dataset and watch %}{% include "_intake.html" %}<script>ihLoad(true)</script>{% endif %}
 {% endblock %}

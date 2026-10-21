@@ -1,0 +1,40 @@
+{# intake history: the chart helpers (full card on the genome table, compact rows on the curation page) #}
+<script>
+let IH_SEL='';
+const IHE=s=>String(s??'').replace(/[&<>"]/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c]));
+function ihBars(per,series,opts){const n=per.length,L=46,H=opts.h||110,CW=Math.max(2,Math.min(26,1000/Math.max(1,n))),W=L+n*CW+16,tot=i=>series.reduce((a,s)=>a+s.v[i],0),mx=Math.max(1,...per.map((_,i)=>tot(i))),sc=opts.sqrt?(t=>Math.sqrt(t/mx)*(H-6)/Math.max(1,1)):(t=>t/mx*(H-6));
+ let s='<svg width="'+W+'" height="'+(H+34)+'" font-family="Helvetica,Arial,sans-serif" font-size="10"><text x="'+(L-4)+'" y="12" text-anchor="end" fill="#666">'+mx.toLocaleString()+'</text><text x="'+(L-4)+'" y="'+(H+6)+'" text-anchor="end" fill="#666">0</text><line x1="'+L+'" y1="'+(H+8)+'" x2="'+(L+n*CW)+'" y2="'+(H+8)+'" stroke="#999"/>';
+ per.forEach((p,i)=>{let y=H+8;series.forEach(se=>{const v=se.v[i];if(!v)return;const h=tot(i)?sc(tot(i))*v/tot(i):0;y-=h;s+='<rect x="'+(L+i*CW+0.5)+'" y="'+y+'" width="'+Math.max(1,CW-1)+'" height="'+h+'" fill="'+se.c+'"'+(opts.click?' style="cursor:pointer" onclick="ihSel(\''+p+'\')"':'')+'><title>'+IHE(p+' · '+se.name+' '+v.toLocaleString())+'</title></rect>'});
+  if(opts.sel===p)s+='<rect x="'+(L+i*CW-1)+'" y="8" width="'+(CW+1)+'" height="'+H+'" fill="none" stroke="#000"/>';
+  if(n<=45||i%Math.ceil(n/40)===0)s+='<text x="'+(L+i*CW+CW/2)+'" y="'+(H+20)+'" text-anchor="end" transform="rotate(-40 '+(L+i*CW+CW/2)+' '+(H+20)+')" fill="#666">'+IHE(opts.lab?opts.lab(p):p)+'</text>'});
+ (opts.marks||[]).forEach(m=>{const i=per.indexOf(m.period);if(i>=0)s+='<path d="M'+(L+i*CW+CW/2)+' '+(H+9)+'l4 4l-4 4l-4-4z" fill="#d6249f"><title>'+IHE('변경 #'+m.id+' 적용 '+m.at)+'</title></path>'});
+ return s+'</svg>'}
+function ihSel(p){IH_SEL=IH_SEL===p?'':p;ihLoad(false)}
+async function ihLoad(reset){if(reset)IH_SEL='';const q=new URLSearchParams({bin:document.getElementById('ib').value,cbin:document.getElementById('icb').value,sel:IH_SEL});
+ const D=await (await fetch('/api/watch/{{ watch }}/intake?'+q)).json();const u={day:'일',week:'주',month:'월'};
+ document.getElementById('ihi').textContent='표의 유전체 '+D.total.toLocaleString()+'건(비공개 '+D.private+')'+(D.unusable_intake?' · 유입 시각을 읽지 못한 '+D.unusable_intake+'건':'');
+ const leg=(c,t)=>'<span style="margin-right:12px"><i style="display:inline-block;width:10px;height:10px;background:'+c+';margin-right:3px"></i>'+t+'</span>';
+ document.getElementById('ih1').innerHTML=D.periods.length?'<b>① 표에 들어온 유전체 수 (유입일 기준, '+u[D.bin]+'별)</b> <span class="mut">막대를 누르면 아래 채집일 분포가 그 기간에 들어온 유전체만으로 바뀝니다 · ◆ = 변경 적용</span><div style="overflow-x:auto">'+ihBars(D.periods,[{name:'신규(공개)',v:D.added,c:'#1f77b4'},{name:'신규(비공개)',v:D.added_private,c:'#d6249f'},{name:'기존 유전체 수정',v:D.changed,c:'#f2a33a'}],{click:true,sel:IH_SEL,marks:D.applied,sqrt:document.getElementById('isq').checked})+'</div><div style="font-size:12px">'+leg('#1f77b4','신규(공개)')+leg('#d6249f','신규(비공개)')+leg('#f2a33a','기존 유전체 수정')+'</div>':'<div class="mut">유입 기록이 없습니다.</div>';
+ document.getElementById('ih2').innerHTML='<b>② 채집일 분포 ('+u[D.cbin]+'별)</b> <span class="mut">'+(IH_SEL?'유입 '+IHE(IH_SEL)+'에 들어온 '+D.sel_n.toLocaleString()+'건 <a href="#" onclick="ihSel(\''+IHE(IH_SEL)+'\');return false">전체 보기</a>':'모든 유전체')+'</span>'+(D.cperiods.length?'<div style="overflow-x:auto">'+ihBars(D.cperiods,[{name:'채집',v:D.collected,c:'#2a9d8f'}],{lab:p=>p})+'</div>':'<div class="mut">채집일이 있는 유전체가 없습니다.</div>')
+  +'<div class="mut" style="font-size:12px">채집일 없음 '+D.no_date.toLocaleString()+'건 · 연도만 있음 '+D.year_only.toLocaleString()+'건'+(D.coarse_skipped?' · 이 단위로 그릴 수 없는 날짜(월까지만 있는 날짜 등) '+D.coarse_skipped.toLocaleString()+'건은 그래프에서 빠짐 — 월 단위로 바꾸면 들어갑니다':'')+'</div>'}
+</script>
+<style>
+.ihm{display:flex;align-items:center;gap:14px;padding:5px 2px;border-top:1px solid var(--bd);font-size:12.5px}.ihm:first-of-type{border-top:0}
+.ihm .nm{width:230px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;font-weight:600}.ihm .num{color:var(--mut,#666)}.ihm .num b{color:var(--fg)}
+.ihm .pill{display:inline-block;padding:0 7px;border-radius:9px;background:#e8f1fa;color:#1f5f99;font-size:11.5px;margin-left:4px}
+</style>
+<script>
+// compact intake rows for the curation page: one small bar strip per virus
+function ihSpark(per,added,priv,changed,marks){const n=per.length,H=26,CW=Math.max(3,Math.min(10,240/Math.max(1,n))),W=n*CW+2,tot=i=>added[i]+priv[i]+changed[i],mx=Math.max(1,...per.map((_,i)=>tot(i)));
+ let s='<svg width="'+W+'" height="'+(H+8)+'" style="display:block">';
+ per.forEach((p,i)=>{const t=tot(i);if(!t){s+='<rect x="'+(i*CW+1)+'" y="'+(H-1)+'" width="'+Math.max(1,CW-1.5)+'" height="1" rx="0.5" fill="#d5dbe1"/>';return}
+  const h=Math.max(3,Math.sqrt(t/mx)*H);let y=H;[[added[i],'#4c9be8'],[priv[i],'#d6249f'],[changed[i],'#f2a33a']].forEach(([v,c])=>{if(!v)return;const hh=h*v/t;y-=hh;s+='<rect x="'+(i*CW+1)+'" y="'+y+'" width="'+Math.max(1,CW-1.5)+'" height="'+hh+'" rx="1.5" fill="'+c+'"><title>'+IHE(p+' · 신규 '+added[i]+(priv[i]?' · 비공개 '+priv[i]:'')+(changed[i]?' · 수정 '+changed[i]:''))+'</title></rect>'})});
+ (marks||[]).forEach(m=>{const i=per.indexOf(m.period);if(i>=0)s+='<path d="M'+(i*CW+CW/2)+' '+(H+2)+'l2.5 2.5l-2.5 2.5l-2.5-2.5z" fill="#d6249f"><title>'+IHE('변경 #'+m.id+' 적용 '+m.at)+'</title></path>'});
+ return s+'</svg>'}
+async function ihMini(watches){const box=document.getElementById('ihm');if(!box)return;box.innerHTML='';
+ for(const w of watches){let D=await (await fetch('/api/watch/'+w.id+'/intake?bin=day&cbin=month')).json(),u='일';if(D.periods.length>40){D=await (await fetch('/api/watch/'+w.id+'/intake?bin=week&cbin=month')).json();u='주'}
+  const last=D.periods.length?D.periods[D.periods.length-1]:'',recent=D.added.slice(-7).reduce((a,b)=>a+b,0)+D.added_private.slice(-7).reduce((a,b)=>a+b,0);
+  const col=D.cperiods.length?D.cperiods[0]+' ~ '+D.cperiods[D.cperiods.length-1]:'-';
+  box.insertAdjacentHTML('beforeend','<div class="ihm"><span class="nm" title="'+IHE(w.name)+'">'+IHE(w.name)+'</span><span>'+(D.periods.length?ihSpark(D.periods,D.added,D.added_private,D.changed,D.applied):'<span class="mut">유입 기록 없음</span>')+'</span>'
+   +'<span class="num">표 <b>'+D.total.toLocaleString()+'</b>건'+(D.private?' <span class="pill">비공개 '+D.private+'</span>':'')+' · 마지막 유입 <b>'+IHE(last||'-')+'</b> · 최근 '+(u==='일'?'7일':'7주')+' +<b>'+recent.toLocaleString()+'</b> · 채집 '+IHE(col)+'</span></div>')}}
+</script>
