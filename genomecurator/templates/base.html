@@ -96,6 +96,7 @@ function gcMutMenu(ev,rid,o,here){gcMenu(ev,gcMutItems(rid,o,here),(o.ref||'')+o
 {% set cur_nav = 'hub' if nav == 'res' else nav %}
 {% set ns_g = namespace(active='') %}{% for g in GROUPS %}{% for t in g[2] %}{% if t[0] == cur_nav %}{% set ns_g.active = g[0] %}{% endif %}{% endfor %}{% endfor %}
 {% macro href(u) %}{{ u }}{% if watch and u in ('/dashboard', '/genomes', '/integrity', '/vocab') %}?watch={{ watch }}{% endif %}{% endmacro %}
+{% if request.query_params.get('embed') %}<style>header,.subnav,.ft{display:none!important}body{background:transparent}main{padding-top:4px}</style>{% endif %}
 <header><span class="logo">Virus Genome <i>Curator</i></span>
 {% for g in GROUPS %}<a href="{{ href(g[2][0][1]) | trim }}" class="{{ 'on' if g[0] == ns_g.active }}">{{ g[1] }}{% if g[0] == 'cur' and badge %}<span class="badge">{{ badge }}</span>{% endif %}{% if g[0] == 'cur' and schema_alert %}<span class="badge" style="background:{{ 'var(--bad)' if schema_alert.verdict == 'update' else 'var(--warn)' }}" title="스키마 점검에서 확인이 필요한 항목이 있습니다">!</span>{% endif %}{% if g[0] == 'sys' %}<span class="badge" id="jbadge" style="display:none"></span>{% endif %}</a>{% endfor %}
 {% if traffic %}<a href="/schema" class="tl" title="소스 스키마 점검 현황 (마지막 점검: {{ traffic.checked_at or '없음' }}) — 누르면 스키마 탭">

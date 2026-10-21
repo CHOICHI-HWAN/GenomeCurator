@@ -1,5 +1,5 @@
 {% extends "base.html" %}{% block body %}
-{% set view='spread' %}{% include "_anav.html" %}
+{% set view='spread' %}{% if request.query_params.get('embed') %}<style>.pagehead,.help,.caut{display:none}</style>{% else %}{% include "_anav.html" %}{% endif %}
 <div class="pagehead"><h2>전파 타임라인 <span class="mut" style="font-size:14px;font-weight:400">lineage · 대표 변이 × 나라 × 시간</span></h2><span class="mut">{{ run.name }}</span></div>
 <div class="help">행은 <b>lineage</b>(또는 lineage 정의의 <b>대표 변이</b>), 펼치면 <b>나라</b>별 줄이 나옵니다. 가로축은 수집일의 <b>ISO 주</b>이고, 일 단위 날짜가 적으면 자동으로 <b>월</b> 단위로 바뀝니다(직접 고를 수도 있음).
 막대 안의 진하기는 그 기간의 유전체 수, 가는 선은 <b>처음~마지막 관찰</b>, ◆는 첫 관찰입니다. <b>월까지만 있는 날짜</b>는 주에 넣지 않고 그 달 전체를 <b>옅은 띠</b>로 그립니다.
