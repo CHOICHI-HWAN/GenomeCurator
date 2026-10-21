@@ -11,7 +11,7 @@ from collections import Counter, defaultdict
 
 import logging
 
-from . import insight, lineages, mutprofile
+from . import continents, insight, lineages, mutprofile
 
 _log = logging.getLogger("genomecurator.mutgantt")
 
@@ -19,6 +19,16 @@ _log = logging.getLogger("genomecurator.mutgantt")
 def _key_date(kind: str, shown: str, month: str) -> tuple:
     """Sort key of a collection date: a day sorts by its date, a month-only date as the first of its month."""
     return (month, shown if kind == "day" else month + "-00")
+
+
+_CONT: dict[str, str] = {}
+
+
+def _cont(country: str) -> str:
+    """The continent of a country name as written in the metadata ('' when unknown); cached."""
+    if country not in _CONT:
+        _CONT[country] = continents.group_of(country, "continent")
+    return _CONT[country]
 
 
 def defining_map(run: dict, meta: dict, fa) -> dict[tuple, list[str]]:
@@ -101,6 +111,8 @@ def build(run: dict, bin_: str = "month", lineage_set=(), clade_set=(), gene: st
                     "apobec": int(r["profile_of_interest"] not in ("", "other")), "defines": dmap.get(k, []), "n": len(cs), "n_dated": len(ds), "first": first[3], "last": last[3], "first_month": first[2], "last_month": last[2],
                     "first_week": first[1], "last_week": last[1], "first_lineage": meta[ds[0][1]]["lineage"], "first_country": meta[ds[0][1]]["country"], "cells": dict(cells),
                     "countries": dict(Counter(meta[s]["country"] for _d, s in ds if meta[s]["country"]).most_common(3)),
+                    "by_lineage": dict(Counter(meta[s]["lineage"] or "(없음)" for s in cs)), "by_country": dict(Counter(meta[s]["country"] for s in cs if meta[s]["country"])),
+                    "by_continent": dict(Counter(_cont(meta[s]["country"]) for s in cs if _cont(meta[s]["country"]))),
                     "_key": _key_date(first[0], first[3], first[2])})
     total_rows = len(out)
     if sort == "pos":

@@ -3212,6 +3212,7 @@ def test_mutation_gantt_orders_by_first_observation_and_counts_per_period(tmp_pa
     assert by["300C"]["first"] == "2025-01-05" and by["300C"]["last"] == "2025-03-02" and by["300C"]["cells"] == {"2025-01": 2, "2025-03": 1} and by["300C"]["apobec"] == 1
     assert by["100T"]["n"] == 3 and by["100T"]["n_dated"] == 2 and by["100T"]["first"] == "2025-03"               # g5 has no date: counted as a carrier, not placed in time; a month-only date counts as the start of its month, so it is the earliest possible
     assert g["periods"] == ["2025-01", "2025-02", "2025-03"] and g["no_date"] == 1 and g["month_only"] == 1
+    assert by["300C"]["by_lineage"] == {"A": 2, "B": 1} and by["300C"]["by_country"] == {"X": 3} and by["300C"]["by_continent"] == {}      # carriers per lineage / country / continent, for the highlight legend
     w = mutgantt.build({}, "week", min_carriers=2)
     assert w["periods"][0] == "2025-W01" and w["rows"][0]["key"] == "300C" and sum(w["rows"][0]["cells"].values()) == 3
     assert {sum(x["cells"].values()) for x in w["rows"] if x["key"] == "50G"} == {1}                              # the month-only genome is not on a week
