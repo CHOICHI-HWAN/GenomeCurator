@@ -6,7 +6,7 @@ from fastapi import FastAPI, Form, Request
 from fastapi.responses import FileResponse, HTMLResponse, JSONResponse, RedirectResponse, Response, StreamingResponse
 from fastapi.templating import Jinja2Templates
 
-from . import beastprep, clock, continents, lineagetree, mutgantt, nextcladecall, pipeline, support, variantcall, variantflow, __version__, analysis, completeness, datasets, exclusions, export, cooccur, geo, heatmap, vocab, insight, lineages, mutprofile, nextstrain, novel, outbreak, pathoplexus, private, qc, squirrel, config, curate, jobs, log
+from . import beastprep, clock, continents, intake, lineagetree, mutgantt, nextcladecall, pipeline, support, variantcall, variantflow, __version__, analysis, completeness, datasets, exclusions, export, cooccur, geo, heatmap, vocab, insight, lineages, mutprofile, nextstrain, novel, outbreak, pathoplexus, private, qc, squirrel, config, curate, jobs, log
 from .db import audit_now, connect
 
 _log = log.get("web")
@@ -1843,6 +1843,11 @@ def create_app(scheduler: bool = True) -> FastAPI:
                 "ref_note": completeness.describe(ref),
                 "cols": _cols(cols or GN_COLS, rows), "facets": _facets(facets or GN_FACETS, rows)}
         return watches, data
+
+    @app.get("/api/watch/{wid}/intake")
+    def api_watch_intake(wid: int, bin: str = "day", cbin: str = "month", sel: str = ""):
+        """Intake history of a virus's genomes (per day / week / month) and their collection dates, optionally only of the genomes that came in during one intake period."""
+        return intake.history(wid, bin, cbin, sel)
 
     @app.get("/genomes")
     def genomes(request: Request, watch: int = 0, msg: str = ""):

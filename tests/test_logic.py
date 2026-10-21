@@ -3370,3 +3370,24 @@ def test_continent_comparison_separates_lineage_effects_from_real_differences(mo
     assert by["200G"]["top"] == "Uganda" and d["significant_raw"] == 2 and d["significant_adjusted"] == 1
     assert "error" in continents.compare({}, "country", min_group=500)
     assert continents.group_of("USA", "continent") == "North America" and continents.group_of("", "continent") == ""
+
+
+def test_intake_history_counts_intake_and_collection_dates(tmp_path, monkeypatch):
+    from genomecurator import config, db, intake
+    monkeypatch.setattr(config, "DB_PATH", tmp_path / "t.db")
+    db.init_db() if hasattr(db, "init_db") else None
+    with db.connect() as con:
+        con.execute("INSERT INTO watchlist(id,name,taxon) VALUES(1,'V','v')")
+        rows = [("a", "2026-10-16T17:00:00", "2025-03-02"), ("b", "2026-10-16T17:00:00", "2025-03"), ("c", "2026-10-19T10:00:00", "2025-04-10"), ("d", "2026-10-19T10:00:00", "1958"), ("e", "2026-10-19T10:00:00", "")]
+        for acc, ins, col in rows:
+            con.execute("INSERT INTO genome(genome_id,watch_id,accession,date_inserted,collection_date) VALUES(?,?,?,?,?)", (acc, 1, acc, ins, col))
+        con.execute("INSERT INTO changeset(id,watch_id,status,applied_at) VALUES(7,1,'APPLIED','2026-10-19T10:00:00')")
+        con.execute("INSERT INTO genome_version(genome_id,snapshot_json,changeset_id,changed_at) VALUES('a','{}',7,'2026-10-19 10:00:01')")
+    d = intake.history(1, "day", "month")
+    assert d["periods"] == ["2026-10-16", "2026-10-17", "2026-10-18", "2026-10-19"] and d["added"] == [2, 0, 0, 3] and d["changed"] == [0, 0, 0, 1]
+    assert d["applied"][0]["id"] == 7 and d["applied"][0]["period"] == "2026-10-19" and d["total"] == 5
+    assert d["cperiods"] == ["2025-03", "2025-04"] and d["collected"] == [2, 1] and d["year_only"] == 1 and d["no_date"] == 1
+    w = intake.history(1, "week", "week")
+    assert w["added"] == [2, 3] and w["coarse_skipped"] == 1                        # the month-only date cannot be put on a week
+    s = intake.history(1, "day", "month", sel="2026-10-19")
+    assert s["sel_n"] == 3 and sum(s["collected"]) == 1 and s["year_only"] == 1
