@@ -100,8 +100,8 @@ def _safe(x: str) -> str:
     return re.sub(r"[^A-Za-z0-9_.\-]", "_", x)
 
 
-def build_xml(seqs: dict[str, str], dates: dict[str, float], groups: dict[str, list[str]], s: dict, rate0: float, fileprefix: str = "beast", mle: dict | None = None, proper: bool = False) -> str:
-    """The BEAST 1.10-style XML. `proper`: only proper priors (the clock rate and the population size get log-normal priors instead of the vague gamma / 1/x ones): a marginal likelihood, and so a Bayes factor, exists only for proper priors. `mle` = {"chain_length", "path_steps", "alpha"}: after the initial chain, path sampling and stepping-stone sampling of the marginal likelihood (`marginalLikelihoodEstimator`, written to `<prefix>.mle.log`). `seqs` {taxon: aligned sequence}, `dates` {taxon: decimal year}, `groups` {name: [taxa]} for the tMRCA of each group, `rate0` the starting clock rate (substitutions / site / year)."""
+def build_xml(seqs: dict[str, str], dates: dict[str, float], groups: dict[str, list[str]], s: dict, rate0: float, fileprefix: str = "beast", mle: dict | None = None, proper: bool = False, fixed_freq: bool = False, gss: dict | None = None, init: dict | None = None) -> str:
+    """The BEAST 1.10-style XML. `proper`: only proper priors (the clock rate and the population size get log-normal priors instead of the vague gamma / 1/x ones): a marginal likelihood, and so a Bayes factor, exists only for proper priors. `fixed_freq`: the base frequencies are the alignment's own and not sampled (needed for generalized stepping-stone sampling, which has no working prior for a simplex). `gss` = {"log", "burnin", "chain_length", "path_steps", "alpha"}: instead of path sampling / stepping-stone sampling, generalized stepping-stone sampling against a working prior built from the posterior samples of an earlier ordinary run of this model (`log` is read from the folder BEAST runs in, the first `burnin` states are discarded). `init` = {parameter id: starting value}: the chain starts there (for GSS, from the middle of the earlier posterior - a start outside the working prior has zero density and BEAST refuses it). `mle` = {"chain_length", "path_steps", "alpha"}: after the initial chain, path sampling and stepping-stone sampling of the marginal likelihood (`marginalLikelihoodEstimator`, written to `<prefix>.mle.log`). `seqs` {taxon: aligned sequence}, `dates` {taxon: decimal year}, `groups` {name: [taxa]} for the tMRCA of each group, `rate0` the starting clock rate (substitutions / site / year)."""
     names = list(seqs)
     chain, every = s["chain_length"], max(1, s["chain_length"] // s["samples"])
     L = []
@@ -143,14 +143,21 @@ def build_xml(seqs: dict[str, str], dates: dict[str, float], groups: dict[str, l
           '<stdev><parameter id="ucld.stdev" value="0.3333333333333333" lower="0.0"/></stdev></logNormalDistributionModel></distribution><rateCategories><parameter id="branchRates.categories"/></rateCategories></discretizedBranchRates>')
         rate_param, rate_ref = "ucld.mean", '<discretizedBranchRates idref="branchRates"/>'
     w(f'\t<rateStatistic id="meanRate" name="meanRate" mode="mean" internal="true" external="true"><treeModel idref="treeModel"/>{rate_ref}</rateStatistic>')
-    w('\t<HKYModel id="hky"><frequencies><frequencyModel dataType="nucleotide"><frequencies><parameter id="frequencies" value="0.25 0.25 0.25 0.25"/></frequencies></frequencyModel></frequencies>'
+    if fixed_freq:
+        cnt = {b: sum(q.count(b) for q in seqs.values()) for b in "ACGT"}
+        tot = max(1, sum(cnt.values()))
+        freq_value = " ".join(f"{cnt[b] / tot:.6f}" for b in "ACGT")
+    else:
+        freq_value = "0.25 0.25 0.25 0.25"
+    w('\t<HKYModel id="hky"><frequencies><frequencyModel dataType="nucleotide"><frequencies><parameter id="frequencies" value="' + freq_value + '"/></frequencies></frequencyModel></frequencies>'
       '<kappa><parameter id="kappa" value="2.0" lower="0.0"/></kappa></HKYModel>')
     w('\t<siteModel id="siteModel"><substitutionModel><HKYModel idref="hky"/></substitutionModel><gammaShape gammaCategories="4"><parameter id="alpha" value="0.5" lower="0.0"/></gammaShape></siteModel>')
     w(f'\t<treeDataLikelihood id="treeLikelihood" useAmbiguities="false"><partition><patterns idref="patterns"/><siteModel idref="siteModel"/></partition><treeModel idref="treeModel"/>{rate_ref}</treeDataLikelihood>')
     w('\t<operators id="operators" optimizationSchedule="default">')
     w('\t\t<scaleOperator scaleFactor="0.75" weight="0.1"><parameter idref="kappa"/></scaleOperator>')
     w('\t\t<scaleOperator scaleFactor="0.75" weight="0.1"><parameter idref="alpha"/></scaleOperator>')
-    w('\t\t<deltaExchange delta="0.01" weight="0.1"><parameter idref="frequencies"/></deltaExchange>')
+    if not fixed_freq:
+        w('\t\t<deltaExchange delta="0.01" weight="0.1"><parameter idref="frequencies"/></deltaExchange>')
     w(f'\t\t<scaleOperator scaleFactor="0.75" weight="3"><parameter idref="{rate_param}"/></scaleOperator>')
     if s["clock"] == "relaxed":
         w('\t\t<scaleOperator scaleFactor="0.75" weight="3"><parameter idref="ucld.stdev"/></scaleOperator>')
@@ -170,7 +177,8 @@ def build_xml(seqs: dict[str, str], dates: dict[str, float], groups: dict[str, l
     w('\t\t<posterior id="posterior"><prior id="prior">')
     w('\t\t\t<logNormalPrior mean="1.0" stdev="1.25" offset="0.0" meanInRealSpace="false"><parameter idref="kappa"/></logNormalPrior>')
     w('\t\t\t<exponentialPrior mean="0.5" offset="0.0"><parameter idref="alpha"/></exponentialPrior>')
-    w('\t\t\t<dirichletPrior alpha="1.0" sumsTo="1.0"><parameter idref="frequencies"/></dirichletPrior>')
+    if not fixed_freq:
+        w('\t\t\t<dirichletPrior alpha="1.0" sumsTo="1.0"><parameter idref="frequencies"/></dirichletPrior>')
     if proper:
         w(f'\t\t\t<logNormalPrior mean="-11.5" stdev="2.0" offset="0.0" meanInRealSpace="false"><parameter idref="{rate_param}"/></logNormalPrior>')        # median 1e-5, four orders of magnitude wide
     else:
@@ -196,6 +204,29 @@ def build_xml(seqs: dict[str, str], dates: dict[str, float], groups: dict[str, l
       f'<trait name="rate" tag="rate">{rate_ref}</trait><posterior idref="posterior"/></logTree>')
     w('\t</mcmc>')
     w('\t<report><property name="timer"><mcmc idref="mcmc"/></property></report>')
+    if gss:
+        f_, bi = gss["log"], gss["burnin"]
+        ref = lambda tag, col: f'<{tag} fileName="{f_}" parameterColumn="{col}" burnin="{bi}">'
+        w('\t<!-- generalized stepping-stone sampling: the working prior is built from the posterior samples of an earlier ordinary run of this model (' + f_ + ') -->')
+        if s["tree_prior"] == "constant":
+            w(f'\t<constantSize id="demographicReference" units="years"><populationSize><parameter id="demographicReference.popSize" value="0.1" parameterColumn="demographic.popSize" fileName="{f_}" burnin="{bi}" dimension="1"/></populationSize></constantSize>')
+            w('\t<coalescentLikelihood id="coalescentReference"><model><constantSize idref="demographicReference"/></model><populationTree><treeModel idref="treeModel"/></populationTree></coalescentLikelihood>')
+        else:
+            w(f'\t<exponentialGrowth id="demographicReference" units="years"><populationSize><parameter id="demographicReference.popSize" value="0.1" parameterColumn="demographic.popSize" fileName="{f_}" burnin="{bi}" dimension="1"/></populationSize>'
+              f'<growthRate><parameter id="demographicReference.growthRate" value="0.1" parameterColumn="demographic.growthRate" fileName="{f_}" burnin="{bi}" dimension="1"/></growthRate></exponentialGrowth>')
+            w('\t<coalescentLikelihood id="coalescentReference"><model><exponentialGrowth idref="demographicReference"/></model><populationTree><treeModel idref="treeModel"/></populationTree></coalescentLikelihood>')
+        w(f'\t<marginalLikelihoodEstimator id="MLE" chainLength="{gss["chain_length"]}" pathSteps="{gss["path_steps"]}" pathScheme="betaquantile" alpha="{gss.get("alpha", 0.3)}">')
+        w('\t\t<samplers><mcmc idref="mcmc"/></samplers>')
+        w('\t\t<pathLikelihood id="pathLikelihood"><source><posterior idref="posterior"/></source><destination><workingPrior id="workingPrior">')
+        for par in ("kappa", "alpha", rate_param) + (("ucld.stdev",) if s["clock"] == "relaxed" else ()) + ("demographic.popSize",):
+            w(f'\t\t\t{ref("logTransformedNormalReferencePrior", par)}<parameter idref="{par}"/></logTransformedNormalReferencePrior>')
+        if s["tree_prior"] == "exponential":
+            w(f'\t\t\t{ref("normalReferencePrior", "demographic.growthRate")}<parameter idref="demographic.growthRate"/></normalReferencePrior>')
+        w('\t\t\t<coalescentLikelihood idref="coalescentReference"/>')
+        w('\t\t</workingPrior></destination></pathLikelihood>')
+        w(f'\t\t<log id="MLELog" logEvery="{max(1, gss["chain_length"] // 100)}" fileName="{fileprefix}.mle.log"><pathLikelihood idref="pathLikelihood"/></log>')
+        w('\t</marginalLikelihoodEstimator>')
+        w(f'\t<generalizedSteppingStoneSamplingAnalysis fileName="{fileprefix}.mle.log"><sourceColumn name="pathLikelihood.source"/><destinationColumn name="pathLikelihood.destination"/><thetaColumn name="pathLikelihood.theta"/></generalizedSteppingStoneSamplingAnalysis>')
     if mle:
         w(f'\t<marginalLikelihoodEstimator id="MLE" chainLength="{mle["chain_length"]}" pathSteps="{mle["path_steps"]}" pathScheme="betaquantile" alpha="{mle.get("alpha", 0.3)}">')
         w('\t\t<samplers><mcmc idref="mcmc"/></samplers>')
@@ -205,7 +236,10 @@ def build_xml(seqs: dict[str, str], dates: dict[str, float], groups: dict[str, l
         for el in ("pathSamplingAnalysis", "steppingStoneSamplingAnalysis"):
             w(f'\t<{el} fileName="{fileprefix}.mle.log"><likelihoodColumn name="pathLikelihood.delta"/><thetaColumn name="pathLikelihood.theta"/></{el}>')
     w('</beast>')
-    return "\n".join(L) + "\n"
+    xml = "\n".join(L) + "\n"
+    for name, val in (init or {}).items():
+        xml = re.sub(rf'(<parameter id="{re.escape(name)}" value=")[^"]*(")', lambda m: f"{m[1]}{val:.8g}{m[2]}", xml, count=1)
+    return xml
 
 
 # ------------------------------------------------------------------------------------------------ package, run, results
@@ -421,8 +455,12 @@ def run_recorded(clock_run: dict, settings: dict | None = None, progress=None) -
 
 
 # ------------------------------------------------------------------------------------------------ BETS: is there a temporal signal at all?
-BETS_DEFAULTS = {"n_tips": 60, "clock": "relaxed", "tree_prior": "exponential", "initial_chain": 1000000, "path_steps": 50, "step_chain": 250000, "seed": 1, "threads": 0}
-_MLE_RE = {"ps": re.compile(r"log marginal likelihood \(using path sampling\)[^=]*=\s*(-?[0-9.eE+-]+)"), "ss": re.compile(r"log marginal likelihood \(using stepping stone sampling\)[^=]*=\s*(-?[0-9.eE+-]+)")}
+BETS_DEFAULTS = {"n_tips": 60, "clock": "relaxed", "tree_prior": "exponential", "initial_chain": 1000000, "path_steps": 50, "step_chain": 250000, "estimator": "both", "seed": 1, "threads": 0}
+ESTIMATORS = ("both", "gss", "ps_ss")
+_MLE_RE = {"ps": re.compile(r"log marginal likelihood \(using path sampling\)[^=]*=\s*(-?[0-9.eE+-]+)"), "ss": re.compile(r"log marginal likelihood \(using stepping stone sampling\)[^=]*=\s*(-?[0-9.eE+-]+)"),
+           "gss": re.compile(r"log marginal likelihood \(using generalized stepping stone sampling\)[^=]*=\s*(-?[0-9.eE+-]+)")}
+GSS_BURN = 2000           # states of the ordinary chain run before the path begins: kept short so that the chain stays where it started (the middle of the earlier posterior, inside the working prior)
+GSS_PARAMS = ("kappa", "alpha", "clock.rate", "ucld.mean", "ucld.stdev", "demographic.popSize", "demographic.growthRate")
 
 
 def parse_bets_settings(raw: dict | None) -> dict:
@@ -431,13 +469,13 @@ def parse_bets_settings(raw: dict | None) -> dict:
         out = {k: int(s[k]) for k in ("n_tips", "initial_chain", "path_steps", "step_chain", "seed", "threads")}
     except (TypeError, ValueError):
         raise ValueError("BETS 설정의 숫자가 올바르지 않습니다.")
-    out["clock"], out["tree_prior"] = str(s["clock"]), str(s["tree_prior"])
+    out["clock"], out["tree_prior"], out["estimator"] = str(s["clock"]), str(s["tree_prior"]), str(s["estimator"])
     if not 10 <= out["n_tips"] <= 300:
         raise ValueError("표본 유전체 수는 10~300입니다.")
     if out["initial_chain"] < 10000 or out["step_chain"] < 1000 or not 4 <= out["path_steps"] <= 500:
         raise ValueError("초기 체인은 10,000 이상, 단계당 체인은 1,000 이상, 경로 단계는 4~500이어야 합니다 (신뢰할 만한 추정은 단계 50 이상, 단계당 250,000 이상).")
-    if out["clock"] not in CLOCKS or out["tree_prior"] not in PRIORS:
-        raise ValueError(f"시계는 {', '.join(CLOCKS)}, 트리 사전분포는 {', '.join(PRIORS)} 중 하나입니다.")
+    if out["clock"] not in CLOCKS or out["tree_prior"] not in PRIORS or out["estimator"] not in ESTIMATORS:
+        raise ValueError(f"시계는 {', '.join(CLOCKS)}, 트리 사전분포는 {', '.join(PRIORS)}, 추정기는 {', '.join(ESTIMATORS)} 중 하나입니다.")
     return out
 
 
@@ -445,10 +483,8 @@ def bets_folder(clock_run: dict) -> Path:
     return Path(clock_run["run_dir"]) / "beast" / "bets"
 
 
-def bets_prepare(clock_run: dict, settings: dict | None = None) -> dict:
-    """Two XMLs of the same model on the same genomes - one with the real sampling dates, one with every genome given the same date (the isochronous model) - each with path-sampling and
-    stepping-stone estimation of the marginal likelihood after an initial chain. Proper priors, since a Bayes factor needs them."""
-    s = parse_bets_settings(settings)
+def _bets_data(clock_run: dict, s: dict) -> tuple[dict, dict, float, int, float]:
+    """(sequences, real dates, starting rate, genomes, span in years) of the BETS subsample."""
     S = clock.summary(clock_run)
     if not S.get("tips"):
         raise ValueError("이 분자시계 실행에는 결과가 없습니다.")
@@ -460,19 +496,44 @@ def bets_prepare(clock_run: dict, settings: dict | None = None) -> dict:
         raise ValueError(f"BETS에 쓸 수 있는 유전체(날짜가 일 단위이고 이상치가 아님)가 {len(chosen)}개뿐입니다.")
     want = {t["name"] for t in chosen}
     seqs = {n: q.upper() for n, q in aligned.read_alignment(Path(src["run_dir"]) / "squirrel" / "alignment.aln.fasta.gz") if n in want}
-    chosen = [t for t in chosen if t["name"] in seqs]
-    real = {t["name"]: t["date"] for t in chosen}
-    same = {n: max(real.values()) for n in real}
+    real = {t["name"]: t["date"] for t in chosen if t["name"] in seqs}
     rate0 = (S.get("time") or {}).get("rate") or (S.get("clock") or {}).get("rate") or 1e-5
+    return seqs, real, rate0, len(real), max(real.values()) - min(real.values())
+
+
+def bets_prepare(clock_run: dict, settings: dict | None = None) -> dict:
+    """The XMLs of the BETS analyses: for each of 'dated' (the real sampling dates) and 'undated' (every genome given the same date, the isochronous model), the same model on the same genomes:
+    * `psss/beast.xml` - an initial chain, then path sampling and stepping-stone sampling of the marginal likelihood (destination = the prior);
+    * `mcmc/beast.xml` - an ordinary chain; `mcmc/gss.xml` is written when it has finished, from its posterior (see `run_bets`), for generalized stepping-stone sampling.
+    Proper priors and fixed (empirical) base frequencies, since a Bayes factor needs proper priors and GSS has no working prior for the frequency simplex."""
+    s = parse_bets_settings(settings)
+    seqs, real, rate0, n, span = _bets_data(clock_run, s)
+    same = {k: max(real.values()) for k in real}
     ms = {**s, "chain_length": s["initial_chain"], "samples": 1000}
     out = {}
     for tag, dates in (("dated", real), ("undated", same)):
-        d = bets_folder(clock_run) / tag
-        d.mkdir(parents=True, exist_ok=True)
-        (d / "beast.xml").write_text(build_xml(seqs, dates, {}, ms, rate0, "beast", mle={"chain_length": s["step_chain"], "path_steps": s["path_steps"], "alpha": 0.3}, proper=True), encoding="utf-8")
-        out[tag] = str(d)
+        base = bets_folder(clock_run) / tag
+        if s["estimator"] in ("both", "ps_ss"):
+            (base / "psss").mkdir(parents=True, exist_ok=True)
+            (base / "psss" / "beast.xml").write_text(build_xml(seqs, dates, {}, ms, rate0, "beast", mle={"chain_length": s["step_chain"], "path_steps": s["path_steps"], "alpha": 0.3}, proper=True, fixed_freq=True), encoding="utf-8")
+        if s["estimator"] in ("both", "gss"):
+            (base / "mcmc").mkdir(parents=True, exist_ok=True)
+            (base / "mcmc" / "beast.xml").write_text(build_xml(seqs, dates, {}, ms, rate0, "beast", proper=True, fixed_freq=True), encoding="utf-8")
+        out[tag] = str(base)
     (bets_folder(clock_run) / "settings.json").write_text(json.dumps(s), encoding="utf-8")
-    return {"n": len(chosen), "settings": s, "folders": out, "span_years": max(real.values()) - min(real.values())}
+    return {"n": n, "settings": s, "folders": out, "span_years": span}
+
+
+def gss_xml(clock_run: dict, tag: str, s: dict) -> str:
+    """The generalized stepping-stone XML of one BETS analysis, from the finished ordinary chain in `<tag>/mcmc/`: the working prior is made from that chain's posterior, and the new chain starts from its middle."""
+    seqs, real, rate0, _n, _span = _bets_data(clock_run, s)
+    dates = real if tag == "dated" else {k: max(real.values()) for k in real}
+    d = bets_folder(clock_run) / tag / "mcmc"
+    post = read_log(d / "beast.log", 0.5)["params"]
+    init = {k: post[k]["median"] for k in GSS_PARAMS if k in post}
+    ms = {**s, "chain_length": GSS_BURN, "samples": 100}
+    return build_xml(seqs, dates, {}, ms, rate0, "gss", proper=True, fixed_freq=True, init=init,
+                     gss={"log": "beast.log", "burnin": s["initial_chain"] // 2, "chain_length": s["step_chain"], "path_steps": s["path_steps"], "alpha": 0.3})
 
 
 def bets_verdict(log_bf: float | None) -> tuple[str, str]:
@@ -490,8 +551,23 @@ def bets_verdict(log_bf: float | None) -> tuple[str, str]:
     return "against", f"로그 베이즈 인수 {log_bf:.1f} < -1: 날짜 없는 모델이 더 낫습니다 — 시계 신호가 없다는 쪽의 증거입니다."
 
 
+def _log_states(path: Path) -> int:
+    try:
+        return int(float(path.read_text(encoding="utf-8").strip().splitlines()[-1].split("\t")[0]))
+    except (OSError, ValueError, IndexError):
+        return 0
+
+
+def _mle_rows(path: Path) -> int:
+    try:
+        return sum(1 for line in path.read_text(encoding="utf-8").splitlines() if line and not line.startswith(("#", "state")))
+    except OSError:
+        return 0
+
+
 def run_bets(clock_run: dict, settings: dict | None = None, progress=None) -> dict:
-    """Prepare and run the two analyses side by side (two BEAST processes), then compare their marginal likelihoods. Long: initial chain + (path steps + 1) x chain per step, for each."""
+    """Prepare and run the BETS analyses (two models x the estimators asked for), then compare the marginal likelihoods. The analyses run side by side as separate BEAST processes: the path /
+    stepping-stone runs and the ordinary chains start together, each generalized stepping-stone run starts when its ordinary chain has finished."""
     import os
     st = status()
     if not st["ok"]:
@@ -500,39 +576,59 @@ def run_bets(clock_run: dict, settings: dict | None = None, progress=None) -> di
     info = bets_prepare(clock_run, settings)
     s = info["settings"]
     root = bets_folder(clock_run)
-    for tag in ("dated", "undated"):
-        for f in ("beast.log", "beast.trees", "beast.ops", "beast.mle.log", "screen.txt"):
-            (root / tag / f).unlink(missing_ok=True)
-    (root / "summary.json").unlink(missing_ok=True)
     pre = env_prefix()
-    n_threads = s["threads"] or max(2, (os.cpu_count() or 4) // 2)
-    total_states = s["initial_chain"] + (s["path_steps"] + 1) * s["step_chain"]
-    procs = {}
-    t0 = time.time()
+    use_psss, use_gss = s["estimator"] in ("both", "ps_ss"), s["estimator"] in ("both", "gss")
+    jobs = []                                    # (tag, kind, folder, xml name, states)
     for tag in ("dated", "undated"):
-        lf = open(root / tag / "screen.txt", "w", encoding="utf-8")
-        procs[tag] = (subprocess.Popen([str(pre / "bin" / "beast"), "-overwrite", "-seed", str(s["seed"]), "-threads", str(n_threads), "beast.xml"], cwd=str(root / tag),
-                                       env=nextstrain.tool_env(pre), stdout=lf, stderr=subprocess.STDOUT, text=True), lf)
+        if use_psss:
+            jobs.append((tag, "psss", root / tag / "psss", "beast.xml", s["initial_chain"] + (s["path_steps"] + 1) * s["step_chain"]))
+        if use_gss:
+            jobs.append((tag, "mcmc", root / tag / "mcmc", "beast.xml", s["initial_chain"]))
+            jobs.append((tag, "gss", root / tag / "mcmc", "gss.xml", GSS_BURN + (s["path_steps"] + 1) * s["step_chain"]))
+    for _t, kind, d, xml, _n in jobs:
+        for f in ("beast.log", "beast.trees", "beast.ops", "beast.mle.log", "gss.log", "gss.trees", "gss.ops", "gss.mle.log", "screen.txt", "gss.screen.txt"):
+            if (kind == "gss") == f.startswith("gss") or kind == "psss" and not f.startswith("gss") or kind == "mcmc" and not f.startswith("gss"):
+                (d / f).unlink(missing_ok=True)
+    (root / "summary.json").unlink(missing_ok=True)
+    n_threads = s["threads"] or max(2, (os.cpu_count() or 4) // 4)
+    total = sum(j[4] for j in jobs)
+    procs: dict[tuple, tuple] = {}
+    t0 = time.time()
 
-    def done_states(tag):
-        d = root / tag
-        n = 0
-        lg = d / "beast.log"
-        if lg.exists():
-            try:
-                n = int(float(lg.read_text(encoding="utf-8").strip().splitlines()[-1].split("\t")[0]))
-            except (ValueError, IndexError):
-                n = 0
-        ml = d / "beast.mle.log"
-        if ml.exists():
-            rows = sum(1 for line in ml.read_text(encoding="utf-8").splitlines() if line and not line.startswith(("#", "state")))
-            n = s["initial_chain"] + rows * (s["step_chain"] // 100)
-        return min(n, total_states)
+    def start(tag, kind, d, xml):
+        lf = open(d / ("gss.screen.txt" if kind == "gss" else "screen.txt"), "w", encoding="utf-8")
+        procs[(tag, kind)] = (subprocess.Popen([str(pre / "bin" / "beast"), "-overwrite", "-seed", str(s["seed"]), "-threads", str(n_threads), xml], cwd=str(d), env=nextstrain.tool_env(pre),
+                                               stdout=lf, stderr=subprocess.STDOUT, text=True), lf)
+
+    def done(tag, kind, d, n):
+        if (tag, kind) not in procs:
+            return 0
+        if kind == "mcmc":
+            return min(n, _log_states(d / "beast.log"))
+        if kind == "psss":
+            rows = _mle_rows(d / "beast.mle.log")
+            return min(n, s["initial_chain"] + rows * (s["step_chain"] // 100)) if rows else min(n, _log_states(d / "beast.log"))
+        rows = _mle_rows(d / "gss.mle.log")
+        return min(n, GSS_BURN + rows * (s["step_chain"] // 100)) if rows else min(n, _log_states(d / "gss.log"))
     try:
-        while any(pr.poll() is None for pr, _lf in procs.values()):
+        for tag, kind, d, xml, _n in jobs:
+            if kind in ("psss", "mcmc"):
+                start(tag, kind, d, xml)
+        pending_gss = [j for j in jobs if j[1] == "gss"]
+        while True:
             time.sleep(10)
-            f = sum(done_states(t) for t in procs) / (2 * total_states)
-            p(2 + 96 * f, f"BETS {f * 100:.0f}% ({time.time() - t0:.0f}초, 날짜 있음·없음 두 분석을 동시에)")
+            for tag, kind, d, xml, n in list(pending_gss):
+                pr = procs.get((tag, "mcmc"))
+                if pr and pr[0].poll() is not None:
+                    if pr[0].returncode != 0:
+                        raise RuntimeError(f"BEAST({tag}, 일반 체인)이 실패했습니다: {(d / 'screen.txt').read_text(encoding='utf-8')[-300:]}")
+                    (d / "gss.xml").write_text(gss_xml(clock_run, tag, s), encoding="utf-8")
+                    start(tag, "gss", d, "gss.xml")
+                    pending_gss.remove((tag, kind, d, xml, n))
+            f = sum(done(t, k, d, n) for t, k, d, _x, n in jobs) / max(1, total)
+            p(2 + 96 * f, f"BETS {f * 100:.0f}% ({time.time() - t0:.0f}초, 분석 {sum(1 for v in procs.values() if v[0].poll() is None)}개 실행 중)")
+            if not pending_gss and all(v[0].poll() is not None for v in procs.values()):
+                break
     finally:
         for pr, lf in procs.values():
             if pr.poll() is None:
@@ -542,18 +638,28 @@ def run_bets(clock_run: dict, settings: dict | None = None, progress=None) -> di
                 except subprocess.TimeoutExpired:
                     pr.kill()
             lf.close()
-    res = {"settings": s, "seconds": round(time.time() - t0), "n_tips": info["n"], "span_years": info["span_years"]}
-    for tag, (pr, _lf) in procs.items():
-        out = (root / tag / "screen.txt").read_text(encoding="utf-8")
+    res = {"settings": s, "seconds": round(time.time() - t0), "n_tips": info["n"], "span_years": info["span_years"], "dated": {}, "undated": {}}
+    for (tag, kind), (pr, _lf) in procs.items():
+        d = root / tag / ("psss" if kind == "psss" else "mcmc")
+        out = (d / ("gss.screen.txt" if kind == "gss" else "screen.txt")).read_text(encoding="utf-8")
         if pr.returncode != 0:
-            raise RuntimeError(f"BEAST({tag})가 실패했습니다 (종료 코드 {pr.returncode}): {out.strip()[-300:]}")
-        res[tag] = {k: (float(m[1]) if (m := rx.search(out)) else None) for k, rx in _MLE_RE.items()}
-    for k in ("ps", "ss"):
-        a, b = res["dated"][k], res["undated"][k]
+            raise RuntimeError(f"BEAST({tag}, {kind})가 실패했습니다 (종료 코드 {pr.returncode}): {out.strip()[-300:]}")
+        if kind == "psss":
+            for k in ("ps", "ss"):
+                m = _MLE_RE[k].search(out)
+                res[tag][k] = float(m[1]) if m else None
+        elif kind == "gss":
+            m = _MLE_RE["gss"].search(out)
+            res[tag]["gss"] = float(m[1]) if m else None
+    for k in ("ps", "ss", "gss"):
+        a, b = res["dated"].get(k), res["undated"].get(k)
         res["log_bf_" + k] = (a - b) if a is not None and b is not None else None
-    res["verdict"] = dict(zip(("level", "text"), bets_verdict(res["log_bf_ss"] if res["log_bf_ss"] is not None else res["log_bf_ps"])))
-    if res["log_bf_ps"] is not None and res["log_bf_ss"] is not None and abs(res["log_bf_ps"] - res["log_bf_ss"]) > 2:
-        res["verdict"]["text"] += " (경로 표집과 디딤돌 표집의 값이 2 이상 다릅니다 — 경로 단계를 늘려 다시 돌리세요.)"
+    best = next((res["log_bf_" + k] for k in ("gss", "ss", "ps") if res["log_bf_" + k] is not None), None)
+    res["verdict"] = dict(zip(("level", "text"), bets_verdict(best)))
+    res["verdict"]["estimator"] = next((k for k in ("gss", "ss", "ps") if res["log_bf_" + k] is not None), None)
+    vals = [res["log_bf_" + k] for k in ("gss", "ss", "ps") if res["log_bf_" + k] is not None]
+    if len(vals) > 1 and max(vals) - min(vals) > 2:
+        res["verdict"]["text"] += " (추정기들의 값이 2 이상 다릅니다 — 경로 단계와 단계당 체인을 늘려 다시 돌리세요. 신뢰할 수 있는 결론이 아닙니다.)"
     (root / "summary.json").write_text(json.dumps(res, ensure_ascii=False), encoding="utf-8")
     p(100, "BETS 완료")
     return res
@@ -582,8 +688,8 @@ def run_bets_recorded(clock_run: dict, settings: dict | None = None, progress=No
         name = f"{base}-{k}"
     d = bets_folder(clock_run)
     d.mkdir(parents=True, exist_ok=True)
-    rid = runs.start(ds, "bets", name, datetime.now(), ds.get("build") or "", s, "bets-v1", nextstrain.run_members(clock_run), clock_run["members_sha"] or "", clock_run.get("content_sha") or "", st["version"], d,
-                     d / "dated" / "screen.txt", f"clock:{clock_run['id']}", {"beast": st["version"], "settings": s})
+    rid = runs.start(ds, "bets", name, datetime.now(), ds.get("build") or "", s, "bets-v2", nextstrain.run_members(clock_run), clock_run["members_sha"] or "", clock_run.get("content_sha") or "", st["version"], d,
+                     d / "dated" / "psss" / "screen.txt", f"clock:{clock_run['id']}", {"beast": st["version"], "settings": s})
     try:
         res = run_bets(clock_run, s, progress)
     except Exception as e:

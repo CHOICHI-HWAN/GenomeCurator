@@ -3156,3 +3156,35 @@ def test_bets_xml_settings_and_verdict():
     assert [beastprep.bets_verdict(x)[0] for x in (12.0, 4.0, 2.0, 0.3, -3.0, None)] == ["strong", "positive", "weak", "none", "against", "unknown"]
     log_line = "log marginal likelihood (using path sampling) from pathLikelihood.delta = -5003.54\nlog marginal likelihood (using stepping stone sampling) from pathLikelihood.delta = -5004.2\n"
     assert float(beastprep._MLE_RE["ps"].search(log_line)[1]) == -5003.54 and float(beastprep._MLE_RE["ss"].search(log_line)[1]) == -5004.2
+
+
+def test_gss_xml_has_a_working_prior_for_every_free_parameter():
+    import random
+    import xml.etree.ElementTree as ET
+    from genomecurator import beastprep
+    rng = random.Random(6)
+    names = [f"s{i}" for i in range(10)]
+    seqs = {n: "".join(rng.choice("ACGT") for _ in range(50)) for n in names}
+    dates = {n: 2024 + i / 10 for i, n in enumerate(names)}
+    for clock_, prior in (("strict", "constant"), ("relaxed", "exponential")):
+        ms = {"n_tips": 10, "chain_length": 2000, "samples": 100, "clock": clock_, "tree_prior": prior, "seed": 1, "threads": 0}
+        xml = beastprep.build_xml(seqs, dates, {}, ms, 1e-5, "gss", proper=True, fixed_freq=True, init={"kappa": 3.2, "clock.rate": 2e-5, "ucld.mean": 3e-5},
+                                  gss={"log": "beast.log", "burnin": 500, "chain_length": 1000, "path_steps": 10, "alpha": 0.3})
+        root = ET.fromstring(xml)
+        wp = root.find("marginalLikelihoodEstimator").find("pathLikelihood").find("destination").find("workingPrior")
+        covered = {e.find("parameter").get("idref") for e in wp if e.find("parameter") is not None}
+        free = {"kappa", "alpha", "demographic.popSize"} | ({"clock.rate"} if clock_ == "strict" else {"ucld.mean", "ucld.stdev"}) | ({"demographic.growthRate"} if prior == "exponential" else set())
+        assert covered == free, (clock_, prior, covered ^ free)                                                  # a free parameter without a working prior would break the estimate
+        assert wp.find("coalescentLikelihood").get("idref") == "coalescentReference" and root.find("generalizedSteppingStoneSamplingAnalysis") is not None
+        assert all(e.get("fileName") == "beast.log" and e.get("burnin") == "500" for e in wp if e.get("parameterColumn"))
+        assert "dirichletPrior" not in xml and "deltaExchange" not in xml                                         # fixed base frequencies: no frequency simplex to give a working prior
+        freq = [e for e in root.iter("parameter") if e.get("id") == "frequencies"][0].get("value").split()
+        assert len(freq) == 4 and abs(sum(map(float, freq)) - 1) < 1e-3 and freq != ["0.25"] * 4                 # the alignment's own
+        assert ('id="kappa" value="3.2"' in xml) and (('id="clock.rate" value="2e-05"' in xml) if clock_ == "strict" else ('id="ucld.mean" value="3e-05"' in xml))   # the chain starts inside the working prior
+    assert "workingPrior" not in beastprep.build_xml(seqs, dates, {}, ms, 1e-5, mle={"chain_length": 1000, "path_steps": 5}, proper=True)
+    s = beastprep.parse_bets_settings({})
+    assert s["estimator"] == "both" and beastprep.parse_bets_settings({"estimator": "gss"})["estimator"] == "gss"
+    import pytest
+    with pytest.raises(ValueError):
+        beastprep.parse_bets_settings({"estimator": "harmonic"})
+    assert float(beastprep._MLE_RE["gss"].search("log marginal likelihood (using generalized stepping stone sampling) from (pathLikelihood.source - pathLikelihood.destination) = -1220.4")[1]) == -1220.4

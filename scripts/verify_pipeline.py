@@ -263,6 +263,7 @@ def main() -> int:
     else:
         rec("SKIP", "clock checks", "no finished clock run")
     planted_clock()
+    planted_bets()
 
     # ---- 6. a planted-mutation test with a known answer
     try:
@@ -326,6 +327,50 @@ def planted_clock() -> None:
         rd = float(mm[1]) if mm else None
         good = c["rate"] and abs(c["rate"] - rate) / rate < 0.15 and rd is not None and abs(rd - root_t) < 1.0
         ok(bool(good), "planted clock: TreeTime recovers a known rate and root date", f"{len(names)} tips; rate {c['rate']:.2e} (true {rate:.0e}), root {rd} (true {root_t}), R2 {c['r2']}")
+
+
+def planted_bets() -> None:
+    """The three marginal-likelihood estimators on an alignment simulated from a known model (12 genomes, 400 sites): generalized stepping-stone, stepping-stone and path sampling must agree
+    (within 3 log units at these settings) - if they do not, a Bayes factor from the same code on real data cannot be trusted."""
+    import os
+    import subprocess
+    import tempfile
+    from genomecurator import beastprep, nextstrain
+    pre = beastprep.env_prefix()
+    if not pre:
+        rec("SKIP", "estimators agree on a simulated alignment", "BEAST not available")
+        return
+    rng = random.Random(7)
+    base = "".join(rng.choice("ACGT") for _ in range(400))
+    mut = lambda b: "".join(c if rng.random() > 0.03 else rng.choice("ACGT") for c in b)
+    names = [f"s{i}" for i in range(12)]
+    seqs = {n: mut(base) for n in names}
+    dates = {n: 2024.0 + i * 0.15 for i, n in enumerate(names)}
+    s = {"n_tips": 12, "chain_length": 300000, "samples": 3000, "clock": "relaxed", "tree_prior": "constant", "seed": 1, "threads": 0}
+    env = nextstrain.tool_env(pre)
+
+    def run(d, xml):
+        return subprocess.run([str(pre / "bin" / "beast"), "-overwrite", "-seed", "1", xml], cwd=d, capture_output=True, text=True, env=env, timeout=3000)
+    with tempfile.TemporaryDirectory(prefix="gcbets-") as td:
+        A, C = Path(td) / "A", Path(td) / "C"
+        A.mkdir(); C.mkdir()
+        (A / "beast.xml").write_text(beastprep.build_xml(seqs, dates, {}, s, 1e-3, proper=True, fixed_freq=True))
+        if run(A, "beast.xml").returncode:
+            rec("FAIL", "estimators agree on a simulated alignment", "the ordinary chain failed")
+            return
+        post = beastprep.read_log(A / "beast.log", 0.5)["params"]
+        init = {k: post[k]["median"] for k in beastprep.GSS_PARAMS if k in post}
+        (A / "gss.xml").write_text(beastprep.build_xml(seqs, dates, {}, {**s, "chain_length": beastprep.GSS_BURN}, 1e-3, "gss", proper=True, fixed_freq=True, init=init,
+                                                       gss={"log": "beast.log", "burnin": 150000, "chain_length": 50000, "path_steps": 100, "alpha": 0.3}))
+        (C / "beast.xml").write_text(beastprep.build_xml(seqs, dates, {}, s, 1e-3, "beast", mle={"chain_length": 50000, "path_steps": 100, "alpha": 0.3}, proper=True, fixed_freq=True))
+        rg, rp = run(A, "gss.xml"), run(C, "beast.xml")
+    gss = beastprep._MLE_RE["gss"].search(rg.stdout + rg.stderr)
+    ps, ss = (beastprep._MLE_RE[k].search(rp.stdout + rp.stderr) for k in ("ps", "ss"))
+    if not (gss and ps and ss):
+        rec("FAIL", "estimators agree on a simulated alignment", "an estimator produced no value")
+        return
+    g, p_, s_ = float(gss[1]), float(ps[1]), float(ss[1])
+    ok(max(g, p_, s_) - min(g, p_, s_) < 3, "BETS estimators agree on a simulated alignment (GSS, stepping-stone, path sampling)", f"GSS {g:.1f}, SS {s_:.1f}, PS {p_:.1f}")
 
 
 def mutprofile_run_stub(r):
