@@ -1,0 +1,36 @@
+{% extends "base.html" %}{% block body %}
+{% set view='continent' %}{% include "_anav.html" %}
+<div class="pagehead"><h2>대륙별 변이 <span class="mut" style="font-size:14px;font-weight:400">그룹마다 변이 양상이 다른가</span></h2><span class="mut">{{ run.name }}</span></div>
+<div class="help"><b>무엇을 비교하나</b>: 유전체를 나라의 <b>대륙</b>(또는 나라)으로 나누고, 변이마다 그룹별 보유 비율을 구해 <b>그룹 사이에 다른지</b> 카이제곱으로 검정합니다(<b>보정 전</b>). 계통(lineage)이 대륙마다 다르면 변이도 따라서 다르게 보이므로, <b>같은 lineage 안에서만 그룹 이름을 섞는 순열 검정</b>을 한 값(<b>lineage 보정</b>)을 함께 구합니다. 두 값 모두 검정한 변이 수만큼 다중검정 보정(Benjamini–Hochberg, q)을 합니다.
+<b>읽는 법</b>: 보정 후에도 q가 작으면 “lineage 구성만으로는 설명되지 않는 차이”입니다. 보정 전에만 작으면 대륙 차이가 사실상 lineage 차이입니다.</div>
+<div class="caut"><b>주의사항</b> 표본의 차이일 뿐 <b>변이가 어디서 생겼는지</b>는 말해 주지 않습니다 · 시퀀싱이 많거나 이른 곳이 달라 보일 수 있고, 한 번 들어와 퍼진 변이가 여러 번 표집되면 그 대륙에서 흔해 보입니다 · 그룹당 유전체가 적으면 차이를 볼 수 없습니다 · 같은 lineage 안에서도 하위 가지가 지역마다 다를 수 있습니다(lineage 보정은 이를 설명하지 못하므로 “차이 있음”이 남을 수 있음) · 나라를 알 수 없는 유전체는 빠집니다.</div>
+<div class="card" style="font-size:13px"><div style="display:flex;gap:14px;flex-wrap:wrap;align-items:end">
+ <label>그룹 기준<br><select id="by" onchange="load()"><option value="continent">대륙</option><option value="country">나라</option></select></label>
+ <label>그룹당 최소 유전체<br><input id="mg" type="number" min="2" value="10" style="width:70px" onchange="load()"></label>
+ <label>변이당 최소 보유<br><input id="mc" type="number" min="2" value="5" style="width:70px" onchange="load()"></label>
+ <label>N 비율 상한<br><input id="mn" type="number" step="0.01" min="0" max="1" value="0.05" style="width:70px" onchange="load()"></label>
+ <label>보정<br><select id="ad" onchange="load()"><option value="lineage">lineage 안에서 순열(권장)</option><option value="none">없음(빠름)</option></select></label>
+ <span class="mut" id="st"></span></div></div>
+<div id="root" style="margin-top:10px"><div class="card mut">계산하는 중…</div></div>
+<script>
+const RID={{ run.id }};
+const E=s=>String(s??'').replace(/[&<>"]/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c]));
+const CONT={Africa:'아프리카',Asia:'아시아',Europe:'유럽','North America':'북미','South America':'남미',Oceania:'오세아니아'};
+const gn=g=>CONT[g]||g;
+const fmtq=q=>q==null?'-':(q<0.001?'<0.001':q.toFixed(3));
+function cellc(f){const t=Math.min(1,f),a=[255,255,255],b=[31,119,180];return 'rgb('+a.map((x,i)=>Math.round(x+(b[i]-x)*(0.08+0.92*t))).join(',')+')'}
+async function load(){const q=new URLSearchParams({by:document.getElementById('by').value,min_group:document.getElementById('mg').value||10,min_carriers:document.getElementById('mc').value||5,max_n:document.getElementById('mn').value||0.05,adjust:document.getElementById('ad').value});
+ const root=document.getElementById('root');root.innerHTML='<div class="card mut">계산하는 중…(순열 검정은 수 초)</div>';const D=await (await fetch('/api/analyses/'+RID+'/continent?'+q)).json();
+ if(D.error){root.innerHTML='<div class="card" style="color:var(--bad)">'+E(D.error)+(D.sizes?'<div class="mut" style="margin-top:4px">그룹별 유전체: '+Object.entries(D.sizes).map(([k,v])=>E(gn(k))+' '+v).join(' · ')+'</div>':'')+'</div>';return}
+ const adj=D.adjust==='lineage',byc=D.by==='continent';
+ let h='<div class="card"><div style="margin-bottom:6px">유전체 <b>'+D.genomes.toLocaleString()+'</b>건 · 변이 <b>'+D.tested+'</b>개 검정 · 나라를 알 수 없어 뺀 유전체 '+D.no_group+'건'+(Object.keys(D.small_groups).length?' · 너무 작아 뺀 그룹 '+Object.entries(D.small_groups).map(([k,v])=>E(gn(k))+' '+v).join(', '):'')+'</div>'
+  +'<table><tr><th>'+(byc?'대륙':'나라')+'</th><th>유전체</th><th>대표 나라</th><th>많은 lineage</th><th>유전체당 변이(중앙값)</th></tr>'+D.per_group.map(g=>'<tr><td><b>'+E(gn(g.group))+'</b></td><td>'+g.n+'</td><td>'+E(g.countries.join(', '))+'</td><td>'+g.lineages.map(l=>E(l[0])+' '+l[1]).join(' · ')+'</td><td>'+g.mut_median+'</td></tr>').join('')+'</table>'
+  +'<div style="margin-top:8px;font-size:14px">q &lt; 0.05인 변이: 보정 전 <b>'+D.significant_raw+'</b>개'+(adj?' → <b>lineage 보정 후 '+D.significant_adjusted+'개</b> (순열 '+D.perms+'회, lineage '+D.n_lineages+'종)':'')+' / '+D.tested+'개</div>'
+  +(adj&&D.significant_raw>D.significant_adjusted?'<div class="mut" style="font-size:12px">보정 전과 후의 차이만큼은 lineage 구성이 만든 차이입니다.</div>':'')+'</div>';
+ h+='<h3>그룹마다 다른 변이 <span class="mut" style="font-size:12.5px;font-weight:400">'+(adj?'lineage 보정 q':'q')+' 순, 처음 '+D.rows.length+'개 · 칸의 진하기와 숫자 = 그 그룹 유전체 중 보유 비율</span></h3><div class="card" style="overflow:auto"><table><tr><th>변이</th><th>유전자</th><th>단백질</th><th></th>'+D.groups.map((g,i)=>'<th>'+E(gn(g))+'<br><span class="mut" style="font-weight:400">n='+D.sizes[i]+'</span></th>').join('')+'<th>최대−최소</th><th>q(보정 전)</th>'+(adj?'<th>q(lineage 보정)</th>':'')+'</tr>'
+  +D.rows.map(x=>'<tr class="mrow" data-pos="'+x.pos+'" data-ref="'+x.ref+'" data-alt="'+x.alt+'" title="우클릭: 전파 타임라인·변이 히트맵에서 보기"><td><b>'+E(x.label)+'</b></td><td>'+E(x.gene||'intergenic')+'</td><td>'+E(x.aa||'-')+'</td><td>'+(x.apobec?'<span style="color:#d6249f" title="APOBEC3형">●</span>':'')+'</td>'+x.freq.map((f,i)=>'<td style="background:'+cellc(f)+';color:'+(f>0.55?'#fff':'#222')+';text-align:center" title="'+x.counts[i]+'/'+D.sizes[i]+'">'+Math.round(f*100)+'%</td>').join('')+'<td>'+Math.round(x.range*100)+'%p</td><td>'+fmtq(x.q)+'</td>'+(adj?'<td style="font-weight:'+(x.q_adj<0.05?700:400)+'">'+fmtq(x.q_adj)+'</td>':'')+'</tr>').join('')+'</table></div>';
+ root.innerHTML=h}
+document.addEventListener('contextmenu',ev=>{const r=ev.target.closest&&ev.target.closest('.mrow');if(!r)return;gcMutMenu(ev,RID,{pos:+r.dataset.pos,ref:r.dataset.ref,alt:r.dataset.alt},'continent')});
+load();
+</script>
+{% endblock %}

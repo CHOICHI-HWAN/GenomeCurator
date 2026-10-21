@@ -6,7 +6,7 @@ from fastapi import FastAPI, Form, Request
 from fastapi.responses import FileResponse, HTMLResponse, JSONResponse, RedirectResponse, Response, StreamingResponse
 from fastapi.templating import Jinja2Templates
 
-from . import beastprep, clock, lineagetree, mutgantt, nextcladecall, pipeline, support, variantcall, variantflow, __version__, analysis, completeness, datasets, exclusions, export, cooccur, geo, heatmap, vocab, insight, lineages, mutprofile, nextstrain, novel, outbreak, pathoplexus, private, qc, squirrel, config, curate, jobs, log
+from . import beastprep, clock, continents, lineagetree, mutgantt, nextcladecall, pipeline, support, variantcall, variantflow, __version__, analysis, completeness, datasets, exclusions, export, cooccur, geo, heatmap, vocab, insight, lineages, mutprofile, nextstrain, novel, outbreak, pathoplexus, private, qc, squirrel, config, curate, jobs, log
 from .db import audit_now, connect
 
 _log = log.get("web")
@@ -982,6 +982,24 @@ def create_app(scheduler: bool = True) -> FastAPI:
             out = lineagetree.growth(r, bin, min(max(4, weeks), 520), country, max(3, min_n), 3, ref)
             out["countries"] = [c for c, _n in Counter(g["country"] for g in lineages._genomes(r) if g["country"]).most_common(40)]
             return out
+        except (ValueError, RuntimeError) as e:
+            return JSONResponse({"error": str(e)}, 400)
+
+    @app.get("/analysis/{rid}/continent")
+    def analysis_continent_page(request: Request, rid: int):
+        r = nextstrain.get_run(rid)
+        if not r or r["tool"] != "mutprofile" or r["status"] != "done":
+            return JSONResponse({"error": "finished mutation-profile run not found"}, 404)
+        return render(request, "continent.html", nav="res", run=r)
+
+    @app.get("/api/analyses/{rid}/continent")
+    def api_analysis_continent(rid: int, by: str = "continent", min_group: int = 10, min_carriers: int = 5, max_n: float = 0.05, adjust: str = "lineage", perms: int = 400, top: int = 80):
+        """Mutations by continent (or country): frequencies per group, an overall test, and the same test inside lineages (label permutation), corrected for the number of mutations."""
+        r = nextstrain.get_run(rid)
+        if not r or r["tool"] != "mutprofile" or r["status"] != "done":
+            return JSONResponse({"error": "finished mutation-profile run not found"}, 404)
+        try:
+            return continents.compare(r, by, max(2, min_group), max(2, min_carriers), min(1.0, max(0.0, max_n)), "lineage" if adjust == "lineage" else "none", min(2000, max(100, perms)), min(300, max(10, top)))
         except (ValueError, RuntimeError) as e:
             return JSONResponse({"error": str(e)}, 400)
 

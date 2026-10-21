@@ -1,5 +1,5 @@
 {# tab strip shared by the result pages of an analysis run: set `view` before including #}
-{% set TABS = [('변이', [('snipit', '변이 그림'), ('heatmap', '변이 히트맵'), ('pca', '변이 묶음')]), ('계통·전파', [('spread', '타임라인·지도'), ('lineage', '계통도·성장')]), ('통계·가설', [('insight', '변이 분석'), ('concordance', '호출 일치도'), ('outbreak', '유행 분석'), ('novel', '신규 변이')])] %}
+{% set TABS = [('변이', [('snipit', '변이 그림'), ('heatmap', '변이 히트맵'), ('pca', '변이 묶음')]), ('계통·전파', [('spread', '타임라인·지도'), ('lineage', '계통도·성장')]), ('통계·가설', [('continent', '대륙별 변이'), ('insight', '변이 분석'), ('concordance', '호출 일치도'), ('outbreak', '유행 분석'), ('novel', '신규 변이')])] %}
 <div class="anav"><div class="bc"><a href="/hub?dataset={{ run.dataset_id }}">분석 허브</a> › {{ run.dataset_name or '데이터셋' }} › 변이 프로파일 실행 <span title="{{ run.name }}">{{ run.started[:16].replace('T', ' ') }}</span> · <a href="/nextstrain?dataset={{ run.dataset_id }}">실행·이력</a></div>
 {% for g in TABS %}<div class="grp"><b>{{ g[0] }}</b>{% for t in g[1] %}<a href="/analysis/{{ run.id }}/{{ t[0] }}" class="{{ 'on' if t[0] == view }}">{{ t[1] }}</a>{% endfor %}</div>{% endfor %}</div>
 <script>

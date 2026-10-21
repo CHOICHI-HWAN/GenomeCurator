@@ -3338,3 +3338,35 @@ def test_geo_resolve_gives_the_continent():
     assert geo.resolve("Uganda")["continent"] == "Africa" and geo.resolve("Germany")["continent"] == "Europe" and geo.resolve("USA")["continent"] == "North America"
     assert geo.resolve("Singapore")["continent"] == "Asia" and geo.resolve("Réunion")["continent"] == "Africa"                 # places the 110m outlines leave out
     assert all(geo.POINT_CONTINENT[v[0]] for v in geo.POINTS.values())
+
+
+def test_continent_comparison_separates_lineage_effects_from_real_differences(monkeypatch):
+    import math
+    from genomecurator import continents, insight, mutprofile
+    assert abs(continents.chi2_sf(3.841458820694124, 1) - 0.05) < 1e-6 and abs(continents.chi2_sf(9.210340371976184, 2) - 0.01) < 1e-6
+    q = continents.bh([0.001, 0.04, 0.03, 0.5])
+    assert [round(x, 4) for x in q] == [0.004, 0.0533, 0.0533, 0.5]
+    # 3 continents x 2 lineages: mutation 100T marks lineage L1 (which is mostly in Europe: a lineage effect), mutation 200G is carried by Africa only inside both lineages (a real difference)
+    meta, rows = {}, []
+    plan = [("Germany", "L1", 24, 6), ("Germany", "L2", 6, 12), ("Uganda", "L1", 6, 6), ("Uganda", "L2", 24, 12), ("Thailand", "L1", 6, 6), ("Thailand", "L2", 24, 12)]
+    i = 0
+    for country, lin, n, _x in plan:
+        for k in range(n):
+            s = f"g{i}"
+            i += 1
+            meta[s] = {"clade": "Ib", "lineage": lin, "country": country, "date": "2025-01-01", "outbreak": ""}
+            if lin == "L1":
+                rows.append({"sample": s, "pos": "100", "ref": "A", "alt": "T", "gene": "G1", "aa_change": "", "effect": "", "profile_of_interest": ""})
+            if country == "Uganda" and k % 2 == 0:
+                rows.append({"sample": s, "pos": "200", "ref": "C", "alt": "G", "gene": "G2", "aa_change": "", "effect": "", "profile_of_interest": ""})
+    monkeypatch.setattr(mutprofile, "_run_meta", lambda run: meta)
+    monkeypatch.setattr(mutprofile, "good_samples", lambda run, mx: None)
+    monkeypatch.setattr(insight, "_mutations", lambda run, mx=None: rows)
+    d = continents.compare({}, "country", min_group=5, min_carriers=5, adjust="lineage", perms=300)
+    by = {x["key"]: x for x in d["rows"]}
+    assert set(d["groups"]) == {"Germany", "Uganda", "Thailand"} and d["tested"] == 2
+    assert by["100T"]["q"] < 0.05 and by["100T"]["q_adj"] > 0.05            # the difference is the lineage mix: gone once lineages are held fixed
+    assert by["200G"]["q"] < 0.05 and by["200G"]["q_adj"] < 0.05            # Uganda only, in both lineages: stays
+    assert by["200G"]["top"] == "Uganda" and d["significant_raw"] == 2 and d["significant_adjusted"] == 1
+    assert "error" in continents.compare({}, "country", min_group=500)
+    assert continents.group_of("USA", "continent") == "North America" and continents.group_of("", "continent") == ""
