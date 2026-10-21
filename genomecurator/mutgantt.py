@@ -11,7 +11,7 @@ from collections import Counter, defaultdict
 
 import logging
 
-from . import continents, insight, lineages, mutprofile, outbreak
+from . import continents, insight, lineages, mutprofile, origins, outbreak
 
 _log = logging.getLogger("genomecurator.mutgantt")
 
@@ -63,7 +63,7 @@ def _definitional(meta: dict, s: str, introducers: list[str]) -> bool:
     return bool(names & set(introducers))
 
 
-def adaptive_traits(k, cs, ds_months, pool_by_month, recent, meta, dmap, row, n_pool=0) -> dict:
+def adaptive_traits(k, cs, ds_months, pool_by_month, recent, meta, dmap, row, n_pool=0, orig=None, have_tree=False) -> dict:
     """Exploratory evidence that a mutation is *kept* by the virus, from the sampled genomes: it is seen in many months and still in the most recent ones, it was rare early and common now (a spread rather than an ancestral change), it turns up in several lineages that it does not
     define (an independent origin is likely) and in several countries, it changes the protein, and its share among the genomes sampled stays up. Points are added up; this ranks candidates, it does not
     show selection - a mutation that rides on a successful branch (hitchhiking) or sits in a heavily sampled place scores high as well, and the mutation's real age and origin are not known."""
@@ -90,10 +90,19 @@ def adaptive_traits(k, cs, ds_months, pool_by_month, recent, meta, dmap, row, n_
     changes = bool(row["gene"]) and not syn and row["effect"] not in ("", "intergenic")
     score = 0
     why = []
+    o = (orig or {"events": 0, "settled": 0, "singles": 0, "tips": 0}) if have_tree else None
     if persistent:
-        if n_lin is not None and n_lin >= 2:
+        if have_tree:                                                 # independent origins on the tree (docs/ADAPTIVE.md E7); the lineage count below is then only information
+            if o["settled"] >= 2:
+                score += 2 + (1 if o["settled"] >= 3 else 0)
+                why.append(f"트리에서 독립적으로 {o['settled']}번 생김(각각 자손 2건 이상)")
+            elif o["settled"] == 1:
+                why.append("트리에서 한 번만 생김(한 가지가 퍼진 것일 수 있음)")
+            elif o["events"] == 0:
+                why.append("트리 가지에 없음(트리 뿌리 이전에 생김 — 기원은 이 트리 밖)")
+        elif n_lin is not None and n_lin >= 2:
             score += 2 + (1 if n_lin >= 3 else 0)
-            why.append(f"정의하지 않는 lineage {n_lin}곳에서 나타남")
+            why.append(f"정의하지 않는 lineage {n_lin}곳에서 나타남(트리가 없어 lineage 이름으로 추정)")
         if n_ctry >= 3:
             score += 1
             why.append(f"{n_ctry}개 나라")
@@ -109,11 +118,13 @@ def adaptive_traits(k, cs, ds_months, pool_by_month, recent, meta, dmap, row, n_
     defining = bool(intro)
     fixed = n_pool >= 20 and (len(cs) / n_pool >= FIXED_SHARE or (early_freq >= 0.8 and rec_freq >= 0.8))                       # carried by nearly every genome of the set: ancestral to it (a clade marker against the reference), not a change within it
     tier = "fixed" if fixed else "defining" if defining else ("strong" if score >= 6 and rising else "candidate" if score >= 4 else "")
+    if not tier and have_tree and o["settled"] >= 2:
+        tier = "recurrent"                                           # arose independently on the tree at least twice, whatever its persistence
     if fixed:
         score, why = 0, ["거의 모든 유전체가 가짐(이 데이터셋의 조상형)"]
-    if tier in ("strong", "candidate") and row.get("profile_of_interest", "") not in ("", "other"):
+    if tier in ("strong", "candidate", "recurrent") and row.get("profile_of_interest", "") not in ("", "other"):
         tier = "apobec"                                               # APOBEC3-type changes are edits by the host: lasting and widespread, but no evidence of selection
-    return {"score": score, "tier": tier, "months_seen": obs, "last_seen": last_seen, "persistent": persistent, "lineages": n_lin, "countries": n_ctry, "recent_n": rec_n, "peak_freq": round(peak, 4), "early_freq": round(early_freq, 4), "rising": rising,
+    return {"score": score, "tier": tier, "months_seen": obs, "last_seen": last_seen, "persistent": persistent, "lineages": n_lin, "origins": ({**o, "source": "tree"} if have_tree else {"source": "lineage"}), "countries": n_ctry, "recent_n": rec_n, "peak_freq": round(peak, 4), "early_freq": round(early_freq, 4), "rising": rising,
             "recent_freq": round(rec_freq, 4), "changes_protein": changes, "why": why}
 
 
@@ -175,6 +186,7 @@ def build(run: dict, bin_: str = "month", lineage_set=(), clade_set=(), gene: st
     pool_by_month = Counter(v[2] for v in dated.values())
     recent = set(sorted(pool_by_month)[-RECENT_MONTHS:]) if pool_by_month else set()
     cats = outbreak.categories()
+    origs = origins.independent_origins(run)
     out = []
     for k, cs in carriers.items():
         if len(cs) < min_carriers or (hide_common and len(cs) / n_pool >= hide_common):
@@ -201,7 +213,7 @@ def build(run: dict, bin_: str = "month", lineage_set=(), clade_set=(), gene: st
                     "by_continent": dict(Counter(_cont(meta[s]["country"]) for s in cs if _cont(meta[s]["country"]))),
                     "_cs": cs,
                     "category": (cats.get(r["gene"], {}).get("category") or ("(유전자 밖)" if not r["gene"] else "(분류 없음)")), "function": cats.get(r["gene"], {}).get("function", ""),
-                    "adaptive": adaptive_traits(k, cs, [d[2] for d, _s in ds], pool_by_month, recent, meta, dmap, r, len(pool)),
+                    "adaptive": adaptive_traits(k, cs, [d[2] for d, _s in ds], pool_by_month, recent, meta, dmap, r, len(pool), origs.get((k[0], k[1])) if origs else None, origs is not None),
                     "_key": _key_date(first[0], first[3], first[2])})
     total_rows = len(out)
     if sort == "pos":
@@ -211,7 +223,7 @@ def build(run: dict, bin_: str = "month", lineage_set=(), clade_set=(), gene: st
     else:
         out.sort(key=lambda x: (x["_key"], x["pos"], x["alt"]))
     out = out[:max_rows]
-    links = co_travel([x for x in out if x["adaptive"]["tier"] in ("strong", "candidate", "apobec")])
+    links = co_travel([x for x in out if x["adaptive"]["tier"] in ("strong", "candidate", "recurrent", "apobec")])
     for x in out:
         x.pop("_key")
         x.pop("_cs")
@@ -225,7 +237,7 @@ def build(run: dict, bin_: str = "month", lineage_set=(), clade_set=(), gene: st
         periods = lineages._months(mo[0], mo[-1]) if mo else []
         starts = [k + "-01" for k in periods]
     return {"reference": refname or ref, "bin": bin_, "periods": periods, "starts": starts, "rows": out, "total_rows": total_rows, "shown_rows": len(out), "genomes": len(pool), "dated": len(dated),
-            "month_only": sum(1 for d in all_dates if d[0] == "month"), "no_date": len(pool) - len(dated), "start": start, "end": end, "sort": sort, "min_carriers": min_carriers, "max_n": max_n, "definitions": bool(dmap), "defining": defining,
+            "month_only": sum(1 for d in all_dates if d[0] == "month"), "no_date": len(pool) - len(dated), "start": start, "end": end, "sort": sort, "min_carriers": min_carriers, "max_n": max_n, "definitions": bool(dmap), "origins_from_tree": origs is not None, "defining": defining,
             "n_defining_shown": sum(1 for x in out if x["defines"]), "adaptive_links": links}
 
 

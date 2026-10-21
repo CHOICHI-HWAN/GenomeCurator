@@ -25,12 +25,12 @@ No study testing positive selection of clade Ib genes or recurrent mutations per
 | # | Evidence | Now |
 |---|---|---|
 | E1 | Persistence: seen in >= 3 months and still in the last 6 | implemented |
-| E2 | Recurrence: appears in several lineages that do not define it | approximated by lineage names (lineages are not a tree) |
+| E2 | Recurrence: appears in several lineages that do not define it | replaced by E7 when a tree exists; lineage-name approximation only without a tree (on real data it counted ancestral mutations as recurring in 7 lineages) |
 | E3 | Geographic spread: >= 3 countries | implemented |
 | E4 | Protein change (non-synonymous / stop) | implemented |
 | E5 | Frequency: rare early, common now; share holds up | implemented, not corrected for sampling by country |
 | E6 | Classes: ancestral (nearly all genomes), lineage-defining, APOBEC3-type | implemented, kept apart |
-| E7 | Number of independent origins on the tree | **not implemented** (branch counts exist in `outbreak.clusters`) |
+| E7 | Number of independent origins on the tree | **implemented** (`origins.py`; only when the tree's reference is the run's reference) |
 | E8 | Neutral baseline: recurrence of synonymous / non-coding mutations | **not implemented** |
 | E9 | Linkage: separate mutations that travel together | partly (groups are shown, not split) |
 | E10 | Selection tests: dN/dS, site-wise | exploratory per-gene dN/dS only |
@@ -38,7 +38,7 @@ No study testing positive selection of clade Ib genes or recurrent mutations per
 The present score (+2/+1/+1/+1/+1/+2) adds E1-E5 with weights that have no basis. The aim is to replace it with an evidence table strengthened by E7-E10.
 
 ## 4. Proposed methods
-1. **Independent origins (E7, priority 1)**: from the dataset's Nextstrain tree and branch mutations, count the branches that carry each mutation; count an event as settled only if it has >= 2 descendant tips (single-tip events are indistinguishable from errors / within-host variants and are flagged separately); lift coordinates to the run reference. Replaces the lineage proxy of E2.
+1. **Independent origins (E7, priority 1) - implemented**: from the dataset's Nextstrain tree and branch mutations, count the branches that carry each mutation; count an event as settled only if it has >= 2 descendant tips (single-tip events are indistinguishable from errors / within-host variants and are flagged separately); lift coordinates to the run reference. Replaces the lineage proxy of E2.
 2. **Neutral baseline (E8, priority 2)**: synonymous and non-coding mutations are mostly neutral, so their recurrence is the chance level. Per mutation context (APOBEC3 trinucleotide, transition/transversion), compare the independent-origin count of a non-synonymous mutation with the neutral distribution -> empirical p, BH-corrected q. State "more independent origins than neutral mutations of the same context (q = ...)" instead of "score 6".
 3. **Frequency growth corrected for sampling (E5, priority 3)**: binomial/multinomial logistic regression of the carrier share per month/week, stratified by country; reuse `lineagetree.growth`. Report the slope with a 95% interval; an interval spanning 0 means "cannot be called a rise".
 4. **Linked mutations (E9, priority 4)**: groups (`co_travel`, Jaccard >= 0.6) count as one piece of evidence; later, PyR0-style regression of lineage fitness on mutation presence with regularisation; with little data report "cannot be separated".
@@ -57,7 +57,7 @@ The present score (+2/+1/+1/+1/+1/+2) adds E1-E5 with weights that have no basis
 Keep **"adaptive candidate"** (never shorten to "adaptive mutation"); show per candidate which evidence is present and which is absent (E1-E10 ticks), the one-line score only as a sort aid; count linked groups as one; always show the sampling-bias warning; do not claim "first" in a paper or announcement until the predecessor tools (PyR0, MpoxRadar, VIRUS-MVP) have been read and compared.
 
 ## 7. To do (priority order)
-1. E7 independent origins (tree-based), replacing the lineage proxy
+1. ~~E7 independent origins (tree-based)~~ - done. On run 5 (clade Ib) few mutations arose independently twice or more and no non-APOBEC mutation was both persistent, protein-changing and recurrent (the lineage proxy had counted ancestral mutations as recurrent in 7 lineages)
 2. E8 neutral baseline with q values
 3. E5 country-stratified growth regression
 4. Evidence-tick UI; score as a sort aid

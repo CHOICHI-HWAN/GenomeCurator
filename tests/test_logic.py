@@ -3462,3 +3462,40 @@ def test_co_travel_links_mutations_that_share_their_genomes():
     assert by[("20C", "10A")]["j"] == 1.0 and by[("20C", "10A")]["shared"] == 10                 # same genomes: a = the earlier-observed one
     assert ("30G", "10A") not in by and (("10A", "30G") in by and by[("10A", "30G")]["j"] == 0.6)  # 6 of 10 genomes: Jaccard 0.6 is the cut
     assert not any("40T" in k for k in by)                                                       # shares nothing: not linked
+
+
+def test_independent_origins_count_settled_events_on_the_tree(monkeypatch):
+    from genomecurator import lineages, mutprofile, nextstrain, origins, outbreak
+    mk = lambda name, muts=(), kids=None: {"name": name, "branch_attrs": {"mutations": {"nuc": list(muts)}}, **({"children": kids} if kids else {})}
+    # 100T arose on three branches: two with two descendants each, one with a single tip; 200G once on a branch with four tips
+    tree = mk("root", [], [mk("n1", ["A100T", "C200G"], [mk("t1"), mk("t2"), mk("t3"), mk("t4")]), mk("n2", ["A100T"], [mk("t5"), mk("t6")]), mk("n3", [], [mk("t7", ["A100T"]), mk("t8", ["G300A"])])])
+    monkeypatch.setattr(outbreak, "_tree", lambda run: (tree, "", {"auspice_file": "x.json", "build": "b"}))
+    monkeypatch.setattr(outbreak, "_tree_reference", lambda ns: ("REF1", "A" * 400, []))
+    monkeypatch.setattr(mutprofile, "summary", lambda run: {"reference": "REF1"})
+    monkeypatch.setattr(lineages, "_genomes", lambda run: [{"id": f"t{i}", "lineage": "L1" if i < 5 else "L2", "country": "X" if i % 2 else "Y", "date": "2025-01-01", "outbreak": "", "clade": ""} for i in range(1, 9)])
+    class F:
+        def stat(self):
+            class S: st_mtime = 1.0
+            return S()
+    monkeypatch.setattr(nextstrain, "auspice_dir", lambda: type("P", (), {"__truediv__": lambda s, o: F()})())
+    origins._CACHE.clear()
+    o = origins.independent_origins({"id": 1})
+    assert o[(100, "T")] == {"events": 3, "settled": 2, "singles": 1, "tips": 6, "lineages": {"L1": 4, "L2": 2}, "countries": o[(100, "T")]["countries"]}
+    assert o[(200, "G")]["settled"] == 1 and o[(200, "G")]["tips"] == 4 and o[(300, "A")]["settled"] == 0 and o[(300, "A")]["singles"] == 1
+    monkeypatch.setattr(mutprofile, "summary", lambda run: {"reference": "OTHER"})
+    origins._CACHE.clear()
+    assert origins.independent_origins({"id": 1}) is None                                  # a tree on another reference: no counts (the lineage approximation stays)
+    # the evidence uses them: persistent + recurrent + rising + several countries + protein change -> a strong candidate; one origin -> no recurrence points
+    from collections import Counter
+    from genomecurator import mutgantt
+    monkeypatch.setattr(lineages, "chain", lambda ob, lin: [{"name": lin}])
+    months = [f"2025-{m:02d}" for m in range(1, 13)]
+    pool = Counter({m: 10 for m in months})
+    meta = {f"g{i}": {"lineage": f"L{i % 4}", "country": f"C{i % 5}", "outbreak": "o", "clade": "Ib", "date": months[i // 10] + "-15"} for i in range(120)}
+    cs = {f"g{i}" for i in range(120) if months[i // 10] >= "2025-07" and i % 3 != 0}
+    ms = [meta[s]["date"][:7] for s in cs]
+    row = {"effect": "nonsynonymous", "gene": "OPG1", "profile_of_interest": ""}
+    rec = mutgantt.adaptive_traits((1, "T"), cs, ms, pool, set(months[-6:]), meta, {}, row, 120, {"events": 3, "settled": 3, "singles": 0, "tips": 30}, True)
+    one = mutgantt.adaptive_traits((1, "T"), cs, ms, pool, set(months[-6:]), meta, {}, row, 120, {"events": 1, "settled": 1, "singles": 0, "tips": 30}, True)
+    assert rec["tier"] == "strong" and rec["origins"]["settled"] == 3 and one["tier"] != "strong" and rec["score"] - one["score"] == 3
+    assert any("독립적으로 3번" in w for w in rec["why"]) and any("한 번만" in w for w in one["why"])
