@@ -6,7 +6,7 @@ from fastapi import FastAPI, Form, Request
 from fastapi.responses import FileResponse, HTMLResponse, JSONResponse, RedirectResponse, Response, StreamingResponse
 from fastapi.templating import Jinja2Templates
 
-from . import beastprep, clock, continents, intake, lineagetree, mutgantt, nextcladecall, pipeline, support, variantcall, variantflow, __version__, analysis, completeness, datasets, exclusions, export, cooccur, geo, heatmap, vocab, insight, lineages, mutprofile, nextstrain, novel, outbreak, pathoplexus, private, qc, squirrel, config, curate, jobs, log
+from . import beastprep, clock, continents, hyphyexport, intake, lineagetree, mutgantt, nextcladecall, pipeline, support, variantcall, variantflow, __version__, analysis, completeness, datasets, exclusions, export, cooccur, geo, heatmap, vocab, insight, lineages, mutprofile, nextstrain, novel, outbreak, pathoplexus, private, qc, squirrel, config, curate, jobs, log
 from .db import audit_now, connect
 
 _log = log.get("web")
@@ -1003,6 +1003,18 @@ def create_app(scheduler: bool = True) -> FastAPI:
             return out
         except (ValueError, RuntimeError) as e:
             return JSONResponse({"error": str(e)}, 400)
+
+    @app.get("/api/analyses/{rid}/hyphy.zip")
+    def api_analysis_hyphy(rid: int, genes: str = ""):
+        """Input for HyPhy (FEL / MEME / FUBAR): a codon alignment per requested gene and the tree, public genomes only."""
+        r = nextstrain.get_run(rid)
+        if not r or r["tool"] != "mutprofile" or r["status"] != "done":
+            return JSONResponse({"error": "finished mutation-profile run not found"}, 404)
+        try:
+            data = hyphyexport.build(r, [g for g in genes.split(",") if g][:80])
+        except (ValueError, RuntimeError) as e:
+            return JSONResponse({"error": str(e)}, 400)
+        return Response(data, media_type="application/zip", headers={"Content-Disposition": f'attachment; filename="hyphy-input-run{rid}.zip"'})
 
     @app.get("/analysis/{rid}/continent")
     def analysis_continent_page(request: Request, rid: int):

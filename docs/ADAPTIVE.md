@@ -32,8 +32,8 @@ No study testing positive selection of clade Ib genes or recurrent mutations per
 | E6 | Classes: ancestral (nearly all genomes), lineage-defining, APOBEC3-type | implemented, kept apart |
 | E7 | Number of independent origins on the tree | **implemented** (`origins.py`; only when the tree's reference is the run's reference) |
 | E8 | Neutral baseline: independent-origin distribution of synonymous / non-coding mutations (Poisson / negative binomial), BH q | **implemented** (`origins.neutral_baseline`; the tail is a fitted model, extrapolated) |
-| E9 | Linkage: separate mutations that travel together | partly (groups are shown, not split) |
-| E10 | Selection tests: dN/dS, site-wise | exploratory per-gene dN/dS only |
+| E9 | Linkage: separate mutations that travel together | partly: groups count as one piece of evidence ("N candidates = M independent pieces"); no regularised split |
+| E10 | Selection tests: dN/dS, site-wise | exploratory per-gene dN/dS + **HyPhy input export** (`hyphyexport.py`: codon alignment per gene + tree, public genomes only); the tests run outside |
 
 The present score (+2/+1/+1/+1/+1/+2) adds E1-E5 with weights that have no basis. The aim is to replace it with an evidence table strengthened by E7-E10.
 
@@ -62,6 +62,19 @@ Keep **"adaptive candidate"** (never shorten to "adaptive mutation"); show per c
 3. ~~E5 country-stratified growth regression~~ - done (per mutation, shown as "adjusted rise" in the candidate table)
 4. ~~Evidence-tick UI; score as a sort aid~~ - done (columns persistence, recurrence, above neutral, spread, protein, rise, adjusted rise)
 5. ~~Recovery test on simulated data in `./test.sh verify`~~ - done (`planted_adaptive`: planted five-origin mutations recovered 120/120, null false positives 0/12000)
-6. E9 regularised regression for linked mutations - **not done** (linked groups are only marked; on the current data most candidates form one group, so there is little to separate)
-7. E10 HyPhy input export - **not done** (a codon alignment needs the Squirrel alignment's reference / annotation coordinates verified first)
-8. Read the predecessor papers and tools in full; write the comparison table - **not done** (the search was abstract level)
+6. E9 regularised regression for linked mutations - **partly** (groups count as one piece of evidence and the independent number is shown; the regression split is not done: on the current data most candidates form one group, so there is little to separate)
+7. ~~E10 HyPhy input export~~ - done (codon alignments are cut by mapping the Squirrel alignment's reference columns onto the run reference's annotation; OPG185 translates to a protein start, MTQLPILL...)
+8. Predecessor comparison - **partly done** (section 8: MpoxRadar and PyR0 read in full text; VIRUS-MVP blocked by a verification page and not read; the rest abstract level)
+
+## 8. Comparison with predecessor tools (what was actually read)
+| | MpoxRadar | PyR0 | This tool |
+|---|---|---|---|
+| Scope | mpox, NCBI GenBank daily (1,862 samples as of March 2023) | SARS-CoV-2, 6,466,300 GISAID genomes | mpox, the app's curated datasets |
+| Read | full text (PMC10320163) | full text (PMC9161372) | - |
+| Does | mutation frequency, linear-regression trend, map, shared/unique mutations of two datasets, three references, filters | hierarchical Bayesian multinomial logistic regression of lineage fitness and amino-acid mutation effects | mutation picture, table, flow diagram, evidence-by-evidence candidate ranking |
+| Recurrence / convergence | not described | relies on convergence (a mutation arising in several lineages) | independent origins on the tree and a neutral baseline |
+| Selection analysis | not described | fitness regression, not a selection test | exploratory dN/dS, HyPhy input export (tests run outside) |
+| Sampling bias | users must account for it | lineage proportions in 14-day windows, regions separated | country-fixed regression, linked groups counted once |
+| Limits stated by authors | countries that sequence more show more mutations | linear additive model (no epistasis), not causal, mutation-level estimates less consistent than lineage-level (rho = 0.48 between versions), top RBD mutations did not on average raise infectivity | see below |
+
+VIRUS-MVP (`PMC12501772`) could not be read (a verification page blocked the fetch; it was not bypassed), so its features are unconfirmed; CoVtRec, Wada et al. and VOCAL are abstract level. **Weaker than PyR0**: this tool adds evidence into a simple score on a small mpox dataset, while PyR0 estimates mutation effects with a hierarchical Bayesian model on millions of genomes; PyR0's own limits (not causal, unstable mutation-level estimates, rankings that need not match phenotype) apply here as well. **Possibly different** (unconfirmed elsewhere): mpox clades / lineages / the paper's functional categories together, independent origins counted on the tree against a neutral baseline, evidence shown per column, and a bridge to HyPhy. This is not checked against every tool, so do not write "first".

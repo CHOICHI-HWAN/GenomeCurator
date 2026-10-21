@@ -3546,3 +3546,23 @@ def test_trend_holds_the_country_mix_fixed():
     assert mix["lo"] < 0 < mix["hi"]                                          # the country mix explains it: the interval spans 0
     assert real["lo"] > 0 and real["slope"] > 0.1
     assert trend.carrier_trend({"g0"}, ctx) is None                           # too few carriers
+
+
+def test_hyphy_export_cuts_codons_in_coding_direction_and_writes_a_pruned_tree():
+    from genomecurator import hyphyexport
+    # alignment columns 1..12; a + gene on columns 2-7 (two codons), a - gene on columns 6-11 (read from the other strand)
+    rows = {"g1": "AATGAAATTTCC", "g2": "AATGAC-NTTCC"}
+    inv = {p: p for p in range(1, 13)}                                          # run reference position == alignment column here
+    plus = {"gene": "P", "strand": "+", "exons": [(2, 7)]}
+    minus = {"gene": "M", "strand": "-", "exons": [(6, 11)]}
+    out, why = hyphyexport.codon_alignment(rows, inv, plus)
+    assert out == {"g1": "ATGAAA", "g2": "ATGAC-"} and why == ""                                 # + strand: columns 2-7 as they are; the deleted base stays "-"
+    om, _ = hyphyexport.codon_alignment(rows, inv, minus)
+    assert om == {"g1": "GAAATT", "g2": "GAAN-G"}                                                  # - strand: columns 11..6 read backwards and complemented, N stays N
+    assert hyphyexport.codon_alignment(rows, {p: p for p in range(1, 11)}, minus)[0] is None       # position 11 has no column: gene skipped
+    assert hyphyexport.codon_alignment(rows, inv, {"gene": "B", "strand": "+", "exons": [(2, 6)]})[0] is None   # not a multiple of three
+    assert hyphyexport.gene_positions(minus)[0] == (11, "-") and hyphyexport.gene_positions(minus)[-1] == (6, "-")
+    mk = lambda name, div=None, kids=None: {"name": name, "node_attrs": {"div": div} if div is not None else {}, **({"children": kids} if kids else {})}
+    tree = mk("root", 0, [mk("n1", 10, [mk("a", 12), mk("b", 15)]), mk("c", 4), mk("private:x", 3)])
+    nw = hyphyexport.newick(tree, {"a", "b", "c"}, 100)
+    assert nw.count("(") == 2 and "private:x" not in nw and nw.startswith("((a:0.02000000,b:0.05000000):0.10000000,c:0.04000000):0.00000000;")
