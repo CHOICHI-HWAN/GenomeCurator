@@ -117,6 +117,22 @@ def adaptive_traits(k, cs, ds_months, pool_by_month, recent, meta, dmap, row, n_
             "recent_freq": round(rec_freq, 4), "changes_protein": changes, "why": why}
 
 
+
+def co_travel(rows: list[dict], min_j: float = 0.6) -> list[dict]:
+    """Pairs of the given mutations that sit on (nearly) the same genomes: Jaccard similarity of their carrier sets, `a` the one first observed earlier. Mutations that always travel together were most
+    likely gained together (one event or one branch), so they are one piece of evidence, not several."""
+    out = []
+    for i, x in enumerate(rows):
+        for y in rows[i + 1:]:
+            inter = len(x["_cs"] & y["_cs"])
+            if not inter:
+                continue
+            j = inter / len(x["_cs"] | y["_cs"])
+            if j >= min_j:
+                a, b = sorted((x, y), key=lambda r: (r["first"], r["pos"]))
+                out.append({"a": f"{a['pos']}{a['alt']}", "b": f"{b['pos']}{b['alt']}", "j": round(j, 3), "shared": inter})
+    return out
+
 def build(run: dict, bin_: str = "month", lineage_set=(), clade_set=(), gene: str = "", start: int = 0, end: int = 0, apobec_only: bool = False, hide_common: float = 0.0,
           min_carriers: int = 3, max_rows: int = 150, sort: str = "first", max_n: float | None = 0.05, defining: str = "all") -> dict:
     sm = mutprofile.summary(run)
@@ -183,6 +199,7 @@ def build(run: dict, bin_: str = "month", lineage_set=(), clade_set=(), gene: st
                     "countries": dict(Counter(meta[s]["country"] for _d, s in ds if meta[s]["country"]).most_common(3)),
                     "by_lineage": dict(Counter(meta[s]["lineage"] or "(없음)" for s in cs)), "by_country": dict(Counter(meta[s]["country"] for s in cs if meta[s]["country"])),
                     "by_continent": dict(Counter(_cont(meta[s]["country"]) for s in cs if _cont(meta[s]["country"]))),
+                    "_cs": cs,
                     "category": (cats.get(r["gene"], {}).get("category") or ("(유전자 밖)" if not r["gene"] else "(분류 없음)")), "function": cats.get(r["gene"], {}).get("function", ""),
                     "adaptive": adaptive_traits(k, cs, [d[2] for d, _s in ds], pool_by_month, recent, meta, dmap, r, len(pool)),
                     "_key": _key_date(first[0], first[3], first[2])})
@@ -194,8 +211,10 @@ def build(run: dict, bin_: str = "month", lineage_set=(), clade_set=(), gene: st
     else:
         out.sort(key=lambda x: (x["_key"], x["pos"], x["alt"]))
     out = out[:max_rows]
+    links = co_travel([x for x in out if x["adaptive"]["tier"] in ("strong", "candidate", "apobec")])
     for x in out:
         x.pop("_key")
+        x.pop("_cs")
     all_dates = [dated[s] for s in dated]
     if bin_ == "week":
         wk = sorted({d[1] for d in all_dates if d[0] == "day"})
@@ -207,7 +226,7 @@ def build(run: dict, bin_: str = "month", lineage_set=(), clade_set=(), gene: st
         starts = [k + "-01" for k in periods]
     return {"reference": refname or ref, "bin": bin_, "periods": periods, "starts": starts, "rows": out, "total_rows": total_rows, "shown_rows": len(out), "genomes": len(pool), "dated": len(dated),
             "month_only": sum(1 for d in all_dates if d[0] == "month"), "no_date": len(pool) - len(dated), "start": start, "end": end, "sort": sort, "min_carriers": min_carriers, "max_n": max_n, "definitions": bool(dmap), "defining": defining,
-            "n_defining_shown": sum(1 for x in out if x["defines"])}
+            "n_defining_shown": sum(1 for x in out if x["defines"]), "adaptive_links": links}
 
 
 def series(run: dict, pos: int, alt: str, bin_: str = "month", max_n: float | None = 0.05) -> dict:

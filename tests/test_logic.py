@@ -3451,3 +3451,14 @@ def test_adaptive_candidates_need_persistence_spread_and_are_not_ancestral(monke
     assert tr(cs_spread, (1, "T"), apo="apobec")["tier"] == "apobec"                                          # APOBEC3-type: kept apart (a host edit, not evidence of selection)
     old = {f"g{i}" for i in range(0, 20)}                                                                     # seen only in the first two months: gone, not kept
     assert tr(old, (4, "A"))["persistent"] is False and tr(old, (4, "A"))["tier"] == ""
+
+
+def test_co_travel_links_mutations_that_share_their_genomes():
+    from genomecurator import mutgantt
+    row = lambda pos, alt, first, cs: {"pos": pos, "alt": alt, "first": first, "_cs": set(cs)}
+    rows = [row(10, "A", "2025-02", range(0, 10)), row(20, "C", "2025-01", range(0, 10)), row(30, "G", "2025-03", range(0, 6)), row(40, "T", "2025-04", range(50, 60))]
+    links = mutgantt.co_travel(rows)
+    by = {(x["a"], x["b"]): x for x in links}
+    assert by[("20C", "10A")]["j"] == 1.0 and by[("20C", "10A")]["shared"] == 10                 # same genomes: a = the earlier-observed one
+    assert ("30G", "10A") not in by and (("10A", "30G") in by and by[("10A", "30G")]["j"] == 0.6)  # 6 of 10 genomes: Jaccard 0.6 is the cut
+    assert not any("40T" in k for k in by)                                                       # shares nothing: not linked
