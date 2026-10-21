@@ -6,7 +6,7 @@ from fastapi import FastAPI, Form, Request
 from fastapi.responses import FileResponse, HTMLResponse, JSONResponse, RedirectResponse, Response, StreamingResponse
 from fastapi.templating import Jinja2Templates
 
-from . import beastprep, clock, mutgantt, nextcladecall, pipeline, support, variantcall, variantflow, __version__, analysis, completeness, datasets, exclusions, export, cooccur, geo, heatmap, vocab, insight, lineages, mutprofile, nextstrain, novel, outbreak, pathoplexus, private, qc, squirrel, config, curate, jobs, log
+from . import beastprep, clock, lineagetree, mutgantt, nextcladecall, pipeline, support, variantcall, variantflow, __version__, analysis, completeness, datasets, exclusions, export, cooccur, geo, heatmap, vocab, insight, lineages, mutprofile, nextstrain, novel, outbreak, pathoplexus, private, qc, squirrel, config, curate, jobs, log
 from .db import audit_now, connect
 
 _log = log.get("web")
@@ -950,6 +950,38 @@ def create_app(scheduler: bool = True) -> FastAPI:
         try:
             return lineages.spread(r, view if view in ("lineage", "mutation") else "lineage", bin, outbreak, max(1, min_n), [x for x in lineage.split(",") if x], [x for x in country.split(",") if x],
                                    lineages.parse_sites(sites) if sites else ())
+        except (ValueError, RuntimeError) as e:
+            return JSONResponse({"error": str(e)}, 400)
+
+    @app.get("/analysis/{rid}/lineage")
+    def analysis_lineage_page(request: Request, rid: int):
+        r = nextstrain.get_run(rid)
+        if not r or r["tool"] != "mutprofile" or r["status"] != "done":
+            return JSONResponse({"error": "finished mutation-profile run not found"}, 404)
+        return render(request, "lineagetree.html", nav="res", run=r)
+
+    @app.get("/api/analyses/{rid}/lineage_tree")
+    def api_analysis_lineage_tree(rid: int, weeks: int = 0):
+        """The clade / outbreak / lineage hierarchy with the mutations that introduced each node and the genomes of the run (own, with sub-lineages, within the last `weeks` weeks)."""
+        r = nextstrain.get_run(rid)
+        if not r or r["tool"] != "mutprofile" or r["status"] != "done":
+            return JSONResponse({"error": "finished mutation-profile run not found"}, 404)
+        try:
+            return lineagetree.tree(r, min(max(0, weeks), 520))
+        except (ValueError, RuntimeError) as e:
+            return JSONResponse({"error": str(e)}, 400)
+
+    @app.get("/api/analyses/{rid}/lineage_growth")
+    def api_analysis_lineage_growth(rid: int, bin: str = "week", weeks: int = 52, country: str = "", min_n: int = 20, ref: str = ""):
+        """Growth advantage of the lineages (multinomial logistic regression of their shares over time)."""
+        r = nextstrain.get_run(rid)
+        if not r or r["tool"] != "mutprofile" or r["status"] != "done":
+            return JSONResponse({"error": "finished mutation-profile run not found"}, 404)
+        from collections import Counter
+        try:
+            out = lineagetree.growth(r, bin, min(max(4, weeks), 520), country, max(3, min_n), 3, ref)
+            out["countries"] = [c for c, _n in Counter(g["country"] for g in lineages._genomes(r) if g["country"]).most_common(40)]
+            return out
         except (ValueError, RuntimeError) as e:
             return JSONResponse({"error": str(e)}, 400)
 

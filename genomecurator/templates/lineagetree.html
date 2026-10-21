@@ -1,0 +1,90 @@
+{% extends "base.html" %}{% block body %}
+{% set view='lineage' %}{% include "_anav.html" %}
+<div class="pagehead"><h2>계통도·성장 <span class="mut" style="font-size:14px;font-weight:400">clade · lineage 정의도 · 유전체 흐름 · 성장 이점</span></h2><span class="mut">{{ run.name }}</span></div>
+<div class="help"><b>무엇을 보여 주나</b>: mpox를 <b>Mpox virus › clade I/II › clade(Ia, Ib, IIa, IIb) › outbreak(lineage-designation의 sh2017·sh2023·sh2024) › lineage</b>로 이어 그립니다(상위–하위 관계는 mpxv-lineages 정의의 parent). 노드 옆 <b>+k</b>는 그 노드에서 <b>새로 생긴</b> 정의 변이 수, <b>Σm</b>은 뿌리에서 그 노드까지 <b>누적</b>된 정의 변이 수입니다.
+<b>가로축을 “누적 정의 변이”로 두면</b> 변이가 계통을 따라 쌓이는 모양이 보입니다. <b>Sankey</b>에서는 띠의 굵기가 이 실행의 유전체 수(전체 또는 최근 몇 주)입니다. 정의는 lineage-designation 저장소(받아 둔 판)이며, 이 실행에 유전체가 없는 lineage는 기본으로 숨깁니다.</div>
+<div class="card" style="font-size:13px"><div style="display:flex;gap:16px;flex-wrap:wrap;align-items:end">
+ <label>그림<br><select id="vw" onchange="draw()"><option value="tree">계통도(트리)</option><option value="sankey">Sankey(유전체 흐름)</option></select></label>
+ <label>가로축<br><select id="xa" onchange="draw()"><option value="depth">계통 깊이</option><option value="cum" selected>누적 정의 변이 수</option></select></label>
+ <label>유전체 수 기준<br><select id="wk" onchange="loadTree()"><option value="0">전체 기간</option><option value="8">최근 8주</option><option value="13">최근 13주</option><option value="26">최근 26주</option><option value="52">최근 52주</option></select></label>
+ <label><input type="checkbox" id="he" checked onchange="draw()"> 유전체 없는 lineage 숨기기</label>
+ <label>색<br><select id="cb" onchange="draw()"><option value="clade">clade</option><option value="new">그 노드의 새 변이 수</option></select></label>
+ <button type="button" id="svgb" onclick="saveSvg()">SVG 저장</button><span class="mut" id="info"></span></div></div>
+<div id="fig" style="overflow:auto;background:#fff;border:1px solid var(--bd);border-radius:6px;margin-top:10px"></div>
+<div id="nd" class="card" style="margin-top:10px;display:none"></div>
+<h3 style="margin-top:18px">lineage 성장 이점 <span class="mut" style="font-size:13px;font-weight:400">다항 로지스틱 회귀 (영국 보건안전청·Nextstrain 성장 이점 추정과 같은 계열의 방법)</span></h3>
+<div class="caut" style="margin-bottom:8px"><b>주의사항</b>
+<ul style="margin:4px 0 0 18px;padding:0">
+<li>이 값은 <b>표본에서 lineage 비율이 어떻게 바뀌는지</b>를 보여 줍니다. 전파력(감염력)의 추정이 아닙니다.</li>
+<li>mpox는 서열 수가 적고 <b>나라·시기마다 표집이 크게 다릅니다</b>. 한 나라의 시퀀싱이 늘면 그 나라에 많은 lineage의 비율이 올라 “성장”처럼 보입니다. 가능하면 <b>나라를 하나 골라</b> 보세요(전체를 합치면 표집 차이가 성장 차이로 오해되기 쉽습니다).</li>
+<li>모델은 <b>성장 이점이 구간 내내 일정</b>하다고 가정합니다. 건수가 적은 lineage는 구간이 매우 넓으니 <b>구간(95%)이 0을 걸치면 차이가 있다고 말할 수 없습니다</b>.</li>
+<li>채집일이 <b>일 단위</b>인 유전체만 주 단위에 들어갑니다(월까지만 있는 날짜는 월 단위에만). 건수가 모자란 lineage는 가장 가까운 상위 lineage에 합치고, 그래도 안 되면 “other”입니다.</li>
+<li>가장 최근 몇 주는 아직 서열이 덜 올라와 비율이 바뀔 수 있습니다(보고 지연).</li></ul></div>
+<div class="card" style="font-size:13px"><div style="display:flex;gap:14px;flex-wrap:wrap;align-items:end">
+ <label>시간 단위<br><select id="gb" onchange="loadGrowth()"><option value="week">ISO 주</option><option value="month">월</option></select></label>
+ <label>구간(주)<br><select id="gw" onchange="loadGrowth()"><option value="26">26주</option><option value="52" selected>52주</option><option value="104">104주</option><option value="260">전체에 가깝게(260주)</option></select></label>
+ <label>나라<br><select id="gc" onchange="loadGrowth()"><option value="">전체(합침)</option></select></label>
+ <label>최소 건수<br><input id="gn" type="number" min="3" value="20" style="width:64px" onchange="loadGrowth()"></label>
+ <label>기준 lineage<br><select id="gr" onchange="loadGrowth()"><option value="">가장 많은 것</option></select></label></div></div>
+<div id="gr_out" style="margin-top:10px"></div>
+<script>
+const RID={{ run.id }};
+const E=s=>String(s??'').replace(/[&<>"]/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c]));
+const PAL=['#4e79a7','#f28e2b','#e15759','#76b7b2','#59a14f','#edc948','#b07aa1','#ff9da7','#9c755f','#bab0ac'];
+const CC={Ia:'#e15759',Ib:'#f28e2b',IIa:'#59a14f',IIb:'#4e79a7',I:'#c9a227',II:'#7f9f7f',mpox:'#999'};
+let T=null,SEL=null;
+async function loadTree(){const r=await fetch('/api/analyses/'+RID+'/lineage_tree?weeks='+document.getElementById('wk').value);T=await r.json();if(T.error){document.getElementById('fig').innerHTML='<div class="card" style="color:var(--bad)">'+E(T.error)+'</div>';return}draw()}
+function byId(){const m={};T.nodes.forEach(n=>m[n.id]=n);return m}
+function visible(){const M=byId(),hide=document.getElementById('he').checked,use=document.getElementById('wk').value!=='0';const w=n=>use?n.n_sub_win:n.n_sub;
+ return T.nodes.filter(n=>!hide||n.kind==='root'||n.kind==='clade'||w(n)>0).filter(n=>n.kind!=='lineage'||!hide||w(n)>0)}
+function wOf(n){return document.getElementById('wk').value!=='0'?n.n_sub_win:n.n_sub}
+function ownW(n){return document.getElementById('wk').value!=='0'?n.n_win:n.n_own}
+function colorOf(n,mx){if(document.getElementById('cb').value==='new'){const t=Math.min(1,n.own_snps.length/Math.max(1,mx));return 'rgb('+Math.round(255-(255-31)*t)+','+Math.round(255-(255-119)*t)+','+Math.round(255-(255-180)*t)+')'}return CC[n.clade]||CC[n.id]||'#999'}
+function draw(){if(!T)return;const V=visible(),ids=new Set(V.map(n=>n.id)),M={};V.forEach(n=>M[n.id]=n);V.forEach(n=>{n.kids=[]});V.forEach(n=>{if(n.parent&&M[n.parent])M[n.parent].kids.push(n)});
+ const root=M['mpox'];if(!root){document.getElementById('fig').innerHTML='<div class="card mut">그릴 데이터가 없습니다.</div>';return}
+ const cum=document.getElementById('xa').value==='cum',mxNew=Math.max(1,...V.map(n=>n.own_snps.length)),maxCum=Math.max(1,...V.map(n=>n.cum_snps)),maxDepth=Math.max(...V.map(n=>n.depth));
+ const COLW=cum?Math.min(70,900/maxCum):150,xOf=n=>cum?(n.kind==='lineage'||n.kind==='outbreak'?400+n.cum_snps*COLW+n.depth*14:40+n.depth*120):40+n.depth*COLW;
+ document.getElementById('info').textContent=V.length+'개 노드 · 유전체 '+T.genomes.toLocaleString()+'건(채집일 있음 '+T.dated.toLocaleString()+') · 정의 판 '+(T.commit||'-')+(T.window_weeks?' · 최근 '+T.window_weeks+'주(기준일 '+T.cutoff+' 이후)':'');
+ const sankey=document.getElementById('vw').value==='sankey';let svg,W,H;
+ if(!sankey){let y=0;const place=n=>{if(!n.kids.length){n.y=20+y*17;y++}else{n.kids.forEach(place);n.y=(n.kids[0].y+n.kids[n.kids.length-1].y)/2}};place(root);
+  W=xOf({kind:'lineage',depth:maxDepth+1,cum_snps:maxCum+3})+420;H=40+y*17;svg='<svg xmlns="http://www.w3.org/2000/svg" id="svg" width="'+W+'" height="'+H+'" font-family="Helvetica,Arial,sans-serif" font-size="11">';
+  V.forEach(n=>{if(n.parent&&M[n.parent]){const p=M[n.parent],x0=xOf(p),x1=xOf(n),mid=(x0+x1)/2;svg+='<path d="M'+x0+' '+p.y+'C'+mid+' '+p.y+' '+mid+' '+n.y+' '+x1+' '+n.y+'" fill="none" stroke="#c4c9ce" stroke-width="'+(1+Math.min(5,n.own_snps.length))+'"/>'}});
+  V.forEach(n=>{const x=xOf(n),r=n.kind==='lineage'?5:7,lab=n.label+(n.own_snps.length?' +'+n.own_snps.length:'')+(n.cum_snps?' Σ'+n.cum_snps:'')+(wOf(n)?' · '+wOf(n).toLocaleString():'');
+   svg+='<g style="cursor:pointer" onclick="pick(\''+E(n.id)+'\')"><circle cx="'+x+'" cy="'+n.y+'" r="'+r+'" fill="'+colorOf(n,mxNew)+'" stroke="'+(SEL===n.id?'#000':'#fff')+'" stroke-width="'+(SEL===n.id?2:1)+'"><title>'+E(tip(n))+'</title></circle><text x="'+(x+r+4)+'" y="'+(n.y+4)+'"'+(n.defined?'':' fill="#888"')+'>'+E(lab)+'</text></g>'});
+  svg+='</svg>'}
+ else{const use=document.getElementById('wk').value!=='0';const tot=Math.max(1,wOf(root)),H0=Math.max(500,Math.min(1100,V.length*16)),K=H0/tot,GAP=6,minH=2;
+  const h=n=>Math.max(minH,wOf(n)*K);const ext=n=>{n._e=Math.max(h(n),n.kids.reduce((a,k)=>a+ext(k),0)+GAP*Math.max(0,n.kids.length-1));return n._e};ext(root);
+  const lay=(n,y0)=>{n.y0=y0;let yy=y0;n.kids.forEach(k=>{lay(k,yy);yy+=k._e+GAP})};lay(root,10);
+  W=xOf({kind:'lineage',depth:maxDepth+1,cum_snps:maxCum+3})+380;H=10+root._e+30;const NW=10;
+  svg='<svg xmlns="http://www.w3.org/2000/svg" id="svg" width="'+W+'" height="'+H+'" font-family="Helvetica,Arial,sans-serif" font-size="11">';
+  V.forEach(n=>{let off=0;n.kids.forEach(k=>{const p=n,x0=xOf(p)+NW,x1=xOf(k),hk=h(k),ya=p.y0+off,yb=k.y0,mid=(x0+x1)/2;off+=hk;
+    svg+='<path d="M'+x0+' '+(ya+hk/2)+'C'+mid+' '+(ya+hk/2)+' '+mid+' '+(yb+hk/2)+' '+x1+' '+(yb+hk/2)+'" fill="none" stroke="'+colorOf(k,mxNew)+'" stroke-opacity=".45" stroke-width="'+hk+'"><title>'+E(p.label+' → '+k.label+': '+wOf(k).toLocaleString()+'건'+(k.own_snps.length?' · 새 변이 '+k.own_snps.length+'개':''))+'</title></path>'})});
+  V.forEach(n=>{const x=xOf(n),hh=h(n),lab=n.label+(n.own_snps.length?' +'+n.own_snps.length:'')+(n.cum_snps?' Σ'+n.cum_snps:'')+(ownW(n)?' · 자체 '+ownW(n).toLocaleString():'');
+   svg+='<g style="cursor:pointer" onclick="pick(\''+E(n.id)+'\')"><rect x="'+x+'" y="'+n.y0+'" width="'+NW+'" height="'+hh+'" fill="'+colorOf(n,mxNew)+'" stroke="'+(SEL===n.id?'#000':'none')+'"><title>'+E(tip(n))+'</title></rect><text x="'+(x+NW+4)+'" y="'+(n.y0+Math.min(hh,14)/2+4)+'"'+(n.defined?'':' fill="#888"')+'>'+E(lab)+'</text></g>'});
+  svg+='</svg>'}
+ document.getElementById('fig').innerHTML=svg}
+function tip(n){return n.label+(n.designation?' · 지정 '+n.designation:'')+'\n새 정의 변이 '+n.own_snps.length+'개 · 뿌리부터 누적 '+n.cum_snps+'개\n유전체: 자체 '+n.n_own+' · 하위 포함 '+n.n_sub+(T.window_weeks?' · 최근 '+T.window_weeks+'주 '+n.n_sub_win:'')+(n.first?'\n수집 '+n.first+' ~ '+n.last:'')+(n.defined?'':'\n(정의 파일이 없는 상위 이름)')}
+function pick(id){SEL=id;draw();const M=byId(),path=[];let c=M[id];while(c){path.unshift(c);c=M[c.parent]}
+ const n=M[id],el=document.getElementById('nd');el.style.display='block';let acc=0;
+ el.innerHTML='<h3 style="margin:0 0 6px">'+E(n.label)+' <span class="mut" style="font-size:13px;font-weight:400">'+E(n.kind==='lineage'?'lineage':n.kind==='outbreak'?'outbreak':'clade')+(n.designation?' · 지정 '+E(n.designation):'')+'</span></h3><div style="display:flex;gap:28px;flex-wrap:wrap;font-size:13px"><div><b>뿌리부터의 경로 — 변이가 쌓이는 모양</b><table style="margin-top:4px"><tr><th>노드</th><th>새 변이</th><th>누적</th></tr>'+path.map(p=>{acc=Math.max(acc,p.cum_snps);return '<tr><td>'+E(p.label)+'</td><td>+'+p.own_snps.length+'</td><td>'+p.cum_snps+'</td></tr>'}).join('')+'</table></div><div><b>이 노드에서 새로 생긴 정의 변이 (NC_063383.1 좌표)</b>'+(n.own_snps.length?'<table style="margin-top:4px"><tr><th>변이</th><th>유전자</th><th>단백질</th><th>효과</th></tr>'+n.own_snps.map(s=>'<tr><td><b>'+E(s.label)+'</b></td><td>'+E(s.gene||'intergenic')+'</td><td>'+E(s.aa||'-')+'</td><td>'+E(s.effect||'')+'</td></tr>').join('')+'</table>':'<div class="mut">없음</div>')+'</div><div><b>이 실행의 유전체</b><div>자체 '+n.n_own.toLocaleString()+'건 · 하위 포함 '+n.n_sub.toLocaleString()+'건'+(T.window_weeks?' · 최근 '+T.window_weeks+'주 '+n.n_sub_win.toLocaleString():'')+'</div>'+(n.first?'<div class="mut">수집 '+E(n.first)+' ~ '+E(n.last)+'</div>':'')+'</div></div>'}
+function saveSvg(){const s=document.getElementById('svg');if(!s)return;const b=new Blob([new XMLSerializer().serializeToString(s)],{type:'image/svg+xml'}),a=document.createElement('a');a.href=URL.createObjectURL(b);a.download='mpox-lineage-'+document.getElementById('vw').value+'.svg';a.click()}
+// ---- growth
+async function loadGrowth(){const q=new URLSearchParams({bin:document.getElementById('gb').value,weeks:document.getElementById('gw').value,country:document.getElementById('gc').value,min_n:document.getElementById('gn').value||20,ref:document.getElementById('gr').value});
+ const out=document.getElementById('gr_out');out.innerHTML='<div class="card mut">계산하는 중…</div>';const D=await (await fetch('/api/analyses/'+RID+'/lineage_growth?'+q)).json();
+ const sc=document.getElementById('gc');if(sc.options.length<2&&D.countries){D.countries.forEach(c=>sc.insertAdjacentHTML('beforeend','<option>'+E(c)+'</option>'))}
+ if(D.error){out.innerHTML='<div class="card" style="color:var(--bad)">'+E(D.error)+'</div>';return}
+ const sr=document.getElementById('gr');if(sr.options.length<2){D.classes.forEach(c=>{if(c!=='other')sr.insertAdjacentHTML('beforeend','<option>'+E(c)+'</option>')})}
+ const u=D.bin==='week'?'주':'개월',f=x=>(x>=0?'+':'')+x.toFixed(3);let h='';
+ if(D.warnings.length)h+='<div class="caut">⚠ '+D.warnings.map(E).join(' · ')+'</div>';
+ h+='<div class="card"><div class="mut" style="margin-bottom:4px">모델에 들어간 유전체 '+D.genomes.toLocaleString()+'건 · '+D.periods.length+'개 기간('+E(D.periods[0])+' ~ '+E(D.periods[D.periods.length-1])+') · 기준 lineage <b>'+E(D.reference)+'</b>'+(D.country?' · 나라 '+E(D.country):' · 나라를 합침(표집 차이에 주의)')+'</div><table><tr><th>lineage</th><th>유전체</th><th>마지막 기간 비율(모델)</th><th>기준 대비 로그 오즈/'+u+' (95%)</th><th>평균 lineage 대비 로그 오즈/'+u+' (95%)</th><th>평균 대비 증감률/'+u+'</th></tr>'
+  +D.rows.map((r,i)=>{const sig=(lo,hi)=>lo>0?'color:var(--ok);font-weight:700':(hi<0?'color:var(--bad);font-weight:700':'');return '<tr><td><i style="display:inline-block;width:10px;height:10px;background:'+PAL[i%PAL.length]+';margin-right:4px"></i>'+E(r.lineage)+(r.folded.length?' <span class="mut" title="'+E(r.folded.join(', '))+'">(+'+r.folded.length+'개 합침)</span>':'')+'</td><td>'+r.n.toLocaleString()+'</td><td>'+(r.share_last*100).toFixed(1)+'%</td><td>'+(i?'<span style="'+sig(r.vs_ref_lo,r.vs_ref_hi)+'">'+f(r.vs_ref)+'</span> <span class="mut">('+f(r.vs_ref_lo)+' ~ '+f(r.vs_ref_hi)+')</span>':'기준')+'</td><td><span style="'+sig(r.vs_mean_lo,r.vs_mean_hi)+'">'+f(r.vs_mean)+'</span> <span class="mut">('+f(r.vs_mean_lo)+' ~ '+f(r.vs_mean_hi)+')</span></td><td>'+(r.pct_per_period>=0?'+':'')+r.pct_per_period.toFixed(1)+'%</td></tr>'}).join('')+'</table><div class="mut" style="font-size:12px;margin-top:4px">초록/빨강은 구간이 0을 걸치지 않는 경우입니다. 로그 오즈 0.1/주 ≈ 비율의 오즈가 주마다 약 10.5% 커짐.</div></div>';
+ const n=D.periods.length,CW=Math.max(8,Math.min(30,900/n)),L=44,Ht=170,B=30,Wd=L+n*CW+120;
+ let s='<svg width="'+Wd+'" height="'+(Ht+B+10)+'" font-family="Helvetica,Arial,sans-serif" font-size="10"><line x1="'+L+'" y1="'+(5+Ht)+'" x2="'+(L+n*CW)+'" y2="'+(5+Ht)+'" stroke="#999"/>';
+ [0,.25,.5,.75,1].forEach(v=>{s+='<text x="'+(L-4)+'" y="'+(5+Ht-v*Ht+3)+'" text-anchor="end" fill="#666">'+Math.round(v*100)+'%</text><line x1="'+L+'" x2="'+(L+n*CW)+'" y1="'+(5+Ht-v*Ht)+'" y2="'+(5+Ht-v*Ht)+'" stroke="#eee"/>'});
+ D.rows.forEach((r,i)=>{const col=PAL[i%PAL.length];s+='<polyline fill="none" stroke="'+col+'" stroke-width="2" points="'+r.fitted.map((v,j)=>(L+j*CW+CW/2)+','+(5+Ht-v*Ht)).join(' ')+'"/>';r.observed.forEach((c,j)=>{if(D.totals[j])s+='<circle cx="'+(L+j*CW+CW/2)+'" cy="'+(5+Ht-c/D.totals[j]*Ht)+'" r="'+Math.max(1.5,Math.min(4,Math.sqrt(D.totals[j])/2.5))+'" fill="'+col+'" fill-opacity=".45"><title>'+E(r.lineage+' '+D.periods[j]+': '+c+'/'+D.totals[j])+'</title></circle>'})});
+ D.periods.forEach((p,j)=>{if(n<=30||j%Math.ceil(n/30)===0)s+='<text x="'+(L+j*CW+CW/2)+'" y="'+(5+Ht+12)+'" text-anchor="end" transform="rotate(-40 '+(L+j*CW+CW/2)+' '+(5+Ht+12)+')" fill="#666">'+E(p)+'</text>'});
+ s+=D.rows.map((r,i)=>'<text x="'+(L+n*CW+8)+'" y="'+(16+i*14)+'" fill="'+PAL[i%PAL.length]+'">● '+E(r.lineage)+'</text>').join('')+'</svg>';
+ h+='<div class="card"><b>비율의 변화</b> <span class="mut">(선 = 모델, 점 = 그 기간의 관찰 비율, 점 크기 = 그 기간의 건수)</span><div style="overflow:auto">'+s+'</div></div>';out.innerHTML=h}
+loadTree();loadGrowth();
+</script>
+{% endblock %}

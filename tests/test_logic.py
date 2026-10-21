@@ -3294,3 +3294,40 @@ def test_nextclade_calls_are_moved_to_the_run_reference_and_compared(tmp_path, m
     assert pats[("mutprofile", "snippy", "nextclade")]["all"] and pats[("mutprofile", "snippy", "nextclade")]["genomes"] == ["g1"]
     assert not pats[("mutprofile", "nextclade")]["all"] and pats[("mutprofile", "nextclade")]["missed_by"] == ["snippy"]       # g2: snippy did not call it
     assert sc["n_called"] == 2 and sc["n_agree"] == 1 and sc["tool_specific"] == []
+
+
+def test_lineage_tree_and_growth(monkeypatch):
+    import numpy as np
+    from genomecurator import lineages, lineagetree
+    defs = {"sh1": {"": {"name": "", "parent": "", "clade": "Ib", "designation_date": "2023-01-01", "snps": [(10, "A")]},
+                    "A": {"name": "A", "parent": "None", "clade": "Ib", "designation_date": "2023-02-01", "snps": [(10, "A"), (20, "C")]},
+                    "A.1": {"name": "A.1", "parent": "A", "clade": "Ib", "designation_date": "2023-03-01", "snps": [(10, "A"), (20, "C"), (30, "G")]},
+                    "A.2": {"name": "A.2", "parent": "A", "clade": "Ib", "designation_date": "2023-03-01", "snps": [(10, "A"), (20, "C"), (40, "T")]}}}
+    monkeypatch.setattr(lineages, "definitions", lambda: defs)
+    monkeypatch.setattr(lineages, "commit", lambda: "abc")
+    monkeypatch.setattr(lineages, "nc_reference", lambda: ("NC", "ACGT" * 20, []))
+    # a clean planted series: per ISO week w (starting 2025-01-06) A.2 has 30 - 2w genomes, A.1 has 4 + 2w
+    gs = []
+    from datetime import date, timedelta
+    for w in range(10):
+        d0 = date(2025, 1, 6) + timedelta(days=7 * w)
+        gs += [{"id": f"x{w}-{i}", "lineage": "A.2", "outbreak": "sh1", "clade": "Ib", "country": "X", "date": d0.isoformat()} for i in range(30 - 2 * w)]
+        gs += [{"id": f"y{w}-{i}", "lineage": "A.1", "outbreak": "sh1", "clade": "Ib", "country": "Y", "date": d0.isoformat()} for i in range(4 + 2 * w)]
+    gs += [{"id": "r", "lineage": "", "outbreak": "sh1", "clade": "Ib", "country": "Y", "date": ""}]
+    monkeypatch.setattr(lineages, "_genomes", lambda run: gs)
+    t = lineagetree.tree({})
+    nd = {n["id"]: n for n in t["nodes"]}
+    assert nd["sh1/A"]["parent"] == "ob:sh1" and nd["sh1/A.1"]["parent"] == "sh1/A" and nd["ob:sh1"]["parent"] == "Ib" and nd["Ib"]["parent"] == "I"      # "None" as a parent means the outbreak root
+    assert [s["label"] for s in nd["sh1/A.1"]["own_snps"]] == ["A4G"] or len(nd["sh1/A.1"]["own_snps"]) == 1
+    assert nd["sh1/A.1"]["cum_snps"] == 3 and nd["sh1/A"]["cum_snps"] == 2 and nd["ob:sh1"]["cum_snps"] == 1                                        # mutations accumulate down the path
+    assert nd["mpox"]["n_sub"] == len(gs) and nd["sh1/A.1"]["n_own"] == sum(1 for g in gs if g["lineage"] == "A.1")
+    g = lineagetree.growth({}, "week", 20, min_n=10)
+    r = {x["lineage"]: x for x in g["rows"]}
+    assert g["reference"] in ("A.1", "A.2") and set(r) == {"A.1", "A.2"} and g["genomes"] == sum(1 for x in gs if x["date"] and x["lineage"])
+    up = r["A.1"]["vs_ref"] if g["reference"] == "A.2" else -r["A.2"]["vs_ref"]
+    assert up > 0.1 and abs(sum(x["share_last"] for x in g["rows"]) - 1) < 1e-9                                                                    # A.1 gains on A.2, the fitted shares sum to one
+    lo, hi = (r["A.1"]["vs_ref_lo"], r["A.1"]["vs_ref_hi"]) if g["reference"] == "A.2" else (-r["A.2"]["vs_ref_hi"], -r["A.2"]["vs_ref_lo"])
+    assert lo > 0 and hi > lo                                                                                                                  # a clear trend: the interval excludes zero
+    assert "error" in lineagetree.growth({}, "week", 20, country="Z")                                                                           # no genomes for that country
+    only = lineagetree.growth({}, "week", 20, country="Y", min_n=10)
+    assert "error" in only                                                                                                                      # one lineage alone cannot be compared
