@@ -1,0 +1,67 @@
+# Finding candidate adaptive mutations: design notes
+
+**한국어:** [ADAPTIVE.ko.md](ADAPTIVE.ko.md)
+
+How the *adaptive candidates* of the mutation picture can be made more trustworthy: what is implemented, which approaches the literature uses, the gap between them, and what to do next (in priority order).
+The literature was checked at **abstract level only** (no paper was read in full). The citations show that an approach exists; figures and details must be checked against the papers before they are copied.
+
+## 1. What "adaptive" can mean here
+The tool **ranks candidates; it does not show adaptation.** Sequences alone cannot tell a mutation that raised fitness from a founder effect (one successful branch), a mutation hotspot or APOBEC3 editing, hitchhiking on a successful branch, or heavier sequencing of one place. So the tool should show several kinds of evidence separately, say which spurious signal each is weak against, and keep the one-line score as a sort aid.
+
+## 2. Approaches in the literature (abstract level)
+| Approach | Idea | Source |
+|---|---|---|
+| APOBEC3 signature | A marker of sustained human-to-human transmission; a host edit, kept apart from adaptation | reports on clades IIb and Ib (e.g. [Canada Ib case](https://www.ncbi.nlm.nih.gov/pmc/articles/PMC12207198/)) |
+| Convergence | Score by how often the same mutation arose independently | [CoVtRec](https://arxiv.org/pdf/2106.07292v1) |
+| Frequency growth | Candidates by how fast a mutation's frequency rises | [Wada et al.](https://www.ncbi.nlm.nih.gov/pmc/articles/PMC7409725/) |
+| Lineage-fitness regression | Model lineage shares, estimate mutations linked to fitness | [PyR0](https://www.ncbi.nlm.nih.gov/pmc/articles/PMC9161372/) |
+| Convergence + antibody-binding sites | Rank spike changes | [VOCAL](https://evbc.uni-jena.de/events/vibiom2022/oral-presentation-abstracts/) |
+| Distribution of fitness effects | Coding genes of mpox | [PMC10256197](https://pmc.ncbi.nlm.nih.gov/articles/PMC10256197/) (**full text not read**) |
+| Site-wise positive selection tests | HyPhy FEL/MEME/FUBAR (codon alignment + tree) | not confirmed in this search; a known tool |
+
+No study testing positive selection of clade Ib genes or recurrent mutations per OPG was found in this search.
+
+## 3. Evidence types and what exists now
+| # | Evidence | Now |
+|---|---|---|
+| E1 | Persistence: seen in >= 3 months and still in the last 6 | implemented |
+| E2 | Recurrence: appears in several lineages that do not define it | approximated by lineage names (lineages are not a tree) |
+| E3 | Geographic spread: >= 3 countries | implemented |
+| E4 | Protein change (non-synonymous / stop) | implemented |
+| E5 | Frequency: rare early, common now; share holds up | implemented, not corrected for sampling by country |
+| E6 | Classes: ancestral (nearly all genomes), lineage-defining, APOBEC3-type | implemented, kept apart |
+| E7 | Number of independent origins on the tree | **not implemented** (branch counts exist in `outbreak.clusters`) |
+| E8 | Neutral baseline: recurrence of synonymous / non-coding mutations | **not implemented** |
+| E9 | Linkage: separate mutations that travel together | partly (groups are shown, not split) |
+| E10 | Selection tests: dN/dS, site-wise | exploratory per-gene dN/dS only |
+
+The present score (+2/+1/+1/+1/+1/+2) adds E1-E5 with weights that have no basis. The aim is to replace it with an evidence table strengthened by E7-E10.
+
+## 4. Proposed methods
+1. **Independent origins (E7, priority 1)**: from the dataset's Nextstrain tree and branch mutations, count the branches that carry each mutation; count an event as settled only if it has >= 2 descendant tips (single-tip events are indistinguishable from errors / within-host variants and are flagged separately); lift coordinates to the run reference. Replaces the lineage proxy of E2.
+2. **Neutral baseline (E8, priority 2)**: synonymous and non-coding mutations are mostly neutral, so their recurrence is the chance level. Per mutation context (APOBEC3 trinucleotide, transition/transversion), compare the independent-origin count of a non-synonymous mutation with the neutral distribution -> empirical p, BH-corrected q. State "more independent origins than neutral mutations of the same context (q = ...)" instead of "score 6".
+3. **Frequency growth corrected for sampling (E5, priority 3)**: binomial/multinomial logistic regression of the carrier share per month/week, stratified by country; reuse `lineagetree.growth`. Report the slope with a 95% interval; an interval spanning 0 means "cannot be called a rise".
+4. **Linked mutations (E9, priority 4)**: groups (`co_travel`, Jaccard >= 0.6) count as one piece of evidence; later, PyR0-style regression of lineage fitness on mutation presence with regularisation; with little data report "cannot be separated".
+5. **Selection tests (E10, priority 5)**: keep the exploratory per-gene dN/dS; support site-wise tests by exporting input for HyPhy (codon alignment + tree) rather than implementing them.
+6. **Function**: gene functional categories (Supplementary Table 1) are labels only, never scored: there is no functional (DMS-type) data for mpox, so scoring by function would be circular.
+7. **APOBEC3-type**: a separate class; interpret together with the APOBEC3 share per lineage/period (`outbreak.accumulation`), a measure of the pace of human transmission, not of selection.
+
+## 5. Validation plan (decide before implementing)
+1. **Recovery on simulated data** (like the planted signals in `scripts/verify_pipeline.py`): simulate trees, give some mutations a fitness advantage, measure how many are recovered and how many neutral ones come up as false positives.
+2. **Negative control**: scoring synonymous / non-coding mutations as if they were candidates should give q < 0.05 about 5% of the time.
+3. **Sampling robustness**: subsample by country and period and see whether the candidate list holds.
+4. **State the missing positive control**: no mpox mutation has proven selection, so "recovered known adaptive mutations" cannot be tested; say so in the docs and on screen.
+5. Re-run 1-3 whenever weights change (add to `./test.sh verify`).
+
+## 6. Wording and display
+Keep **"adaptive candidate"** (never shorten to "adaptive mutation"); show per candidate which evidence is present and which is absent (E1-E10 ticks), the one-line score only as a sort aid; count linked groups as one; always show the sampling-bias warning; do not claim "first" in a paper or announcement until the predecessor tools (PyR0, MpoxRadar, VIRUS-MVP) have been read and compared.
+
+## 7. To do (priority order)
+1. E7 independent origins (tree-based), replacing the lineage proxy
+2. E8 neutral baseline with q values
+3. E5 country-stratified growth regression
+4. Evidence-tick UI; score as a sort aid
+5. Recovery test on simulated data in `./test.sh verify`
+6. E9 regularised regression for linked mutations (when data allow)
+7. E10 HyPhy input export
+8. Read the predecessor papers and tools in full; write the comparison table
