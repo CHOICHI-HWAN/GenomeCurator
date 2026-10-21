@@ -3331,3 +3331,10 @@ def test_lineage_tree_and_growth(monkeypatch):
     assert "error" in lineagetree.growth({}, "week", 20, country="Z")                                                                           # no genomes for that country
     only = lineagetree.growth({}, "week", 20, country="Y", min_n=10)
     assert "error" in only                                                                                                                      # one lineage alone cannot be compared
+
+
+def test_geo_resolve_gives_the_continent():
+    from genomecurator import geo
+    assert geo.resolve("Uganda")["continent"] == "Africa" and geo.resolve("Germany")["continent"] == "Europe" and geo.resolve("USA")["continent"] == "North America"
+    assert geo.resolve("Singapore")["continent"] == "Asia" and geo.resolve("Réunion")["continent"] == "Africa"                 # places the 110m outlines leave out
+    assert all(geo.POINT_CONTINENT[v[0]] for v in geo.POINTS.values())

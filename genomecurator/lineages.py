@@ -427,7 +427,7 @@ def spread(run: dict, view: str = "lineage", bin_: str = "auto", outbreak: str =
         for c in sorted(cs.values(), key=lambda c: (min(c["dates"]), c["country"])):
             ds_ = sorted(c["dates"], key=lambda s: (s[:7], s))
             pt = geo.resolve(c["country"])
-            crow.append({"country": c["country"], "iso": pt["iso"] if pt else "", "lon": pt["lon"] if pt else None, "lat": pt["lat"] if pt else None, "n": c["n"], "first": ds_[0], "last": ds_[-1], "cells": dict(c["cells"]), "monthly": dict(c["monthly"])})
+            crow.append({"country": c["country"], "continent": pt["continent"] if pt else "", "iso": pt["iso"] if pt else "", "lon": pt["lon"] if pt else None, "lat": pt["lat"] if pt else None, "n": c["n"], "first": ds_[0], "last": ds_[-1], "cells": dict(c["cells"]), "monthly": dict(c["monthly"])})
         alld = sorted((g["shown"] for g in groups[key]), key=lambda s: (s[:7], s))
         out_rows.append({**inf, "n": len(groups[key]), "first": alld[0], "last": alld[-1], "countries": crow})
     starts = [week_monday(k).isoformat() for k in periods] if bin_ == "week" else [k + "-01" for k in periods]

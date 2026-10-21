@@ -32,6 +32,12 @@ POINTS = {
 }
 
 
+POINT_CONTINENT = {"ABW": "North America", "AND": "Europe", "BHR": "Asia", "BMU": "North America", "BRB": "North America", "COM": "Africa", "CPV": "Africa", "CUW": "North America", "CYM": "North America",
+                   "FRO": "Europe", "GIB": "Europe", "GLP": "North America", "GUM": "Oceania", "HKG": "Asia", "LIE": "Europe", "LUX": "Europe", "MAC": "Asia", "MCO": "Europe", "MDV": "Asia",
+                   "MLT": "Europe", "MTQ": "North America", "MUS": "Africa", "MYT": "Africa", "NCL": "Oceania", "PRI": "North America", "PYF": "Oceania", "REU": "Africa", "SGP": "Asia",
+                   "STP": "Africa", "SYC": "Africa"}
+
+
 def norm(s: str) -> str:
     s = unicodedata.normalize("NFKD", (s or "").strip()).encode("ascii", "ignore").decode().lower()
     return " ".join(s.split())
@@ -49,7 +55,7 @@ def world() -> dict:
 
 
 def resolve(name: str) -> dict | None:
-    """{iso, name, lon, lat} of a country name as written in genome metadata, or None (blank, 'missing', unknown)."""
+    """{iso, name, lon, lat, continent} of a country name as written in genome metadata, or None (blank, 'missing', unknown)."""
     world()
     n = norm(name)
     if not n or n in ("missing", "unknown", "none", "na", "n/a", "not applicable", "not collected", "not provided"):
@@ -57,10 +63,10 @@ def resolve(name: str) -> dict | None:
     n = ALIASES.get(n, n)
     c = _CACHE["idx"].get(n)
     if c:
-        return {"iso": c["iso"], "name": c["name"], "lon": c["c"][0], "lat": c["c"][1]}
+        return {"iso": c["iso"], "name": c["name"], "lon": c["c"][0], "lat": c["c"][1], "continent": c.get("cont", "")}
     p = POINTS.get(n)
     if p:
-        return {"iso": p[0], "name": p[1], "lon": p[2], "lat": p[3]}
+        return {"iso": p[0], "name": p[1], "lon": p[2], "lat": p[3], "continent": POINT_CONTINENT.get(p[0], "")}
     return None
 
 

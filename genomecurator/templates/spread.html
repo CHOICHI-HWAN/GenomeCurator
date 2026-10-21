@@ -42,6 +42,7 @@
 <form id="jf" method="post" style="display:none"></form>
 <script>
 const RID={{ run.id }};
+const CONT={Africa:'아프리카',Asia:'아시아',Europe:'유럽','North America':'북미','South America':'남미',Oceania:'오세아니아',Antarctica:'남극'};const conT=c=>c&&c.continent?(CONT[c.continent]||c.continent):'';const withCon=(name,c)=>{const t=conT(c);return t?'['+t+'] '+name:name};
 const esc=s=>String(s??'').replace(/[&<>"]/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c]));
 let D=null,open={},obSet=false,CUR=-1,timer=null;
 const PAL=['#4e79a7','#f28e2b','#e15759','#76b7b2','#59a14f','#edc948','#b07aa1','#ff9da7','#9c755f','#bab0ac'];
@@ -67,7 +68,7 @@ function draw(){const P=D.periods,n=P.length;if(!n){document.getElementById('fig
  TR.items.forEach(it=>{const x=LW+it.f*cw,col=PAL[it.ri%PAL.length];o+='<line x1="'+x+'" x2="'+x+'" y1="'+(it.lane>=0?34+it.lane*12+3:34)+'" y2="'+(top-2)+'" stroke="'+col+'" stroke-width="1" stroke-dasharray="2 2" opacity=".8"/><circle cx="'+x+'" cy="'+(top-2)+'" r="2.5" fill="'+col+'"/>'+(it.lane>=0?'<text x="'+(x+3)+'" y="'+(34+it.lane*12+9)+'" font-size="10" font-weight="bold" fill="'+col+'" style="paint-order:stroke;stroke:#fff;stroke-width:3px">'+esc(it.t)+'</text>':'')});
  rows.forEach((x,k)=>{const y=top+k*RH,{r,c}=x,isC=!!c;if(!isC&&x.ri%2==0)o+='<rect x="0" y="'+y+'" width="'+W+'" height="'+RH+'" fill="#f6f6f6"/>';
   const first=isC?c.first:r.first,last=isC?c.last:r.last,nn=isC?c.n:r.n;
-  let label;if(isC)label='<tspan fill="#555">'+esc(c.country)+'</tspan> <tspan fill="#888">('+esc(first)+' ── '+esc(last)+')</tspan> <tspan fill="#888">n='+nn+'</tspan>';
+  let label;if(isC)label='<tspan fill="#555">'+esc(withCon(c.country,c))+'</tspan> <tspan fill="#888">('+esc(first)+' ── '+esc(last)+')</tspan> <tspan fill="#888">n='+nn+'</tspan>';
   else if(mut)label='<tspan font-weight="bold">'+esc(r.label)+'</tspan> <tspan fill="#2a6">'+esc(r.gene||'')+' '+esc(r.aa||'')+'</tspan> <tspan fill="#888">['+esc(r.by)+'] ('+esc(first)+' ── '+esc(last)+') n='+nn+'</tspan>';
   else label='<tspan font-weight="bold">'+esc(r.label)+'</tspan> <tspan fill="#888">('+esc(first)+' ── '+esc(last)+') n='+nn+'</tspan>'+(r.own&&r.own.length?' <tspan font-weight="bold" fill="#2a6">'+esc(r.own.join(' '))+'</tspan>':'');
   o+='<text x="'+(isC?22:4)+'" y="'+(y+11)+'" style="cursor:pointer" onclick="tog(\''+esc(r.key).replace(/'/g,"\\'")+'\')">'+(isC?'':(open[r.key]||all?'▾ ':'▸ '))+label+'<title>'+esc(r.label+(r.snps&&r.snps.length?' · 정의 변이(누적): '+r.snps.join(' '):''))+'</title></text>';
@@ -90,13 +91,13 @@ function lineChart(lim){const P=D.periods,n=P.length,LW=380,cw=Math.max(2.5,Math
  if(lim<n-1)o+='<line x1="'+(LW+(lim+1)*cw)+'" x2="'+(LW+(lim+1)*cw)+'" y1="'+m.t+'" y2="'+(Ht-m.b)+'" stroke="#d6249f" stroke-width="2"/>';
  document.getElementById('lchart').innerHTML=o+'</svg>'}
 function mapData(lim,row){const cs={},P=D.periods,mi=m=>{const ii=[];D.starts.forEach((st,i)=>{if(st.slice(0,7)===m)ii.push(i)});return ii};
- D.rows.forEach((r,ri)=>{if(row>=0&&ri!==row)return;r.countries.forEach(c=>{const o=cs[c.country]=cs[c.country]||{name:c.country,iso:c.iso,lon:c.lon,lat:c.lat,n:0,newn:0,by:{},first:1e9};
+ D.rows.forEach((r,ri)=>{if(row>=0&&ri!==row)return;r.countries.forEach(c=>{const o=cs[c.country]=cs[c.country]||{name:c.country,continent:c.continent,iso:c.iso,lon:c.lon,lat:c.lat,n:0,newn:0,by:{},first:1e9};
   Object.entries(c.cells).forEach(([p,x])=>{const i=P.indexOf(p);if(i<0)return;o.first=Math.min(o.first,i);if(i<=lim){o.n+=x;o.by[ri]=(o.by[ri]||0)+x}if(i===lim)o.newn+=x});
   Object.entries(c.monthly).forEach(([m,x])=>{const ii=mi(m);if(!ii.length)return;o.first=Math.min(o.first,ii[0]);if(ii[0]<=lim){o.n+=x;o.by[ri]=(o.by[ri]||0)+x}if(ii[0]<=lim&&ii[ii.length-1]>=lim)o.newn+=x/ii.length})})});
  return Object.values(cs)}
 function panel(){const lim=CUR<0?D.periods.length-1:CUR,sel=document.getElementById('mrow'),row=sel&&sel.value!==''?+sel.value:-1;document.getElementById('cur').textContent=(D.periods[lim]||'')+' ('+(D.starts[lim]||'')+')';
  const list=mapData(lim,row).filter(o=>o.n>0).sort((a,b)=>b.n-a.n),mx=list.length?list[0].n:1;
- document.getElementById('ctry').innerHTML=list.length?'<div style="display:flex;flex-wrap:wrap;gap:6px 18px;font-size:12px">'+list.slice(0,24).map(o=>'<div style="width:210px"><div style="display:flex;justify-content:space-between"><span>'+esc(o.name)+'</span><b>'+o.n+'</b></div><div style="display:flex;height:8px;background:#eee;width:'+Math.max(4,o.n/mx*100)+'%">'+Object.entries(o.by).map(([ri,x])=>'<span title="'+esc(D.rows[ri].label)+' '+x+'" style="background:'+PAL[ri%PAL.length]+';width:'+(x/o.n*100)+'%"></span>').join('')+'</div></div>').join('')+'</div>':'<span class="mut">이 시점까지 관찰된 나라가 없습니다.</span>';
+ document.getElementById('ctry').innerHTML=list.length?'<div style="display:flex;flex-wrap:wrap;gap:6px 18px;font-size:12px">'+list.slice(0,24).map(o=>'<div style="width:210px"><div style="display:flex;justify-content:space-between"><span>'+esc(withCon(o.name,o))+'</span><b>'+o.n+'</b></div><div style="display:flex;height:8px;background:#eee;width:'+Math.max(4,o.n/mx*100)+'%">'+Object.entries(o.by).map(([ri,x])=>'<span title="'+esc(D.rows[ri].label)+' '+x+'" style="background:'+PAL[ri%PAL.length]+';width:'+(x/o.n*100)+'%"></span>').join('')+'</div></div>').join('')+'</div>':'<span class="mut">이 시점까지 관찰된 나라가 없습니다.</span>';
  mapDraw(lim,row)}
 // ---- world map (Natural Earth outlines, Robinson projection)
 let WORLD=null,BASE=null;const RB=[[0,1,0],[5,.9986,.062],[10,.9954,.124],[15,.99,.186],[20,.9822,.248],[25,.973,.31],[30,.96,.372],[35,.9427,.434],[40,.9216,.4958],[45,.8962,.5571],[50,.8679,.6176],[55,.835,.6769],[60,.7986,.7346],[65,.7597,.7903],[70,.7186,.8435],[75,.6732,.8936],[80,.6213,.9394],[85,.5722,.9761],[90,.5322,1]];
@@ -109,7 +110,7 @@ function arc(cx,cy,r,a0,a1){const x0=cx+r*Math.cos(a0),y0=cy+r*Math.sin(a0),x1=c
 function mapDraw(lim,row){if(!WORLD||!BASE){mapInit();return}
  const size=document.getElementById('msz').value,all=mapData(lim,row),last=mapData(D.periods.length-1,row),mx=Math.max(1,...last.map(o=>size==='cum'?o.n:o.n)),skip=[];let o2='';
  all.filter(o=>(size==='cum'?o.n:o.newn)>0).sort((a,b)=>b.n-a.n).forEach(o=>{if(o.lon==null){skip.push(o.name);return}const v=size==='cum'?o.n:o.newn,r=3+20*Math.sqrt(v/(size==='cum'?mx:Math.max(1,mx/6))),[x,y]=px(o.lon,o.lat),ents=Object.entries(o.by);
-  const fresh=o.first===lim;let g='<g><title>'+esc(o.name+' · 누적 '+Math.round(o.n)+'건'+(o.newn?' · 이 기간 '+Math.round(o.newn)+'건':'')+(fresh?' · 이 기간에 처음 관찰':''))+'</title>';
+  const fresh=o.first===lim;let g='<g><title>'+esc(withCon(o.name,o)+' · 누적 '+Math.round(o.n)+'건'+(o.newn?' · 이 기간 '+Math.round(o.newn)+'건':'')+(fresh?' · 이 기간에 처음 관찰':''))+'</title>';
   if(ents.length<=1)g+='<circle cx="'+x.toFixed(1)+'" cy="'+y.toFixed(1)+'" r="'+r.toFixed(1)+'" fill="'+PAL[(+(ents[0]?ents[0][0]:0))%PAL.length]+'" fill-opacity=".8" stroke="#333" stroke-width=".5"/>';
   else{let a=-Math.PI/2;const tot=ents.reduce((s,e)=>s+e[1],0);ents.forEach(([ri,xv])=>{const da=xv/tot*2*Math.PI;g+='<path d="'+arc(x,y,r,a,a+da-1e-4)+'" fill="'+PAL[ri%PAL.length]+'" fill-opacity=".85" stroke="#fff" stroke-width=".4"/>';a+=da})}
   if(fresh)g+='<circle cx="'+x.toFixed(1)+'" cy="'+y.toFixed(1)+'" r="'+(r+2).toFixed(1)+'" fill="none" stroke="#d6249f" stroke-width="2"><animate attributeName="r" from="'+(r+2).toFixed(1)+'" to="'+(r+16).toFixed(1)+'" dur="1.1s" repeatCount="indefinite"/><animate attributeName="stroke-opacity" from="1" to="0" dur="1.1s" repeatCount="indefinite"/></circle>';
