@@ -167,22 +167,74 @@ def available(run: dict, source: str = "direct") -> bool:
     return _vc_file(run, source).exists()
 
 
-def concordance_for_run(run: dict, max_n: float | None = 0.05, limit: int = 300, source: str = "direct") -> dict:
-    """Agreement of three callers on the SNVs of a mutation-profile run: the run's own (`aligner`, Squirrel alignment by default), snippy and lofreq. The ITR is left out like everywhere
-    else. A site is listed when the callers do not all agree; for each: how many genomes each caller called it in, and in how many of them it is called by all."""
-    if not available(run, source):
-        return {"available": False}
+def _callers(run: dict, max_n: float | None, source: str = "direct") -> dict:
+    """{caller: {genome: {(pos, ref, alt)}}} for the run's own calls, snippy, lofreq (when their call table exists) and Nextclade (when it was run), on the genomes each of them judged."""
+    from . import nextcladecall
     win = mutprofile.run_itr(run)
     inwin = (lambda p: win[0] <= p <= win[1]) if win else (lambda p: True)
-    judged = set(_vc_file(run, source).with_name("variantcall.genomes.txt").read_text(encoding="utf-8").split())
     ok = mutprofile.good_samples(run, max_n)
-    if ok is not None:
-        judged &= ok
-    callers = {"mutprofile": {g: set() for g in judged}}
+    own: dict = {}
     for r in mutprofile._load_mutations(run):                       # the run's own calls, with the ITR already left out (mutprofile._load_mutations)
-        if r["sample"] in judged:
-            callers["mutprofile"][r["sample"]].add((int(r["pos"]), r["ref"].upper(), r["alt"].upper()))
-    callers.update(flowlogic.read_calls(_vc_file(run, source), judged, inwin))
+        own.setdefault(r["sample"], set()).add((int(r["pos"]), r["ref"].upper(), r["alt"].upper()))
+    callers: dict = {}
+    def _all() -> set:
+        j = set(mutprofile._run_meta(run))
+        return j & ok if ok is not None else j
+    if available(run, source):
+        judged = set(_vc_file(run, source).with_name("variantcall.genomes.txt").read_text(encoding="utf-8").split())
+        judged = judged & ok if ok is not None else judged
+        callers["mutprofile"] = {g: own.get(g, set()) for g in judged}
+        callers.update(flowlogic.read_calls(_vc_file(run, source), judged, inwin))
+    else:
+        callers["mutprofile"] = {g: own.get(g, set()) for g in _all()}
+    if nextcladecall.available(run):
+        nc = nextcladecall.read_calls(run, _all())
+        callers["nextclade"] = nc
+        if "snippy" not in callers:                                  # Nextclade alone beside the run's calls: judge the genomes both looked at
+            callers["mutprofile"] = {g: v for g, v in callers["mutprofile"].items() if g in nc}
+    return callers
+
+
+def concordance_for_run(run: dict, max_n: float | None = 0.05, limit: int = 300, source: str = "direct") -> dict:
+    """Agreement of the callers on the SNVs of a mutation-profile run: the run's own (`aligner`, Squirrel alignment by default), snippy, lofreq and, when it was run, Nextclade. The ITR is left out like
+    everywhere else. A site is listed when the callers do not all agree; for each: how many genomes each caller called it in, and in how many of them it is called by all."""
+    if not available(run, source) and not nextcladecallavailable(run):
+        return {"available": False}
+    callers = _callers(run, max_n, source)
     rep = flowlogic.sites_report(callers, limit)
     rep.pop("all_sites")
     return {"available": True, "max_n": max_n, **rep}
+
+
+def nextcladecallavailable(run: dict) -> bool:
+    from . import nextcladecall
+    return nextcladecall.available(run)
+
+
+def site_calls(run: dict, pos: int, alt: str, max_n: float | None = 0.05, source: str = "direct", limit: int = 40) -> dict:
+    """One mutation, tool by tool: in how many genomes each caller calls it, which combinations of callers occur (and in which genomes), and the genomes each caller *did not* call it in although another did.
+    A genome is only judged by the callers that looked at it. `ref` is the run's reference base at the position."""
+    callers = _callers(run, max_n, source)
+    names = list(callers)
+    want = lambda v: v[0] == pos and v[2] == alt
+    genomes = sorted(set().union(*(set(c) for c in callers.values())))
+    per = {t: {"judged": len(callers[t]), "called": 0} for t in names}
+    pats: dict[str, list] = {}
+    ref = ""
+    for g in genomes:
+        have = [t for t in names if g in callers[t]]
+        by = [t for t in have if any(want(v) for v in callers[t][g])]
+        for v in (v for t in by for v in callers[t][g] if want(v)):
+            ref = v[1]
+        for t in by:
+            per[t]["called"] += 1
+        if by:
+            pats.setdefault(",".join(by) + "|" + ",".join(have), []).append(g)
+    rows = []
+    for k, gs in pats.items():
+        by, have = (x.split(",") for x in k.split("|"))
+        rows.append({"by": by, "judged_by": have, "all": by == have, "n": len(gs), "genomes": gs[:limit], "more": max(0, len(gs) - limit),
+                     "missed_by": [t for t in have if t not in by]})
+    rows.sort(key=lambda r: (r["all"], -r["n"]))
+    return {"callers": names, "per_caller": per, "ref": ref, "patterns": rows, "n_called": sum(r["n"] for r in rows), "n_agree": sum(r["n"] for r in rows if r["all"]),
+            "tool_specific": [{"tool": t, "n": sum(r["n"] for r in rows if r["by"] == [t])} for t in names if any(r["by"] == [t] for r in rows)]}

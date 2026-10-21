@@ -3266,3 +3266,31 @@ def test_adding_a_virus_that_is_already_watched_is_not_an_error(tmp_path, monkey
     with pytest.raises(curate.AlreadyWatched) as e2:                             # another name for the same taxon
         curate.add_watch("Bundibugyo virus", "Orthoebolavirus bundibugyoense")
     assert e2.value.watch_id == first
+
+
+def test_nextclade_calls_are_moved_to_the_run_reference_and_compared(tmp_path, monkeypatch):
+    from genomecurator import nextcladecall, variantcall
+    # dataset reference (NC) and run reference differ at NC 5 (T) / run 5 (A) and the run reference has one extra base up front (run position = NC position + 1)
+    nc = "ACGTTACGTA"
+    run = "G" + "ACGTAACGTA"                                  # run pos 6 = NC pos 5: run A vs NC T; everything else equal
+    to_nc = {p: p - 1 for p in range(2, 12)}
+    tsv = tmp_path / "nc.tsv"
+    tsv.write_text("seqName\tsubstitutions\tdeletions\tmissing\tnonACGTs\terrors\n"
+                   "g1\tG3T\t\t\t\t\n"                       # NC 3 G->T: run pos 4 is G -> call (4, G, T); NC 5 not listed -> the genome has T, the run reference A -> call (6, A, T)
+                   "g2\t\t\t5\t\t\n"                          # NC 5 missing -> unknown, no call there
+                   "g3\t\t\t\t\tbad sequence\n", encoding="utf-8")
+    calls = nextcladecall.parse_calls(tsv, nc, run, to_nc)
+    assert calls["g1"] == {(4, "G", "T"), (6, "A", "T")} and calls["g2"] == set() and "g3" not in calls
+    assert nextcladecall.parse_calls(tsv, nc, run, to_nc, window=lambda p: p != 6)["g1"] == {(4, "G", "T")}      # the ITR window is honoured
+    assert nextcladecall._ranges("N:5-9,R:12") == [(5, 9), (12, 12)] and nextcladecall._ranges("") == []
+    # one mutation tool by tool
+    callers = {"mutprofile": {"g1": {(4, "G", "T")}, "g2": {(4, "G", "T")}, "g3": set()},
+               "snippy": {"g1": {(4, "G", "T")}, "g2": set(), "g3": set()},
+               "nextclade": {"g1": {(4, "G", "T")}, "g2": {(4, "G", "T")}}}
+    monkeypatch.setattr(variantcall, "_callers", lambda run, max_n, source="direct": callers)
+    sc = variantcall.site_calls({}, 4, "T")
+    assert sc["per_caller"]["mutprofile"] == {"judged": 3, "called": 2} and sc["per_caller"]["nextclade"] == {"judged": 2, "called": 2} and sc["ref"] == "G"
+    pats = {tuple(r["by"]): r for r in sc["patterns"]}
+    assert pats[("mutprofile", "snippy", "nextclade")]["all"] and pats[("mutprofile", "snippy", "nextclade")]["genomes"] == ["g1"]
+    assert not pats[("mutprofile", "nextclade")]["all"] and pats[("mutprofile", "nextclade")]["missed_by"] == ["snippy"]       # g2: snippy did not call it
+    assert sc["n_called"] == 2 and sc["n_agree"] == 1 and sc["tool_specific"] == []

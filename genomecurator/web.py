@@ -6,7 +6,7 @@ from fastapi import FastAPI, Form, Request
 from fastapi.responses import FileResponse, HTMLResponse, JSONResponse, RedirectResponse, Response, StreamingResponse
 from fastapi.templating import Jinja2Templates
 
-from . import beastprep, clock, mutgantt, pipeline, support, variantcall, variantflow, __version__, analysis, completeness, datasets, exclusions, export, cooccur, geo, heatmap, vocab, insight, lineages, mutprofile, nextstrain, novel, outbreak, pathoplexus, private, qc, squirrel, config, curate, jobs, log
+from . import beastprep, clock, mutgantt, nextcladecall, pipeline, support, variantcall, variantflow, __version__, analysis, completeness, datasets, exclusions, export, cooccur, geo, heatmap, vocab, insight, lineages, mutprofile, nextstrain, novel, outbreak, pathoplexus, private, qc, squirrel, config, curate, jobs, log
 from .db import audit_now, connect
 
 _log = log.get("web")
@@ -958,7 +958,7 @@ def create_app(scheduler: bool = True) -> FastAPI:
         r = nextstrain.get_run(rid)
         if not r or r["tool"] != "mutprofile" or r["status"] != "done":
             return JSONResponse({"error": "finished mutation-profile run not found"}, 404)
-        return render(request, "concordance.html", nav="res", run=r, vc=variantcall.status(), vf=variantflow.status())
+        return render(request, "concordance.html", nav="res", run=r, vc=variantcall.status(), vf=variantflow.status(), nc=nextcladecall.status(r))
 
     @app.get("/api/analyses/{rid}/concordance")
     def api_analysis_concordance(rid: int, max_n: float = 0.05, source: str = "direct"):
@@ -982,6 +982,30 @@ def create_app(scheduler: bool = True) -> FastAPI:
             res = variantcall.run_for_mutprofile(r, progress=lambda i, n: p(100 * i / max(n, 1), f"{i}/{n} 유전체"))
             return {"redirect": f"/analysis/{rid}/concordance", "result": res}
         return start_job(work, f"변이 호출(snippy+lofreq) · {r['name']}", "variantcall")
+
+    @app.post("/api/analyses/{rid}/nextcladecall")
+    def api_analysis_nextcladecall(request: Request, rid: int):
+        """Nextclade's mutation calls for the genomes of a finished mutation-profile run (a server job; about half a minute per thousand genomes)."""
+        if not _same_origin(request):
+            return JSONResponse({"error": "cross-site request refused"}, 403)
+        r = nextstrain.get_run(rid)
+        if not r or r["tool"] != "mutprofile" or r["status"] != "done":
+            return JSONResponse({"error": "finished mutation-profile run not found"}, 404)
+        if not nextcladecall.status(r)["ok"]:
+            return JSONResponse({"error": "Nextclade 또는 이 바이러스의 Nextclade 데이터셋이 없습니다 (QC 화면에서 데이터셋을 받으세요)"}, 400)
+
+        def work(p):
+            return {"redirect": f"/analysis/{rid}/concordance", "result": nextcladecall.run_for_mutprofile(r, progress=p)}
+        return start_job(work, f"변이 호출(Nextclade) · {r['name']}", "nextcladecall")
+
+    @app.get("/api/analyses/{rid}/mutation_calls")
+    def api_analysis_mutation_calls(rid: int, pos: int, alt: str, max_n: float = 0.05, source: str = "direct"):
+        """One mutation tool by tool: how many genomes each caller (the run's own, snippy, lofreq, Nextclade) calls it in, which combinations occur, which tool alone calls it."""
+        r = nextstrain.get_run(rid)
+        if not r or r["tool"] != "mutprofile" or r["status"] != "done":
+            return JSONResponse({"error": "finished mutation-profile run not found"}, 404)
+        return {**variantcall.site_calls(r, pos, alt, min(1.0, max(0.0, max_n)), "flow" if source == "flow" else "direct"),
+                "have": {"snippy": variantcall.available(r), "flow": variantcall.available(r, "flow"), "nextclade": nextcladecall.available(r)}}
 
     @app.get("/api/variantflow/pending")
     def api_variantflow_pending():
