@@ -142,7 +142,8 @@ def adaptive_traits(k, cs, ds_months, pool_by_month, recent, meta, dmap, row, n_
 
 def co_travel(rows: list[dict], min_j: float = 0.6) -> list[dict]:
     """Pairs of the given mutations that sit on (nearly) the same genomes: Jaccard similarity of their carrier sets, `a` the one first observed earlier. Mutations that always travel together were most
-    likely gained together (one event or one branch), so they are one piece of evidence, not several."""
+    likely gained together (one event or one branch), so they are one piece of evidence, not several. `identical`: exactly the same genomes - the data cannot tell such mutations apart at all (no
+    regression can split them), whichever of them acts on the virus."""
     out = []
     for i, x in enumerate(rows):
         for y in rows[i + 1:]:
@@ -152,7 +153,7 @@ def co_travel(rows: list[dict], min_j: float = 0.6) -> list[dict]:
             j = inter / len(x["_cs"] | y["_cs"])
             if j >= min_j:
                 a, b = sorted((x, y), key=lambda r: (r["first"], r["pos"]))
-                out.append({"a": f"{a['pos']}{a['alt']}", "b": f"{b['pos']}{b['alt']}", "j": round(j, 3), "shared": inter})
+                out.append({"a": f"{a['pos']}{a['alt']}", "b": f"{b['pos']}{b['alt']}", "j": round(j, 3), "shared": inter, "identical": x["_cs"] == y["_cs"]})
     return out
 
 def build(run: dict, bin_: str = "month", lineage_set=(), clade_set=(), gene: str = "", start: int = 0, end: int = 0, apobec_only: bool = False, hide_common: float = 0.0,

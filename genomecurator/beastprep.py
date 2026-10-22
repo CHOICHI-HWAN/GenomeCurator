@@ -445,7 +445,7 @@ def run_recorded(clock_run: dict, settings: dict | None = None, progress=None) -
     members = nextstrain.run_members(clock_run)
     from datetime import datetime
     rid = runs.start(ds, "beast", name, datetime.now(), ds.get("build") or "", s, "beast-v1", members, clock_run["members_sha"] or "", clock_run.get("content_sha") or "", st["version"], d, d / "beast.screen.log",
-                     f"clock:{clock_run['id']}" + (":models" if s["compare"] else ""), {"beast": st["version"], "settings": s})
+                     f"clock:{clock_run['id']}", {"beast": st["version"], "settings": s})
     try:
         res = run(clock_run, s, progress)
     except Exception as e:
@@ -741,7 +741,7 @@ def run_bets_recorded(clock_run: dict, settings: dict | None = None, progress=No
     d = bets_folder(clock_run)
     d.mkdir(parents=True, exist_ok=True)
     rid = runs.start(ds, "bets", name, datetime.now(), ds.get("build") or "", s, "bets-v2", nextstrain.run_members(clock_run), clock_run["members_sha"] or "", clock_run.get("content_sha") or "", st["version"], d,
-                     _root(clock_run, s) / _models(s)[0]["tag"] / "psss" / "screen.txt", f"clock:{clock_run['id']}", {"beast": st["version"], "settings": s})
+                     _root(clock_run, s) / _models(s)[0]["tag"] / "psss" / "screen.txt", f"clock:{clock_run['id']}" + (":models" if s["compare"] else ""), {"beast": st["version"], "settings": s})
     try:
         res = run_bets(clock_run, s, progress)
     except Exception as e:

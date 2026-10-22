@@ -62,7 +62,7 @@ Keep **"adaptive candidate"** (never shorten to "adaptive mutation"); show per c
 3. ~~E5 country-stratified growth regression~~ - done (per mutation, shown as "adjusted rise" in the candidate table)
 4. ~~Evidence-tick UI; score as a sort aid~~ - done (columns persistence, recurrence, above neutral, spread, protein, rise, adjusted rise)
 5. ~~Recovery test on simulated data in `./test.sh verify`~~ - done (`planted_adaptive`: planted five-origin mutations recovered 120/120, null false positives 0/12000)
-6. E9 regularised regression for linked mutations - **partly** (groups count as one piece of evidence and the independent number is shown; the regression split is not done: on the current data most candidates form one group, so there is little to separate)
+6. E9 linked mutations - **partly** (pairs on exactly the same genomes are flagged `identical`: no analysis of these genomes can tell which acts) (groups count as one piece of evidence and the independent number is shown; the regression split is not done: on the current data most candidates form one group, so there is little to separate)
 7. ~~E10 HyPhy input export~~ - done (codon alignments are cut by mapping the Squirrel alignment's reference columns onto the run reference's annotation; OPG185 translates to a protein start, MTQLPILL...)
 8. Predecessor comparison - **partly done** (section 8: MpoxRadar and PyR0 read in full text; VIRUS-MVP blocked by a verification page and not read; the rest abstract level)
 

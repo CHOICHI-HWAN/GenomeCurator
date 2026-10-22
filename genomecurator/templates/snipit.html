@@ -178,8 +178,8 @@ function applyHL(){if(!HLG)return;const any=Object.values(HL).some(s=>s.size);le
  document.querySelectorAll('#fig g.mg').forEach(g=>{g.style.opacity=ok[g.dataset.k]?1:0.08});
  const i=document.getElementById('hlinfo');if(i)i.textContent=any?'강조 '+on+' / '+HLG.rows.length+'개 변이':''}
 function adUnits(ad){const par={};ad.forEach(x=>par[x.pos+x.alt]=x.pos+x.alt);const f=k=>par[k]===k?k:(par[k]=f(par[k]));(HLG.adaptive_links||[]).forEach(l=>{if(par[l.a]!==undefined&&par[l.b]!==undefined)par[f(l.a)]=f(l.b)});
- const comp={};ad.forEach(x=>{(comp[f(x.pos+x.alt)]=comp[f(x.pos+x.alt)]||[]).push(x)});const g=Object.values(comp),multi=g.filter(c=>c.length>1).length;
- return '후보 <b>'+ad.length+'</b>개는 <b>독립 증거 '+g.length+'개</b>입니다(함께 다니는 묶음 '+multi+'개 + 단독 '+(g.length-multi)+'개). 늘 같은 유전체에 실려 있는 변이는 한 번의 사건으로 함께 생겼을 가능성이 커서 하나로 셉니다.'}
+ const comp={};ad.forEach(x=>{(comp[f(x.pos+x.alt)]=comp[f(x.pos+x.alt)]||[]).push(x)});const g=Object.values(comp),multi=g.filter(c=>c.length>1).length,ident=(HLG.adaptive_links||[]).filter(l=>l.identical&&par[l.a]!==undefined).length;
+ return '후보 <b>'+ad.length+'</b>개는 <b>독립 증거 '+g.length+'개</b>입니다(함께 다니는 묶음 '+multi+'개 + 단독 '+(g.length-multi)+'개). 늘 같은 유전체에 실려 있는 변이는 한 번의 사건으로 함께 생겼을 가능성이 커서 하나로 셉니다.'+(ident?' 그중 <b>완전히 같은 유전체 집합</b>을 가진 쌍이 '+ident+'개 있어, 이 데이터로는 둘 중 무엇이 작용하는지 어떤 분석으로도 가를 수 없습니다.':'')}
 function adList(){return HLG.rows.filter(x=>x.adaptive&&['strong','candidate','recurrent','apobec'].includes(x.adaptive.tier))}
 const ADC={strong:'#c0392b',candidate:'#e08a1e',recurrent:'#2f9e6e',apobec:'#b98bc9'},CATC=['#4e79a7','#59a14f','#e15759','#b07aa1','#76b7b2','#edc948','#9c755f','#bab0ac'];
 function adView(v){ADV=v;const t=document.getElementById('adt'),g=document.getElementById('adg'),m=document.getElementById('adm');if(!t)return;t.style.display=v==='table'?'block':'none';g.style.display=v==='graph'?'block':'none';m.style.display=v==='mind'?'block':'none';if(v==='graph')adGraph(g);if(v==='mind')adMind(m)}

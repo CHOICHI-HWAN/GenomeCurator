@@ -3595,3 +3595,10 @@ def test_four_model_comparison_prepares_four_analyses_and_ranks_them(tmp_path, m
     assert cmp["ranking"][0]["log_bf_vs_best"] == 0 and cmp["ranking"][1]["log_bf_vs_best"] == -6.1 and cmp["ranking"][0]["estimator_spread"] == 5.0
     assert "relaxed-exponential" in cmp["text"] and "추정기들의 값이 2 이상" in cmp["text"]                           # the estimators disagree for the top model: said so
     assert beastprep.compare_models({"a": {"ps": None, "ss": None, "gss": None}})["ranking"] == []
+
+
+def test_co_travel_flags_mutations_on_exactly_the_same_genomes():
+    from genomecurator import mutgantt
+    row = lambda pos, alt, cs: {"pos": pos, "alt": alt, "first": "2025-01", "_cs": set(cs)}
+    links = {(x["a"], x["b"]): x for x in mutgantt.co_travel([row(1, "A", range(5)), row(2, "C", range(5)), row(3, "G", range(4))])}
+    assert links[("1A", "2C")]["identical"] and not links[("1A", "3G")]["identical"] and links[("1A", "3G")]["j"] == 0.8
