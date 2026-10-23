@@ -3721,3 +3721,37 @@ def test_fix_auspice_puts_the_ib_lineage_labels_right(tmp_path, monkeypatch):
     assert a3["node_attrs"]["lineage"]["value"] == "A.4" and a3["node_attrs"]["clade_membership"]["value"] == "Ib"
     assert "lineage" not in d["tree"]["children"][1]["node_attrs"] and d["tree"]["children"][1]["node_attrs"]["clade_membership"]["value"] == "IIb"   # a tip outside the lineages is left alone
     assert [c["key"] for c in d["meta"]["colorings"]] == ["clade_membership", "lineage"]
+
+
+def test_partitioned_beast_xml_separates_apobec_context_sites(tmp_path):
+    import random
+    import xml.etree.ElementTree as ET
+    import pytest
+    from genomecurator import beastprep
+    # consensus T C A G A C G T: columns 1 (C after T) and 3 (G before A) are APOBEC3-type; the rest are not
+    rng = random.Random(3)
+    base = "TCAGACGT" * 6
+    seqs = {f"s{i}": "".join(c if rng.random() > 0.05 else rng.choice("ACGT") for c in base) for i in range(8)}
+    seqs["s0"] = base
+    a, b = beastprep.apobec_columns({k: base for k in seqs})
+    assert [i for i in a if i < 8] == [1, 3] and 0 not in a and len(a) + len(b) == len(base)                      # TC -> the C, GA -> the G; nothing else
+    dates = {n: 2025 + i / 20 for i, n in enumerate(seqs)}
+    s = {"n_tips": 8, "chain_length": 5000, "samples": 100, "clock": "strict", "tree_prior": "exponential", "seed": 1, "threads": 0, "partition": "apobec"}
+    root = ET.fromstring(beastprep.build_xml(seqs, dates, {}, s, 1e-5))
+    assert [e.get("id") for e in root.findall("alignment")] == ["alignment.a", "alignment.b"]
+    assert [p.get("id") for p in root.findall("siteModel")] == ["siteModel.a", "siteModel.b"] and root.find("compoundParameter").get("id") == "allMus"
+    assert len(root.find("treeDataLikelihood").findall("partition")) == 2
+    de = [e for e in root.find("operators") if e.tag == "deltaExchange" and e.get("parameterWeights")][0]
+    assert de.get("parameterWeights") == f"{len(a)} {len(b)}"                                                         # the mean relative rate over the sites stays 1
+    log = root.find("mcmc").find("log[@id='fileLog']")
+    ids = {e.get("idref") for e in log}
+    assert {"mu.a", "mu.b", "kappa.a", "kappa.b", "alpha.a", "alpha.b"} <= ids
+    plain = ET.fromstring(beastprep.build_xml(seqs, dates, {}, {**s, "partition": ""}, 1e-5))
+    assert plain.find("alignment").get("id") == "alignment" and plain.find("compoundParameter") is None             # the ordinary model is unchanged
+    with pytest.raises(ValueError):
+        beastprep.build_xml(seqs, dates, {}, s, 1e-5, "gss", proper=True, fixed_freq=True, gss={"log": "beast.log", "burnin": 10, "chain_length": 100, "path_steps": 4})
+    log_file = tmp_path / "beast.log"
+    hdr = "state\tposterior\tclock.rate\tmu.a\tmu.b\n"
+    log_file.write_text(hdr + "".join(f"{i}\t-1.0\t1.0E-5\t{8 + (i % 3)}\t0.{5 + i % 3}\n" for i in range(40)), encoding="utf-8")
+    P = beastprep.read_log(log_file, 0.1)["params"]
+    assert P["rate.ratio"]["median"] > 10 and abs(P["rate.apobec"]["median"] - 9e-5) < 2e-5 and P["rate.other"]["mean"] < 1e-5      # per-sample rate = clock rate x relative rate

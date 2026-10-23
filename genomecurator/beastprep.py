@@ -9,6 +9,7 @@ and can be opened and changed in BEAUti / a text editor.
 Reading the result: the tMRCA of the root and of the lineages as dates (mean / median / 95% HPD), the clock rate, and the effective sample size (ESS) of each - an ESS below 200 means the chain has not
 run long enough and the interval must not be trusted. The package is a starting point: a real analysis needs several chains, checks in Tracer, and a model comparison."""
 import json
+from collections import Counter
 import math
 import random
 import re
@@ -60,6 +61,7 @@ def parse_settings(raw: dict | None) -> dict:
         raise ValueError("체인 길이는 10,000 이상, 표본 수는 100~100,000이어야 합니다.")
     if out["clock"] not in CLOCKS or out["tree_prior"] not in PRIORS:
         raise ValueError(f"시계는 {', '.join(CLOCKS)}, 트리 사전분포는 {', '.join(PRIORS)} 중 하나입니다.")
+    out["partition"] = "apobec" if str(s.get("partition") or "") == "apobec" else ""   # separate rates for the APOBEC3-context sites and the others
     out["tag"] = re.sub(r"[^A-Za-z0-9_.\-]", "_", str(s.get("tag") or ""))[:40]
     out["tip_names"] = [str(x) for x in (s.get("tip_names") or [])]            # an explicit set of tips instead of the balanced subsample
     out["groups"] = {str(k): [str(x) for x in v] for k, v in (s.get("groups") or {}).items()}   # taxon sets whose MRCA age is logged (with tip_names)
@@ -106,6 +108,22 @@ def _safe(x: str) -> str:
     return re.sub(r"[^A-Za-z0-9_.\-]", "_", x)
 
 
+def apobec_columns(seqs: dict[str, str]) -> tuple[list[int], list[int]]:
+    """Alignment columns split by the context of the consensus base: (APOBEC3-type sites, all the others). A site is APOBEC3-type when the consensus there is a C right after a T (TC, where APOBEC3 makes
+    C>T) or a G right before an A (GA, G>A) - the two contexts of the mutations the host enzymes make in human mpox transmission. Gaps and N do not vote."""
+    names = list(seqs)
+    L = len(seqs[names[0]])
+    cons = []
+    for i in range(L):
+        c = Counter(seqs[n][i] for n in names if seqs[n][i] in "ACGT")
+        cons.append(c.most_common(1)[0][0] if c else "N")
+    a, b = [], []
+    for i in range(L):
+        isa = (cons[i] == "C" and i > 0 and cons[i - 1] == "T") or (cons[i] == "G" and i + 1 < L and cons[i + 1] == "A")
+        (a if isa else b).append(i)
+    return a, b
+
+
 def build_xml(seqs: dict[str, str], dates: dict[str, float], groups: dict[str, list[str]], s: dict, rate0: float, fileprefix: str = "beast", mle: dict | None = None, proper: bool = False, fixed_freq: bool = False, gss: dict | None = None, init: dict | None = None) -> str:
     """The BEAST 1.10-style XML. `proper`: only proper priors (the clock rate and the population size get log-normal priors instead of the vague gamma / 1/x ones): a marginal likelihood, and so a Bayes factor, exists only for proper priors. `fixed_freq`: the base frequencies are the alignment's own and not sampled (needed for generalized stepping-stone sampling, which has no working prior for a simplex). `gss` = {"log", "burnin", "chain_length", "path_steps", "alpha"}: instead of path sampling / stepping-stone sampling, generalized stepping-stone sampling against a working prior built from the posterior samples of an earlier ordinary run of this model (`log` is read from the folder BEAST runs in, the first `burnin` states are discarded). `init` = {parameter id: starting value}: the chain starts there (for GSS, from the middle of the earlier posterior - a start outside the working prior has zero density and BEAST refuses it). `mle` = {"chain_length", "path_steps", "alpha"}: after the initial chain, path sampling and stepping-stone sampling of the marginal likelihood (`marginalLikelihoodEstimator`, written to `<prefix>.mle.log`). `seqs` {taxon: aligned sequence}, `dates` {taxon: decimal year}, `groups` {name: [taxa]} for the tMRCA of each group, `rate0` the starting clock rate (substitutions / site / year)."""
     names = list(seqs)
@@ -124,11 +142,21 @@ def build_xml(seqs: dict[str, str], dates: dict[str, float], groups: dict[str, l
         for n in members:
             w(f'\t\t<taxon idref="{_safe(n)}"/>')
         w('\t</taxa>')
-    w('\t<alignment id="alignment" dataType="nucleotide">')
-    for n in names:
-        w(f'\t\t<sequence><taxon idref="{_safe(n)}"/>{seqs[n]}</sequence>')
-    w('\t</alignment>')
-    w('\t<patterns id="patterns" from="1" strip="false"><alignment idref="alignment"/></patterns>')
+    part = s.get("partition") == "apobec"
+    if part and gss:
+        raise ValueError("분할 모델(APOBEC3 자리 대 그 외)은 한계우도 추정(GSS)과 함께 쓸 수 없습니다.")
+    if part:
+        ca, cb = apobec_columns(seqs)
+        sets = [(".a", {n: "".join(seqs[n][i] for i in ca) for n in names}), (".b", {n: "".join(seqs[n][i] for i in cb) for n in names})]
+        nsites = [len(ca), len(cb)]
+    else:
+        sets, nsites = [("", seqs)], [len(seqs[names[0]])]
+    for suf, sq in sets:
+        w(f'\t<alignment id="alignment{suf}" dataType="nucleotide">')
+        for n in names:
+            w(f'\t\t<sequence><taxon idref="{_safe(n)}"/>{sq[n]}</sequence>')
+        w('\t</alignment>')
+        w(f'\t<patterns id="patterns{suf}" from="1" strip="false"><alignment idref="alignment{suf}"/></patterns>')
     if s["tree_prior"] == "constant":
         w('\t<constantSize id="demographic" units="years"><populationSize><parameter id="demographic.popSize" value="1.0" lower="0.0"/></populationSize></constantSize>')
     else:
@@ -151,22 +179,29 @@ def build_xml(seqs: dict[str, str], dates: dict[str, float], groups: dict[str, l
           '<stdev><parameter id="ucld.stdev" value="0.3333333333333333" lower="0.0"/></stdev></logNormalDistributionModel></distribution><rateCategories><parameter id="branchRates.categories"/></rateCategories></discretizedBranchRates>')
         rate_param, rate_ref = "ucld.mean", '<discretizedBranchRates idref="branchRates"/>'
     w(f'\t<rateStatistic id="meanRate" name="meanRate" mode="mean" internal="true" external="true"><treeModel idref="treeModel"/>{rate_ref}</rateStatistic>')
-    if fixed_freq:
-        cnt = {b: sum(q.count(b) for q in seqs.values()) for b in "ACGT"}
-        tot = max(1, sum(cnt.values()))
-        fr = [round(cnt[b] / tot, 10) for b in "ACG"]
-        freq_value = " ".join(f"{x:.10f}" for x in fr) + f" {1 - sum(fr):.10f}"                 # the last one is the remainder: BEAST refuses frequencies that do not sum to 1 (6 decimals gave 1.000001)
-    else:
-        freq_value = "0.25 0.25 0.25 0.25"
-    w('\t<HKYModel id="hky"><frequencies><frequencyModel dataType="nucleotide"><frequencies><parameter id="frequencies" value="' + freq_value + '"/></frequencies></frequencyModel></frequencies>'
-      '<kappa><parameter id="kappa" value="2.0" lower="0.0"/></kappa></HKYModel>')
-    w('\t<siteModel id="siteModel"><substitutionModel><HKYModel idref="hky"/></substitutionModel><gammaShape gammaCategories="4"><parameter id="alpha" value="0.5" lower="0.0"/></gammaShape></siteModel>')
-    w(f'\t<treeDataLikelihood id="treeLikelihood" useAmbiguities="false"><partition><patterns idref="patterns"/><siteModel idref="siteModel"/></partition><treeModel idref="treeModel"/>{rate_ref}</treeDataLikelihood>')
+    for suf, sq in sets:
+        if fixed_freq:
+            cnt = {b: sum(q.count(b) for q in sq.values()) for b in "ACGT"}
+            tot = max(1, sum(cnt.values()))
+            fr = [round(cnt[b] / tot, 10) for b in "ACG"]
+            freq_value = " ".join(f"{x:.10f}" for x in fr) + f" {1 - sum(fr):.10f}"                 # the last one is the remainder: BEAST refuses frequencies that do not sum to 1 (6 decimals gave 1.000001)
+        else:
+            freq_value = "0.25 0.25 0.25 0.25"
+        w(f'\t<HKYModel id="hky{suf}"><frequencies><frequencyModel dataType="nucleotide"><frequencies><parameter id="frequencies{suf}" value="' + freq_value + '"/></frequencies></frequencyModel></frequencies>'
+          f'<kappa><parameter id="kappa{suf}" value="2.0" lower="0.0"/></kappa></HKYModel>')
+        w(f'\t<siteModel id="siteModel{suf}"><substitutionModel><HKYModel idref="hky{suf}"/></substitutionModel>' + (f'<relativeRate><parameter id="mu{suf}" value="1.0" lower="0.0"/></relativeRate>' if part else "")
+          + f'<gammaShape gammaCategories="4"><parameter id="alpha{suf}" value="0.5" lower="0.0"/></gammaShape></siteModel>')
+    if part:
+        w('\t<compoundParameter id="allMus"><parameter idref="mu.a"/><parameter idref="mu.b"/></compoundParameter>')
+    w('\t<treeDataLikelihood id="treeLikelihood" useAmbiguities="false">' + "".join(f'<partition><patterns idref="patterns{suf}"/><siteModel idref="siteModel{suf}"/></partition>' for suf, _q in sets) + f'<treeModel idref="treeModel"/>{rate_ref}</treeDataLikelihood>')
     w('\t<operators id="operators" optimizationSchedule="default">')
-    w('\t\t<scaleOperator scaleFactor="0.75" weight="0.1"><parameter idref="kappa"/></scaleOperator>')
-    w('\t\t<scaleOperator scaleFactor="0.75" weight="0.1"><parameter idref="alpha"/></scaleOperator>')
-    if not fixed_freq:
-        w('\t\t<deltaExchange delta="0.01" weight="0.1"><parameter idref="frequencies"/></deltaExchange>')
+    for suf, _q in sets:
+        w(f'\t\t<scaleOperator scaleFactor="0.75" weight="0.1"><parameter idref="kappa{suf}"/></scaleOperator>')
+        w(f'\t\t<scaleOperator scaleFactor="0.75" weight="0.1"><parameter idref="alpha{suf}"/></scaleOperator>')
+        if not fixed_freq:
+            w(f'\t\t<deltaExchange delta="0.01" weight="0.1"><parameter idref="frequencies{suf}"/></deltaExchange>')
+    if part:                                                                                     # the relative rates of the two partitions: their mean over the sites stays 1, so the clock rate is the genome-wide rate
+        w(f'\t\t<deltaExchange delta="0.75" weight="3" parameterWeights="{nsites[0]} {nsites[1]}"><parameter idref="allMus"/></deltaExchange>')
     w(f'\t\t<scaleOperator scaleFactor="0.75" weight="3"><parameter idref="{rate_param}"/></scaleOperator>')
     if s["clock"] == "relaxed":
         w('\t\t<scaleOperator scaleFactor="0.75" weight="3"><parameter idref="ucld.stdev"/></scaleOperator>')
@@ -184,10 +219,14 @@ def build_xml(seqs: dict[str, str], dates: dict[str, float], groups: dict[str, l
     w('\t</operators>')
     w(f'\t<mcmc id="mcmc" chainLength="{chain}" autoOptimize="true" operatorAnalysis="{fileprefix}.ops">')
     w('\t\t<posterior id="posterior"><prior id="prior">')
-    w('\t\t\t<logNormalPrior mean="1.0" stdev="1.25" offset="0.0" meanInRealSpace="false"><parameter idref="kappa"/></logNormalPrior>')
-    w('\t\t\t<exponentialPrior mean="0.5" offset="0.0"><parameter idref="alpha"/></exponentialPrior>')
-    if not fixed_freq:
-        w('\t\t\t<dirichletPrior alpha="1.0" sumsTo="1.0"><parameter idref="frequencies"/></dirichletPrior>')
+    for suf, _q in sets:
+        w(f'\t\t\t<logNormalPrior mean="1.0" stdev="1.25" offset="0.0" meanInRealSpace="false"><parameter idref="kappa{suf}"/></logNormalPrior>')
+        w(f'\t\t\t<exponentialPrior mean="0.5" offset="0.0"><parameter idref="alpha{suf}"/></exponentialPrior>')
+        if not fixed_freq:
+            w(f'\t\t\t<dirichletPrior alpha="1.0" sumsTo="1.0"><parameter idref="frequencies{suf}"/></dirichletPrior>')
+    if part:
+        w('\t\t\t<exponentialPrior mean="1.0" offset="0.0"><parameter idref="mu.a"/></exponentialPrior>')
+        w('\t\t\t<exponentialPrior mean="1.0" offset="0.0"><parameter idref="mu.b"/></exponentialPrior>')
     if s.get("rate_prior"):
         w(f'\t\t\t<logNormalPrior mean="{s["rate_prior"][0]}" stdev="{s["rate_prior"][1]}" offset="0.0" meanInRealSpace="false"><parameter idref="{rate_param}"/></logNormalPrior>')      # an informative prior on the rate (see the settings)
     elif proper:
@@ -209,7 +248,7 @@ def build_xml(seqs: dict[str, str], dates: dict[str, float], groups: dict[str, l
       '<column label="Likelihood" dp="4" width="12"><likelihood idref="likelihood"/></column><column label="rootAge" sf="6" width="12"><tmrcaStatistic idref="age(root)"/></column></log>')
     w(f'\t\t<log id="fileLog" logEvery="{every}" fileName="{fileprefix}.log" overwrite="false"><posterior idref="posterior"/><prior idref="prior"/><likelihood idref="likelihood"/>'
       '<parameter idref="treeModel.rootHeight"/><tmrcaStatistic idref="age(root)"/>' + "".join(f'<tmrcaStatistic idref="age({_safe(g)})"/>' + (f'<tmrcaStatistic idref="stem({_safe(g)})"/>' if g in s.get("stem_groups", []) else "") for g in groups) + '<treeLengthStatistic idref="treeLength"/>'
-      '<parameter idref="demographic.popSize"/>' + ('<parameter idref="demographic.growthRate"/>' if s["tree_prior"] == "exponential" else "") + '<parameter idref="kappa"/><parameter idref="alpha"/>'
+      '<parameter idref="demographic.popSize"/>' + ('<parameter idref="demographic.growthRate"/>' if s["tree_prior"] == "exponential" else "") + "".join(f'<parameter idref="kappa{suf}"/><parameter idref="alpha{suf}"/>' for suf, _q in sets) + ('<parameter idref="mu.a"/><parameter idref="mu.b"/>' if part else "") +
       f'<parameter idref="{rate_param}"/>' + ('<parameter idref="ucld.stdev"/>' if s["clock"] == "relaxed" else "") + '<rateStatistic idref="meanRate"/><treeDataLikelihood idref="treeLikelihood"/><coalescentLikelihood idref="coalescent"/></log>')
     w(f'\t\t<logTree id="treeFileLog" logEvery="{every}" nexusFormat="true" fileName="{fileprefix}.trees" sortTranslationTable="true"><treeModel idref="treeModel"/>'
       f'<trait name="rate" tag="rate">{rate_ref}</trait><posterior idref="posterior"/></logTree>')
@@ -374,6 +413,14 @@ def read_log(path: Path, burnin: float = 0.1) -> dict:
         lo, hi = hpd(xs)
         xs_s = sorted(xs)
         out[h] = {"mean": sum(xs) / len(xs), "median": xs_s[len(xs) // 2], "lo": lo, "hi": hi, "ess": ess(xs)}
+    if "mu.a" in header and "mu.b" in header:                       # the partitioned model: the rates of the two kinds of site per sample (clock rate x relative rate) and their ratio
+        rk = "ucld.mean" if "ucld.mean" in header else "clock.rate"
+        ia, ib, ir = header.index("mu.a"), header.index("mu.b"), header.index(rk)
+        sub = rows[cut:]
+        for name, f in (("rate.apobec", lambda r: float(r[ir]) * float(r[ia])), ("rate.other", lambda r: float(r[ir]) * float(r[ib])), ("rate.ratio", lambda r: float(r[ia]) / max(1e-12, float(r[ib])))):
+            xs = [f(r) for r in sub]
+            lo, hi = hpd(xs)
+            out[name] = {"mean": sum(xs) / len(xs), "median": sorted(xs)[len(xs) // 2], "lo": lo, "hi": hi, "ess": ess(xs)}
     return {"states": len(rows), "last_state": int(float(rows[-1][0])), "burnin": burnin, "params": out}
 
 
@@ -434,7 +481,7 @@ def summarize(clock_run: dict, tag: str = "") -> dict:
     ages = {k[4:-1]: v for k, v in P.items() if k.startswith("age(") and k != "age(root)"}
     stems = {k[5:-1]: v for k, v in P.items() if k.startswith("stem(")}
     return {"settings": s, "states": r["states"], "last_state": r.get("last_state"), "complete": r.get("last_state", 0) >= s.get("chain_length", 1), "root": P.get("age(root)"), "rate": P.get(rate_key),
-            "rate_param": rate_key, "groups": ages, "stems": stems, "posterior": P.get("posterior"), "min_ess": min((v["ess"] for k, v in P.items() if k.startswith("age(") or k == rate_key), default=None)}
+            "rate_param": rate_key, "groups": ages, "stems": stems, "partition": {k: P[k] for k in ("rate.apobec", "rate.other", "rate.ratio") if k in P}, "posterior": P.get("posterior"), "min_ess": min((v["ess"] for k, v in P.items() if k.startswith("age(") or k == rate_key), default=None)}
 
 
 def result(clock_run: dict, tag: str = "") -> dict:
