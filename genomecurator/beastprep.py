@@ -61,6 +61,7 @@ def parse_settings(raw: dict | None) -> dict:
         raise ValueError("체인 길이는 10,000 이상, 표본 수는 100~100,000이어야 합니다.")
     if out["clock"] not in CLOCKS or out["tree_prior"] not in PRIORS:
         raise ValueError(f"시계는 {', '.join(CLOCKS)}, 트리 사전분포는 {', '.join(PRIORS)} 중 하나입니다.")
+    out["month_dates"] = bool(s.get("month_dates"))                                # use month-only dates at the middle of the month
     out["partition"] = "apobec" if str(s.get("partition") or "") == "apobec" else ""   # separate rates for the APOBEC3-context sites and the others
     out["tag"] = re.sub(r"[^A-Za-z0-9_.\-]", "_", str(s.get("tag") or ""))[:40]
     out["tip_names"] = [str(x) for x in (s.get("tip_names") or [])]            # an explicit set of tips instead of the balanced subsample
@@ -72,11 +73,12 @@ def parse_settings(raw: dict | None) -> dict:
 
 
 # ------------------------------------------------------------------------------------------------ the subsample
-def choose_tips(tips: list[dict], n: int, seed: int = 1) -> list[dict]:
+def choose_tips(tips: list[dict], n: int, seed: int = 1, month_dates: bool = False) -> list[dict]:
     """`n` of the clock run's tips, keeping the whole sampling period and the lineages: only genomes dated by day and not clock outliers; one genome from every month first (the earliest-dated of a
-    random order), then more rounds from the busiest months and lineages until `n` are taken. Deterministic for a seed."""
+    random order), then more rounds from the busiest months and lineages until `n` are taken. Deterministic for a seed. `month_dates`: genomes whose date is only a month (precision `range`) are used as well, at the
+    middle of the month (the usual convention; the clock run gives that date): up to half a month of error, about half a change at the rate of the mpox lineages studied here."""
     rng = random.Random(seed)
-    pool = [t for t in tips if not t["outlier"] and t["precision"] == "day"]
+    pool = [t for t in tips if not t["outlier"] and (t["precision"] == "day" or (month_dates and t["precision"] == "range"))]
     if len(pool) <= n:
         return sorted(pool, key=lambda t: t["date"])
     by_month: dict[int, list] = {}
@@ -311,12 +313,12 @@ def prepare(clock_run: dict, settings: dict | None = None, progress=None) -> dic
     p(5, "표본을 고르는 중…")
     if s["tip_names"]:
         names = set(s["tip_names"])
-        chosen = sorted((t for t in S["tips"] if t["name"] in names and t["precision"] == "day"), key=lambda t: t["date"])
+        chosen = sorted((t for t in S["tips"] if t["name"] in names and (t["precision"] == "day" or (s["month_dates"] and t["precision"] == "range"))), key=lambda t: t["date"])
         missing = names - {t["name"] for t in chosen}
         if missing:
             raise ValueError(f"고른 유전체 중 이 분자시계 실행에 없거나 날짜가 일 단위가 아닌 것이 있습니다: {', '.join(sorted(missing)[:8])}")
     else:
-        chosen = choose_tips(S["tips"], s["n_tips"], s["seed"])
+        chosen = choose_tips(S["tips"], s["n_tips"], s["seed"], s["month_dates"])
     if len(chosen) < 10:
         raise ValueError(f"BEAST에 쓸 수 있는 유전체(날짜가 일 단위이고 이상치가 아님)가 {len(chosen)}개뿐입니다.")
     want = {t["name"] for t in chosen}
@@ -344,7 +346,7 @@ def prepare(clock_run: dict, settings: dict | None = None, progress=None) -> dic
     with open(d / "alignment.fasta", "w", encoding="utf-8") as f:
         for n, q in seqs.items():
             f.write(f">{n}\n{q}\n")
-    (d / "dates.tsv").write_text("name\tdate\tlineage\tclade\tcountry\n" + "".join(f"{t['name']}\t{t['date']:.5f}\t{t['lineage']}\t{t['clade']}\t{t['country']}\n" for t in chosen), encoding="utf-8")
+    (d / "dates.tsv").write_text("name\tdate\tlineage\tclade\tcountry\tprecision\n" + "".join(f"{t['name']}\t{t['date']:.5f}\t{t['lineage']}\t{t['clade']}\t{t['country']}\t{'month (middle of the month)' if t['precision'] == 'range' else 'day'}\n" for t in chosen), encoding="utf-8")
     (d / "subsample.tsv").write_text("name\tdate\tlineage\n" + "".join(f"{t['name']}\t{t['date']:.5f}\t{t['lineage']}\n" for t in chosen), encoding="utf-8")
     (d / "settings.json").write_text(json.dumps(s), encoding="utf-8")
     (d / "README.txt").write_text(

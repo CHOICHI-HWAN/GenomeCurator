@@ -3755,3 +3755,13 @@ def test_partitioned_beast_xml_separates_apobec_context_sites(tmp_path):
     log_file.write_text(hdr + "".join(f"{i}\t-1.0\t1.0E-5\t{8 + (i % 3)}\t0.{5 + i % 3}\n" for i in range(40)), encoding="utf-8")
     P = beastprep.read_log(log_file, 0.1)["params"]
     assert P["rate.ratio"]["median"] > 10 and abs(P["rate.apobec"]["median"] - 9e-5) < 2e-5 and P["rate.other"]["mean"] < 1e-5      # per-sample rate = clock rate x relative rate
+
+
+def test_month_only_dates_can_be_used_at_the_middle_of_the_month():
+    from genomecurator import beastprep
+    tips = [{"name": f"d{i}", "date": 2026.0 + i / 100, "outlier": False, "precision": "day", "lineage": "A", "clade": "Ib", "country": "X"} for i in range(12)]
+    tips += [{"name": f"m{i}", "date": 2026.04 + i / 12, "outlier": False, "precision": "range", "lineage": "A", "clade": "Ib", "country": "Germany"} for i in range(5)]
+    assert not any(t["name"].startswith("m") for t in beastprep.choose_tips(tips, 40))                               # by default only day dates
+    chosen = beastprep.choose_tips(tips, 40, 1, True)
+    assert len(chosen) == 17 and sum(1 for t in chosen if t["name"].startswith("m")) == 5
+    assert beastprep.parse_settings({"month_dates": True})["month_dates"] is True and beastprep.parse_settings({})["month_dates"] is False
