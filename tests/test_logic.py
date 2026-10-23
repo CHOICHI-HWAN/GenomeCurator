@@ -3635,3 +3635,29 @@ def test_focus_separates_a_groups_distinct_mutations_from_its_lineage_markers(mo
     priv = focus.group_members(meta, "South Korea", private_only=True)
     assert priv == ["LAB0", "LAB1", "LAB2"] and focus.group_members(meta, "Germany", private_only=True) == []
     assert "error" in focus.analyze({}, "Peru")
+
+
+def test_class_specific_root_to_tip_finds_the_clock_in_apobec3_changes(monkeypatch):
+    import numpy as np
+    from genomecurator import clockclass, lineages, outbreak
+    # a caterpillar tree: every later tip sits after one more APOBEC3-type change (GA>AA) on the spine, the other changes do not follow the date
+    root = "T" + "C" + "A" * 60 + "G" + "A" + "A" * 40       # positions 1-2 TC (apobec C>T at 2), 63-64 GA (apobec G>A at 63)
+    muts = lambda items: {"branch_attrs": {"mutations": {"nuc": items}}}
+    tree = {"name": "root", **muts([]), "children": []}
+    cur = tree
+    for i in range(11):
+        spine = {"name": f"s{i}", **muts(["G63A"] if i > 0 else []), "children": []}
+        cur["children"].append({"name": f"t{i}", **muts(["A10C"] if i % 3 == 0 else [])})
+        cur["children"].append(spine)
+        cur = spine
+    cur["children"].append({"name": "t11"})
+    cur["children"].append({"name": "t12"})
+    monkeypatch.setattr(outbreak, "_tree", lambda run: (tree, root, {}))
+    monkeypatch.setattr(lineages, "_genomes", lambda run: [{"id": f"t{i}", "lineage": "L", "country": "X", "date": f"{2024 + i // 4}-{(i % 4) * 3 + 1:02d}-15", "outbreak": "", "clade": ""} for i in range(13)])
+    d = clockclass.analyze({}, min_lineage_tips=5)
+    a, o = d["classes"]["apobec"], d["classes"]["other"]
+    assert d["tips"] == 13 and a["slope"] > 0.5 and a["r2"] > 0.9                    # the APOBEC3-type count follows the date
+    assert (o["r2"] or 0) < 0.5 and 0 < d["apobec_share"] < 1 and d["lineages"][0]["lineage"] == "L"
+    r = clockclass.regress(np.array([1.0, 2.0, 3.0, 4.0, 5.0, 6.0]), np.array([2.0, 4.0, 6.0, 8.0, 10.0, 12.0]))
+    assert abs(r["slope"] - 2.0) < 1e-9 and abs(r["zero_at"]) < 1e-9 and r["r2"] > 0.999
+    assert clockclass.regress(np.array([1.0, 2.0]), np.array([1.0, 2.0]))["slope"] is None   # too few tips

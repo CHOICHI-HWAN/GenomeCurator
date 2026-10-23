@@ -6,7 +6,7 @@ from fastapi import FastAPI, Form, Request
 from fastapi.responses import FileResponse, HTMLResponse, JSONResponse, RedirectResponse, Response, StreamingResponse
 from fastapi.templating import Jinja2Templates
 
-from . import beastprep, clock, continents, focus, hyphyexport, intake, lineagetree, mutgantt, nextcladecall, pipeline, support, variantcall, variantflow, __version__, analysis, completeness, datasets, exclusions, export, cooccur, geo, heatmap, vocab, insight, lineages, mutprofile, nextstrain, novel, outbreak, pathoplexus, private, qc, squirrel, config, curate, jobs, log
+from . import beastprep, clock, clockclass, continents, focus, hyphyexport, intake, lineagetree, mutgantt, nextcladecall, pipeline, support, variantcall, variantflow, __version__, analysis, completeness, datasets, exclusions, export, cooccur, geo, heatmap, vocab, insight, lineages, mutprofile, nextstrain, novel, outbreak, pathoplexus, private, qc, squirrel, config, curate, jobs, log
 from .db import audit_now, connect
 
 _log = log.get("web")
@@ -1424,6 +1424,17 @@ def create_app(scheduler: bool = True) -> FastAPI:
         except ValueError as e:
             return JSONResponse({"error": str(e)}, 400)
         return start_job(lambda p: {"redirect": f"/clock/{rid}", "result": beastprep.run_bets_recorded(r, s, p)}, f"BETS · {r['name']}", "bets")
+
+    @app.get("/api/clock/{rid}/rtt_class")
+    def api_clock_rtt_class(rid: int):
+        """Root-to-tip regression of the dataset's Nextstrain tree once for APOBEC3-type and once for the other substitutions (and per lineage)."""
+        r = nextstrain.get_run(rid)
+        if not r or r["tool"] != "clock":
+            return JSONResponse({"error": "clock run not found"}, 404)
+        try:
+            return clockclass.analyze(r)
+        except (ValueError, RuntimeError, KeyError) as e:
+            return JSONResponse({"error": str(e)}, 400)
 
     @app.get("/api/clock/{rid}/models")
     def api_clock_models(rid: int):
