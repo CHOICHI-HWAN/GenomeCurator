@@ -3765,3 +3765,18 @@ def test_month_only_dates_can_be_used_at_the_middle_of_the_month():
     chosen = beastprep.choose_tips(tips, 40, 1, True)
     assert len(chosen) == 17 and sum(1 for t in chosen if t["name"].startswith("m")) == 5
     assert beastprep.parse_settings({"month_dates": True})["month_dates"] is True and beastprep.parse_settings({})["month_dates"] is False
+
+
+def test_stem_groups_log_a_stem_age_and_a_monophyly_indicator():
+    import random
+    import xml.etree.ElementTree as ET
+    from genomecurator import beastprep
+    rng = random.Random(5)
+    seqs = {f"s{i}": "".join(rng.choice("ACGT") for _ in range(30)) for i in range(8)}
+    dates = {n: 2025 + i / 10 for i, n in enumerate(seqs)}
+    s = {"n_tips": 8, "chain_length": 5000, "samples": 100, "clock": "strict", "tree_prior": "exponential", "seed": 1, "threads": 0, "stem_groups": ["g1"]}
+    root = ET.fromstring(beastprep.build_xml(seqs, dates, {"g1": ["s0", "s1", "s2"], "g2": ["s3", "s4"]}, s, 1e-5))
+    assert root.find("tmrcaStatistic[@id='stem(g1)']").get("includeStem") == "true" and root.find("monophylyStatistic[@id='monophyly(g1)']") is not None
+    assert root.find("tmrcaStatistic[@id='stem(g2)']") is None and root.find("monophylyStatistic[@id='monophyly(g2)']") is None            # only the groups asked for
+    ids = {e.get("idref") for e in root.find("mcmc").find("log[@id='fileLog']")}
+    assert {"stem(g1)", "monophyly(g1)", "age(g1)", "age(g2)"} <= ids

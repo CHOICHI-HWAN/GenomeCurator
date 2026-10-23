@@ -172,6 +172,7 @@ def build_xml(seqs: dict[str, str], dates: dict[str, float], groups: dict[str, l
         w(f'\t<tmrcaStatistic id="age({_safe(g)})" absolute="true"><treeModel idref="treeModel"/><mrca><taxa idref="group.{_safe(g)}"/></mrca></tmrcaStatistic>')
         if g in s.get("stem_groups", []):
             w(f'\t<tmrcaStatistic id="stem({_safe(g)})" absolute="true" includeStem="true"><treeModel idref="treeModel"/><mrca><taxa idref="group.{_safe(g)}"/></mrca></tmrcaStatistic>')
+            w(f'\t<monophylyStatistic id="monophyly({_safe(g)})"><mrca><taxa idref="group.{_safe(g)}"/></mrca><treeModel idref="treeModel"/></monophylyStatistic>')       # 1 in the samples where the group is a clade
     w('\t<coalescentLikelihood id="coalescent"><model><' + ("constantSize" if s["tree_prior"] == "constant" else "exponentialGrowth") + ' idref="demographic"/></model><populationTree><treeModel idref="treeModel"/></populationTree></coalescentLikelihood>')
     if s["clock"] == "strict":
         w(f'\t<strictClockBranchRates id="branchRates"><rate><parameter id="clock.rate" value="{rate0:.4e}" lower="0.0"/></rate></strictClockBranchRates>')
@@ -249,7 +250,7 @@ def build_xml(seqs: dict[str, str], dates: dict[str, float], groups: dict[str, l
     w(f'\t\t<log id="screenLog" logEvery="{every * 10}"><column label="Posterior" dp="4" width="12"><posterior idref="posterior"/></column><column label="Prior" dp="4" width="12"><prior idref="prior"/></column>'
       '<column label="Likelihood" dp="4" width="12"><likelihood idref="likelihood"/></column><column label="rootAge" sf="6" width="12"><tmrcaStatistic idref="age(root)"/></column></log>')
     w(f'\t\t<log id="fileLog" logEvery="{every}" fileName="{fileprefix}.log" overwrite="false"><posterior idref="posterior"/><prior idref="prior"/><likelihood idref="likelihood"/>'
-      '<parameter idref="treeModel.rootHeight"/><tmrcaStatistic idref="age(root)"/>' + "".join(f'<tmrcaStatistic idref="age({_safe(g)})"/>' + (f'<tmrcaStatistic idref="stem({_safe(g)})"/>' if g in s.get("stem_groups", []) else "") for g in groups) + '<treeLengthStatistic idref="treeLength"/>'
+      '<parameter idref="treeModel.rootHeight"/><tmrcaStatistic idref="age(root)"/>' + "".join(f'<tmrcaStatistic idref="age({_safe(g)})"/>' + (f'<tmrcaStatistic idref="stem({_safe(g)})"/><monophylyStatistic idref="monophyly({_safe(g)})"/>' if g in s.get("stem_groups", []) else "") for g in groups) + '<treeLengthStatistic idref="treeLength"/>'
       '<parameter idref="demographic.popSize"/>' + ('<parameter idref="demographic.growthRate"/>' if s["tree_prior"] == "exponential" else "") + "".join(f'<parameter idref="kappa{suf}"/><parameter idref="alpha{suf}"/>' for suf, _q in sets) + ('<parameter idref="mu.a"/><parameter idref="mu.b"/>' if part else "") +
       f'<parameter idref="{rate_param}"/>' + ('<parameter idref="ucld.stdev"/>' if s["clock"] == "relaxed" else "") + '<rateStatistic idref="meanRate"/><treeDataLikelihood idref="treeLikelihood"/><coalescentLikelihood idref="coalescent"/></log>')
     w(f'\t\t<logTree id="treeFileLog" logEvery="{every}" nexusFormat="true" fileName="{fileprefix}.trees" sortTranslationTable="true"><treeModel idref="treeModel"/>'
@@ -482,8 +483,9 @@ def summarize(clock_run: dict, tag: str = "") -> dict:
     rate_key = "ucld.mean" if "ucld.mean" in P else "clock.rate"
     ages = {k[4:-1]: v for k, v in P.items() if k.startswith("age(") and k != "age(root)"}
     stems = {k[5:-1]: v for k, v in P.items() if k.startswith("stem(")}
+    mono = {k[10:-1]: v["mean"] for k, v in P.items() if k.startswith("monophyly(")}              # the share of the samples in which the group is a clade
     return {"settings": s, "states": r["states"], "last_state": r.get("last_state"), "complete": r.get("last_state", 0) >= s.get("chain_length", 1), "root": P.get("age(root)"), "rate": P.get(rate_key),
-            "rate_param": rate_key, "groups": ages, "stems": stems, "partition": {k: P[k] for k in ("rate.apobec", "rate.other", "rate.ratio") if k in P}, "posterior": P.get("posterior"), "min_ess": min((v["ess"] for k, v in P.items() if k.startswith("age(") or k == rate_key), default=None)}
+            "rate_param": rate_key, "groups": ages, "stems": stems, "monophyly": mono, "partition": {k: P[k] for k in ("rate.apobec", "rate.other", "rate.ratio") if k in P}, "posterior": P.get("posterior"), "min_ess": min((v["ess"] for k, v in P.items() if k.startswith("age(") or k == rate_key), default=None)}
 
 
 def result(clock_run: dict, tag: str = "") -> dict:
