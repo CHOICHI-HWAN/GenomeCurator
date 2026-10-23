@@ -1,5 +1,7 @@
 # Finding candidate adaptive mutations: design notes
 
+> **Notice: results are under verification.** The analyses, results, plans and notes in this repository (including its commit history, changelog and design notes) are **exploratory working material from a verification process, not reliable results**. They may be wrong, incomplete or change without notice. Do not cite, reuse or build on them until they have been verified and published by the authors.
+
 **한국어:** [ADAPTIVE.ko.md](ADAPTIVE.ko.md)
 
 How the *adaptive candidates* of the mutation picture can be made more trustworthy: what is implemented, which approaches the literature uses, the gap between them, and what to do next (in priority order).

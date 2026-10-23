@@ -7,6 +7,8 @@
 
 [한국어](README.ko.md)
 
+> **Notice: results are under verification.** The analyses, results, plans and notes in this repository (including its commit history, changelog and design notes) are **exploratory working material from a verification process, not reliable results**. They may be wrong, incomplete or change without notice. Do not cite, reuse or build on them until they have been verified and published by the authors.
+
 A local web tool that collects **virus** genome metadata from [NCBI Virus](https://www.ncbi.nlm.nih.gov/labs/virus/), [BV-BRC](https://www.bv-brc.org/) and [Pathoplexus](https://pathoplexus.org/), compares what the three sources say about the same genome, and adds records to your database only after you have approved them. Package and command name: `genomecurator`.
 
 It is for viruses only. Bacteria differ in record structure (multi-contig assemblies) and sequence size, and will be a separate project.

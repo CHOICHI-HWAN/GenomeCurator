@@ -1,5 +1,7 @@
 # Changelog
 
+> **Notice: results are under verification.** The analyses, results, plans and notes in this repository (including its commit history, changelog and design notes) are **exploratory working material from a verification process, not reliable results**. They may be wrong, incomplete or change without notice. Do not cite, reuse or build on them until they have been verified and published by the authors.
+
 All notable changes to Virus Genome Metadata Curator (package `genomecurator`, formerly shown as "GenomeCurator") are recorded here. The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and versions follow [Semantic Versioning](https://semver.org/) (while the major version is 0, a minor bump may change behaviour;
 a patch bump only fixes bugs). How a release is made: [docs/RELEASING.md](docs/RELEASING.md).

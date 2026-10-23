@@ -1,5 +1,7 @@
 # 변경 이력 (Changelog)
 
+> **안내: 분석 결과는 검증 중입니다.** 이 저장소의 분석, 결과, 계획, 메모(커밋 이력, 변경 이력, 설계 문서 포함)는 **분석을 검증하는 과정의 탐색용 작업 자료이며 신뢰할 수 있는 결과가 아닙니다.** 틀렸거나 불완전할 수 있고 예고 없이 바뀝니다. 저자가 검증하고 발표하기 전에는 인용하거나 재사용하거나 근거로 삼지 마세요.
+
 Virus Genome Metadata Curator(패키지 `genomecurator`, 이전 표시 이름 "GenomeCurator")의 눈에 띄는 변경은 모두 여기에 기록합니다. 형식은 [Keep a Changelog](https://keepachangelog.com/ko/1.1.0/)를,
 버전은 [유의적 버전(SemVer)](https://semver.org/lang/ko/)을 따릅니다 (메이저가 0인 동안은 마이너 버전이 올라갈 때 동작이 바뀔 수 있고,
 패치 버전은 버그 수정만 합니다). 릴리스 방법은 [docs/RELEASING.md](docs/RELEASING.md).
