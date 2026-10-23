@@ -24,7 +24,7 @@ def group_members(meta: dict, country: str = "South Korea", private_only: bool =
         pt = geo.resolve(m["country"])
         if (pt["name"] if pt else m["country"]) != want:
             continue
-        if private_only and not str(s).startswith(("private:", "KDCA")) and not _is_private(s):
+        if private_only and not str(s).startswith("private:") and not _is_private(s):
             continue
         out.append(s)
     return sorted(out)

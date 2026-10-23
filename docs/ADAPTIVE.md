@@ -25,7 +25,7 @@ No study testing positive selection of clade Ib genes or recurrent mutations per
 | # | Evidence | Now |
 |---|---|---|
 | E1 | Persistence: seen in >= 3 months and still in the last 6 | implemented |
-| E2 | Recurrence: appears in several lineages that do not define it | replaced by E7 when a tree exists; lineage-name approximation only without a tree (on real data it counted ancestral mutations as recurring in 7 lineages) |
+| E2 | Recurrence: appears in several lineages that do not define it | replaced by E7 when a tree exists; lineage-name approximation only without a tree |
 | E3 | Geographic spread: >= 3 countries | implemented |
 | E4 | Protein change (non-synonymous / stop) | implemented |
 | E5 | Frequency: rare early, common now; share holds up; **country-fixed logistic slope** (`trend.py`) | implemented; cannot correct sampling that changes inside a country |
@@ -57,8 +57,8 @@ The present score (+2/+1/+1/+1/+1/+2) adds E1-E5 with weights that have no basis
 Keep **"adaptive candidate"** (never shorten to "adaptive mutation"); show per candidate which evidence is present and which is absent (E1-E10 ticks), the one-line score only as a sort aid; count linked groups as one; always show the sampling-bias warning; do not claim "first" in a paper or announcement until the predecessor tools (PyR0, MpoxRadar, VIRUS-MVP) have been read and compared.
 
 ## 7. To do (priority order)
-1. ~~E7 independent origins (tree-based)~~ - done. On run 5 (clade Ib) few mutations arose independently twice or more and no non-APOBEC mutation was both persistent, protein-changing and recurrent (the lineage proxy had counted ancestral mutations as recurrent in 7 lineages)
-2. ~~E8 neutral baseline with q values~~ - done (Poisson / negative-binomial tail); no mutation reaches q < 0.05 on run 5
+1. ~~E7 independent origins (tree-based)~~ - done (replaces the lineage proxy)
+2. ~~E8 neutral baseline with q values~~ - done (Poisson / negative-binomial tail)
 3. ~~E5 country-stratified growth regression~~ - done (per mutation, shown as "adjusted rise" in the candidate table)
 4. ~~Evidence-tick UI; score as a sort aid~~ - done (columns persistence, recurrence, above neutral, spread, protein, rise, adjusted rise)
 5. ~~Recovery test on simulated data in `./test.sh verify`~~ - done (`planted_adaptive`: planted five-origin mutations recovered 120/120, null false positives 0/12000)

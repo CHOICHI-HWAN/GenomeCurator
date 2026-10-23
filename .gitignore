@@ -4,3 +4,4 @@ __pycache__/
 .venv/
 superset/home/
 참조자료/
+private/
