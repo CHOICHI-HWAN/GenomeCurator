@@ -3602,3 +3602,36 @@ def test_co_travel_flags_mutations_on_exactly_the_same_genomes():
     row = lambda pos, alt, cs: {"pos": pos, "alt": alt, "first": "2025-01", "_cs": set(cs)}
     links = {(x["a"], x["b"]): x for x in mutgantt.co_travel([row(1, "A", range(5)), row(2, "C", range(5)), row(3, "G", range(4))])}
     assert links[("1A", "2C")]["identical"] and not links[("1A", "3G")]["identical"] and links[("1A", "3G")]["j"] == 0.8
+
+
+def test_focus_separates_a_groups_distinct_mutations_from_its_lineage_markers(monkeypatch):
+    from genomecurator import focus, insight, mutprofile, origins, variantcall
+    meta = {}
+    rows = []
+    def add(s, lin, country, muts):
+        meta[s] = {"clade": "Ib", "lineage": lin, "country": country, "date": "2026-06-01", "outbreak": ""}
+        for pos, alt in muts:
+            rows.append({"sample": s, "pos": str(pos), "ref": "A", "alt": alt, "gene": "G", "aa_change": "", "effect": "synonymous", "profile_of_interest": ""})
+    marker = [(10, "T"), (20, "C")]
+    for i in range(3):
+        add(f"LAB{i}", "L1", "South Korea", marker + [(30, "G")])                        # the group: lineage markers plus one mutation nobody else has
+    for i in range(40):
+        add(f"PV{100000 + i}", "L1", "Germany", marker + ([(40, "A")] if i < 20 else []))   # same lineage elsewhere: markers, half also carry 40A
+    for i in range(60):
+        add(f"PV{200000 + i}", "L2", "Uganda", [(50, "C")] + ([(10, "T")] if i < 2 else []))   # another lineage; 10T is rare there
+    monkeypatch.setattr(mutprofile, "_run_meta", lambda run: meta)
+    monkeypatch.setattr(mutprofile, "summary", lambda run: {"reference": "REF"})
+    monkeypatch.setattr(mutprofile, "good_samples", lambda run, mx: None)
+    monkeypatch.setattr(insight, "_mutations", lambda run, mx=None: rows)
+    monkeypatch.setattr(origins, "independent_origins", lambda run: {(30, "G"): {"events": 1, "settled": 1}})
+    monkeypatch.setattr(variantcall, "site_calls", lambda run, pos, alt, mx=None, **k: {"per_caller": {"mutprofile": {"called": 3, "judged": 103}}, "patterns": [{"all": True}]})
+    d = focus.analyze({}, "South Korea")
+    assert d["members"] == 3 and d["others"] == 100 and d["same_lineage_others"] == 40 and d["shared_by_all"] == 3 and d["no_test"]
+    by = {x["key"]: x for x in d["distinct"]}
+    assert by["30G"]["class"] == "only" and by["30G"]["origins"] == {"events": 1, "settled": 1} and by["30G"]["callers_agree"] is True
+    assert by["10T"]["class"] == "common" and by["20C"]["class"] == "common"          # markers: the lineage's own, carried by the others of it
+    assert d["distinct"][0]["key"] == "30G"                                           # the distinct one comes first
+    assert d["nearest"]["LAB0"][0]["distance"] == 1 and d["nearest"]["LAB0"][0]["lineage"] == "L1"   # a Germany genome with one more / fewer mutation: 40A absent -> {10T,20C} vs {10T,20C,30G}
+    priv = focus.group_members(meta, "South Korea", private_only=True)
+    assert priv == ["LAB0", "LAB1", "LAB2"] and focus.group_members(meta, "Germany", private_only=True) == []
+    assert "error" in focus.analyze({}, "Peru")

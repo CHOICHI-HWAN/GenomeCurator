@@ -1,0 +1,32 @@
+{% extends "base.html" %}{% block body %}
+{% set view='focus' %}{% include "_anav.html" %}
+<div class="pagehead"><h2>우리 유전체 <span class="mut" style="font-size:14px;font-weight:400">한 나라(또는 비공개) 유전체를 나머지와 견주어 보기</span></h2><span class="mut">{{ run.name }}</span></div>
+<div class="help">고른 그룹(기본: 대한민국의 유전체, 비공개만 고를 수도 있음)이 가진 변이를 <b>나머지 유전체</b>와, 그리고 <b>같은 lineage의 나머지</b>와 견줍니다. 그룹이 가진 변이마다 다른 유전체가 얼마나 가졌는지로 <b>다른 곳에 없음 / 드묾(2% 미만) / 같은 lineage에서 드묾 / 흔함</b>으로 나눕니다. lineage 자체의 변이는 그 lineage의 다른 유전체도 가지므로 “흔함”이고, <b>이 그룹을 구별하는 변이</b>는 앞의 세 부류입니다.</div>
+<div class="caut"><b>주의사항</b> 그룹이 10건 미만이면 통계 검정을 하지 않습니다(p값 없음) · 다른 곳에 없는 변이는 다른 곳에서 표집되지 않았을 뿐일 수 있습니다 · “가장 가까운 유전체”는 누가 시퀀싱했는지에 좌우되며 전파 경로가 아닙니다(그룹이 작고 표집이 유럽·우간다·콩고에 치우쳐 있음) · 비공개 유전체의 ID는 이 앱 안에서만 보이며 공개 산출물에 넣지 마세요.</div>
+<div class="card" style="font-size:13px"><div style="display:flex;gap:14px;flex-wrap:wrap;align-items:end">
+ <label>나라<br><select id="co" onchange="load()"><option>South Korea</option></select></label>
+ <label style="cursor:pointer"><input type="checkbox" id="pv" onchange="load()"> 비공개 유전체만</label>
+ <span class="mut" id="st"></span></div></div>
+<div id="root" style="margin-top:10px"><div class="card mut">계산하는 중…</div></div>
+<script>
+const RID={{ run.id }};
+const E=s=>String(s??'').replace(/[&<>"]/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c]));
+const CLS={only:['다른 곳에 없음','#b3261e'],rare:['드묾(<2%)','#d9822b'],rare_in_lineage:['같은 lineage에서 드묾','#c9a227'],common:['흔함(lineage 표지 등)','#6b7a8a']};
+let first=true;
+async function load(){const co=document.getElementById('co').value,pv=document.getElementById('pv').checked?1:0,root=document.getElementById('root');root.innerHTML='<div class="card mut">계산하는 중…</div>';
+ const D=await (await fetch('/api/analyses/'+RID+'/focus?country='+encodeURIComponent(co)+'&private='+pv)).json();
+ if(first&&D.countries){const sel=document.getElementById('co');sel.innerHTML=D.countries.map(c=>'<option'+(c===co?' selected':'')+'>'+E(c)+'</option>').join('');first=false}
+ if(D.error){root.innerHTML='<div class="card" style="color:var(--bad)">'+E(D.error)+'</div>';return}
+ let h='<div class="card"><b>'+E(D.country)+(D.private_only?' · 비공개':'')+'</b> 유전체 <b>'+D.members+'</b>건 · 비교 대상 나머지 '+D.others.toLocaleString()+'건(같은 lineage '+D.same_lineage_others+'건) · lineage '+Object.entries(D.lineages).map(([k,v])=>E(k)+' '+v).join(', ')+' · 참조 '+E(D.reference)
+  +'<div style="margin-top:6px">그룹의 모든 유전체가 함께 가진 변이 <b>'+D.shared_by_all+'</b>개 · 그룹을 구별하는 변이(다른 곳에 없음·드묾·같은 lineage에서 드묾) <b>'+((D.classes.only||0)+(D.classes.rare||0)+(D.classes.rare_in_lineage||0))+'</b>개 · 흔한 변이 '+(D.classes.common||0)+'개'+(D.no_test?' <span class="mut">(그룹이 작아 통계 검정은 하지 않았습니다)</span>':'')+'</div>'
+  +'<table style="margin-top:6px"><tr><th>유전체</th><th>lineage</th><th>clade</th><th>수집일</th><th>변이 수</th><th>APOBEC3형</th></tr>'+D.profile.map(p=>'<tr><td>'+E(p.id)+'</td><td>'+E(p.lineage)+'</td><td>'+E(p.clade)+'</td><td>'+E(p.date)+'</td><td>'+p.mutations+'</td><td>'+p.apobec+' ('+Math.round(100*p.apobec/Math.max(1,p.mutations))+'%)</td></tr>').join('')+'</table></div>';
+ h+='<h3>그룹을 구별하는 변이 <span class="mut" style="font-size:12.5px;font-weight:400">다른 곳에 없는 것부터 · 처음 '+D.distinct.length+'개 / 그룹이 가진 변이 '+D.n_distinct_total+'개</span></h3><div class="card" style="overflow:auto"><table><tr><th>변이</th><th>유전자</th><th>단백질</th><th></th><th>그룹</th><th>나머지 전체</th><th>같은 lineage 나머지</th><th>구분</th><th>호출 도구(이 실행·snippy·lofreq·Nextclade)</th><th>트리 독립 출현</th></tr>'
+  +D.distinct.map(x=>'<tr class="mrow" data-pos="'+x.pos+'" data-ref="'+x.ref+'" data-alt="'+E(x.alt)+'"><td><b>'+E(x.label)+'</b></td><td>'+E(x.gene||'intergenic')+'</td><td>'+E(x.aa||'-')+' <span class="mut">'+E(x.effect)+'</span></td><td>'+(x.apobec?'<span style="color:#d6249f" title="APOBEC3형">●</span>':'')+'</td><td>'+x.in_group+'/'+x.group_n+'</td><td>'+x.others.toLocaleString()+'/'+x.others_n.toLocaleString()+' ('+(100*x.others/Math.max(1,x.others_n)).toFixed(1)+'%)</td><td>'+x.same_lineage+'/'+x.same_lineage_n+'</td><td style="color:'+CLS[x.class][1]+';font-weight:600">'+CLS[x.class][0]+'</td><td>'+(x.callers?Object.values(x.callers).join(' · ')+(x.callers_agree?' <span style="color:var(--ok)">✓ 일치</span>':' <span style="color:var(--bad)">✗ 불일치</span>'):'-')+'</td><td>'+(x.origins?x.origins.events+'회(정착 '+x.origins.settled+')':'-')+'</td></tr>').join('')+'</table></div>';
+ if(D.lost.length)h+='<h3>같은 lineage의 대부분이 가졌는데 그룹에는 없는 변이</h3><div class="card"><table><tr><th>변이</th><th>유전자</th><th>같은 lineage 나머지</th><th>없는 그룹 유전체</th></tr>'+D.lost.map(x=>'<tr><td>'+E(x.label)+'</td><td>'+E(x.gene||'intergenic')+' '+E(x.aa||'')+'</td><td>'+x.same_lineage+'/'+x.same_lineage_n+'</td><td>'+x.missing_in.map(E).join(', ')+'</td></tr>').join('')+'</table><div class="mut" style="font-size:12px">없는 이유는 실제 부재이거나 그 위치가 N·미덮음이어서일 수 있습니다.</div></div>';
+ h+='<h3>가장 가까운 유전체 <span class="mut" style="font-size:12.5px;font-weight:400">변이 집합의 차이(대칭차)가 작은 순 · 전파 경로가 아닙니다</span></h3>';
+ h+=Object.entries(D.nearest).map(([id,l])=>'<div class="card"><b>'+E(id)+'</b><table style="margin-top:4px"><tr><th>유전체</th><th>차이(변이 수)</th><th>나라</th><th>lineage</th><th>수집일</th></tr>'+l.map(x=>'<tr><td>'+E(x.id)+'</td><td>'+x.distance+'</td><td>'+E(x.country)+'</td><td>'+E(x.lineage)+'</td><td>'+E(x.date)+'</td></tr>').join('')+'</table></div>').join('');
+ root.innerHTML=h}
+document.addEventListener('contextmenu',ev=>{const r=ev.target.closest&&ev.target.closest('.mrow');if(!r)return;gcMutMenu(ev,RID,{pos:+r.dataset.pos,ref:r.dataset.ref,alt:r.dataset.alt},'focus')});
+load();
+</script>
+{% endblock %}
