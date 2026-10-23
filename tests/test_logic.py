@@ -3661,3 +3661,39 @@ def test_class_specific_root_to_tip_finds_the_clock_in_apobec3_changes(monkeypat
     r = clockclass.regress(np.array([1.0, 2.0, 3.0, 4.0, 5.0, 6.0]), np.array([2.0, 4.0, 6.0, 8.0, 10.0, 12.0]))
     assert abs(r["slope"] - 2.0) < 1e-9 and abs(r["zero_at"]) < 1e-9 and r["r2"] > 0.999
     assert clockclass.regress(np.array([1.0, 2.0]), np.array([1.0, 2.0]))["slope"] is None   # too few tips
+
+
+def test_clades_tsv_for_lineages_and_its_replay(monkeypatch, tmp_path):
+    from genomecurator import cladedefs, lineages, mutprofile, nextstrain
+    defs = {"sh9": {"": {"name": "", "parent": "", "clade": "Ib", "designation_date": "", "snps": [(100, "T")]},
+                    "A": {"name": "A", "parent": "None", "clade": "Ib", "designation_date": "", "snps": [(100, "T"), (200, "C")]},
+                    "A.1": {"name": "A.1", "parent": "A", "clade": "Ib", "designation_date": "", "snps": [(100, "T"), (200, "C"), (300, "G")]},
+                    "A.2": {"name": "A.2", "parent": "A", "clade": "Ib", "designation_date": "", "snps": [(100, "T"), (200, "C"), (400, "A")]}}}
+    monkeypatch.setattr(lineages, "definitions", lambda: defs)
+    monkeypatch.setattr(lineages, "commit", lambda: "abc1234")
+    s = cladedefs.own_sites("sh9")
+    assert s["A"]["parent"] == "" and s["A.1"]["parent"] == "A" and s["A.1"]["sites"] == [(300, "G")] and s["A"]["sites"] == [(200, "C")] and s[""]["sites"] == [(100, "T")]   # each lineage lists only what it introduced
+    base = tmp_path / "clades.tsv"
+    base.write_text("clade\tgene\tsite\talt\nclade Ib\tnuc\t5\tT\n", encoding="utf-8")
+    # run reference coordinates = NC coordinates + 10 for every site except 300 (not alignable)
+    monkeypatch.setattr(cladedefs, "to_run_coordinates", lambda run: {p: p + 10 for p in (100, 200, 400)})
+    monkeypatch.setattr(mutprofile, "summary", lambda run: {"reference": "REF"})
+    b = cladedefs.build({}, "sh9", base)
+    t = b["text"]
+    assert "sh9\tclade\tclade Ib\nsh9\tnuc\t110\tT" in t and "A\tclade\tsh9\nA\tnuc\t210\tC" in t and "A.2\tclade\tA\nA.2\tnuc\t410\tA" in t and "A.1\tclade\tA\n" in t
+    assert b["lineages"] == 3 and b["sites"] == 3 and b["unmapped"] == [("A.1", 300)] and t.startswith("clade\tgene\tsite\talt\nclade Ib")             # the unmappable site is reported, the build's own rows are kept
+
+    # replay of the rule on SNV calls: genomes with the sites of A.1 / A.2 / only A, one genome with an unreadable root site (N), one lacking a site of its parent
+    monkeypatch.setattr(cladedefs, "to_run_coordinates", lambda run: {p: p + 10 for p in (100, 200, 300, 400)})
+    refseq = "C" * 500
+    monkeypatch.setattr(mutprofile, "reference_by_name", lambda ref: (tmp_path / "ref.fa", None))
+    monkeypatch.setattr(mutprofile, "read_fasta", lambda fa: ("REF", refseq))
+    monkeypatch.setattr(mutprofile, "run_itr", lambda run: None)
+    muts = {"g1": [(110, "T"), (210, "C"), (310, "G")], "g2": [(110, "T"), (210, "C"), (410, "A")], "g3": [(110, "T"), (210, "C")], "g4": [(210, "C"), (310, "G")], "g5": [(110, "T"), (210, "C"), (310, "G")]}
+    rows = [{"sample": g, "pos": str(p), "ref": "A", "alt": a} for g, v in muts.items() for p, a in v]
+    monkeypatch.setattr(mutprofile, "_load_mutations", lambda run: rows)
+    monkeypatch.setattr(mutprofile, "_run_meta", lambda run: {"g1": {"lineage": "A.1", "outbreak": "sh9"}, "g2": {"lineage": "A.2", "outbreak": "sh9"}, "g3": {"lineage": "A", "outbreak": "sh9"},
+                                                                 "g4": {"lineage": "A.1", "outbreak": "sh9"}, "g5": {"lineage": "A.1", "outbreak": "sh9"}})
+    monkeypatch.setattr(lineages, "nc_unknown", lambda run: {"g5": [(100, 100)]})                                          # g5: the root site is N: it counts neither for nor against
+    v = cladedefs.validate({}, "sh9")
+    assert v["genomes"] == 5 and v["same"] == 4 and v["pairs"] == {"A.1 -> (root)": 1}                                    # g4 lacks the root site (it is not N): the replay does not reach A.1; g5 has an N at the root site and still reaches A.1

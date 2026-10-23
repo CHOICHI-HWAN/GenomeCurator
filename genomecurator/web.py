@@ -6,7 +6,7 @@ from fastapi import FastAPI, Form, Request
 from fastapi.responses import FileResponse, HTMLResponse, JSONResponse, RedirectResponse, Response, StreamingResponse
 from fastapi.templating import Jinja2Templates
 
-from . import beastprep, clock, clockclass, continents, focus, hyphyexport, intake, lineagetree, mutgantt, nextcladecall, pipeline, support, variantcall, variantflow, __version__, analysis, completeness, datasets, exclusions, export, cooccur, geo, heatmap, vocab, insight, lineages, mutprofile, nextstrain, novel, outbreak, pathoplexus, private, qc, squirrel, config, curate, jobs, log
+from . import beastprep, cladedefs, clock, clockclass, continents, focus, hyphyexport, intake, lineagetree, mutgantt, nextcladecall, pipeline, support, variantcall, variantflow, __version__, analysis, completeness, datasets, exclusions, export, cooccur, geo, heatmap, vocab, insight, lineages, mutprofile, nextstrain, novel, outbreak, pathoplexus, private, qc, squirrel, config, curate, jobs, log
 from .db import audit_now, connect
 
 _log = log.get("web")
@@ -1015,6 +1015,24 @@ def create_app(scheduler: bool = True) -> FastAPI:
         except (ValueError, RuntimeError) as e:
             return JSONResponse({"error": str(e)}, 400)
         return Response(data, media_type="application/zip", headers={"Content-Disposition": f'attachment; filename="hyphy-input-run{rid}.zip"'})
+
+    @app.get("/api/analyses/{rid}/clades_tsv")
+    def api_analysis_clades_tsv(rid: int, download: int = 0, validate: int = 0):
+        """A Nextstrain clades.tsv for the lineages of clade Ib (mpxv-lineages sh2023) in the run's reference coordinates; `validate=1` replays augur's rule on the run's SNV calls and compares with the lineages of the genome table."""
+        r = nextstrain.get_run(rid)
+        if not r or r["tool"] != "mutprofile" or r["status"] != "done":
+            return JSONResponse({"error": "finished mutation-profile run not found"}, 404)
+        try:
+            b = cladedefs.build(r)
+        except (ValueError, RuntimeError, OSError) as e:
+            return JSONResponse({"error": str(e)}, 400)
+        if download:
+            return Response(b["text"], media_type="text/tab-separated-values", headers={"Content-Disposition": 'attachment; filename="clades.tsv"'})
+        out = {k: v for k, v in b.items() if k != "text"}
+        out["preview"] = b["text"].split("\n# Lineages")[-1][:3000]
+        if validate:
+            out["validation"] = cladedefs.validate(r)
+        return out
 
     @app.get("/analysis/{rid}/focus")
     def analysis_focus_page(request: Request, rid: int):

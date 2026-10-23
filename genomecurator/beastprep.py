@@ -60,6 +60,12 @@ def parse_settings(raw: dict | None) -> dict:
         raise ValueError("체인 길이는 10,000 이상, 표본 수는 100~100,000이어야 합니다.")
     if out["clock"] not in CLOCKS or out["tree_prior"] not in PRIORS:
         raise ValueError(f"시계는 {', '.join(CLOCKS)}, 트리 사전분포는 {', '.join(PRIORS)} 중 하나입니다.")
+    out["tag"] = re.sub(r"[^A-Za-z0-9_.\-]", "_", str(s.get("tag") or ""))[:40]
+    out["tip_names"] = [str(x) for x in (s.get("tip_names") or [])]            # an explicit set of tips instead of the balanced subsample
+    out["groups"] = {str(k): [str(x) for x in v] for k, v in (s.get("groups") or {}).items()}   # taxon sets whose MRCA age is logged (with tip_names)
+    out["stem_groups"] = [str(x) for x in (s.get("stem_groups") or [])]        # groups whose stem age (the split from the sister lineage) is logged too
+    rp = s.get("rate_prior")
+    out["rate_prior"] = [float(rp[0]), float(rp[1])] if rp else None            # [mean, sd] of a log-normal prior on the clock rate, in log space
     return out
 
 
@@ -134,6 +140,8 @@ def build_xml(seqs: dict[str, str], dates: dict[str, float], groups: dict[str, l
     w('\t<tmrcaStatistic id="age(root)" absolute="true"><treeModel idref="treeModel"/><mrca><taxa idref="taxa"/></mrca></tmrcaStatistic>')
     for g in groups:
         w(f'\t<tmrcaStatistic id="age({_safe(g)})" absolute="true"><treeModel idref="treeModel"/><mrca><taxa idref="group.{_safe(g)}"/></mrca></tmrcaStatistic>')
+        if g in s.get("stem_groups", []):
+            w(f'\t<tmrcaStatistic id="stem({_safe(g)})" absolute="true" includeStem="true"><treeModel idref="treeModel"/><mrca><taxa idref="group.{_safe(g)}"/></mrca></tmrcaStatistic>')
     w('\t<coalescentLikelihood id="coalescent"><model><' + ("constantSize" if s["tree_prior"] == "constant" else "exponentialGrowth") + ' idref="demographic"/></model><populationTree><treeModel idref="treeModel"/></populationTree></coalescentLikelihood>')
     if s["clock"] == "strict":
         w(f'\t<strictClockBranchRates id="branchRates"><rate><parameter id="clock.rate" value="{rate0:.4e}" lower="0.0"/></rate></strictClockBranchRates>')
@@ -180,7 +188,9 @@ def build_xml(seqs: dict[str, str], dates: dict[str, float], groups: dict[str, l
     w('\t\t\t<exponentialPrior mean="0.5" offset="0.0"><parameter idref="alpha"/></exponentialPrior>')
     if not fixed_freq:
         w('\t\t\t<dirichletPrior alpha="1.0" sumsTo="1.0"><parameter idref="frequencies"/></dirichletPrior>')
-    if proper:
+    if s.get("rate_prior"):
+        w(f'\t\t\t<logNormalPrior mean="{s["rate_prior"][0]}" stdev="{s["rate_prior"][1]}" offset="0.0" meanInRealSpace="false"><parameter idref="{rate_param}"/></logNormalPrior>')      # an informative prior on the rate (see the settings)
+    elif proper:
         w(f'\t\t\t<logNormalPrior mean="-11.5" stdev="2.0" offset="0.0" meanInRealSpace="false"><parameter idref="{rate_param}"/></logNormalPrior>')        # median 1e-5, four orders of magnitude wide
     else:
         w(f'\t\t\t<gammaPrior shape="0.001" scale="1000.0" offset="0.0"><parameter idref="{rate_param}"/></gammaPrior>')
@@ -198,7 +208,7 @@ def build_xml(seqs: dict[str, str], dates: dict[str, float], groups: dict[str, l
     w(f'\t\t<log id="screenLog" logEvery="{every * 10}"><column label="Posterior" dp="4" width="12"><posterior idref="posterior"/></column><column label="Prior" dp="4" width="12"><prior idref="prior"/></column>'
       '<column label="Likelihood" dp="4" width="12"><likelihood idref="likelihood"/></column><column label="rootAge" sf="6" width="12"><tmrcaStatistic idref="age(root)"/></column></log>')
     w(f'\t\t<log id="fileLog" logEvery="{every}" fileName="{fileprefix}.log" overwrite="false"><posterior idref="posterior"/><prior idref="prior"/><likelihood idref="likelihood"/>'
-      '<parameter idref="treeModel.rootHeight"/><tmrcaStatistic idref="age(root)"/>' + "".join(f'<tmrcaStatistic idref="age({_safe(g)})"/>' for g in groups) + '<treeLengthStatistic idref="treeLength"/>'
+      '<parameter idref="treeModel.rootHeight"/><tmrcaStatistic idref="age(root)"/>' + "".join(f'<tmrcaStatistic idref="age({_safe(g)})"/>' + (f'<tmrcaStatistic idref="stem({_safe(g)})"/>' if g in s.get("stem_groups", []) else "") for g in groups) + '<treeLengthStatistic idref="treeLength"/>'
       '<parameter idref="demographic.popSize"/>' + ('<parameter idref="demographic.growthRate"/>' if s["tree_prior"] == "exponential" else "") + '<parameter idref="kappa"/><parameter idref="alpha"/>'
       f'<parameter idref="{rate_param}"/>' + ('<parameter idref="ucld.stdev"/>' if s["clock"] == "relaxed" else "") + '<rateStatistic idref="meanRate"/><treeDataLikelihood idref="treeLikelihood"/><coalescentLikelihood idref="coalescent"/></log>')
     w(f'\t\t<logTree id="treeFileLog" logEvery="{every}" nexusFormat="true" fileName="{fileprefix}.trees" sortTranslationTable="true"><treeModel idref="treeModel"/>'
@@ -244,8 +254,9 @@ def build_xml(seqs: dict[str, str], dates: dict[str, float], groups: dict[str, l
 
 
 # ------------------------------------------------------------------------------------------------ package, run, results
-def folder(clock_run: dict) -> Path:
-    return Path(clock_run["run_dir"]) / "beast"
+def folder(clock_run: dict, tag: str = "") -> Path:
+    """`<clock run>/beast/`, or `beast/<tag>/` for a further analysis of the same clock run (e.g. one lineage with its own tips)."""
+    return Path(clock_run["run_dir"]) / "beast" / (_safe(tag) if tag else "")
 
 
 def prepare(clock_run: dict, settings: dict | None = None, progress=None) -> dict:
@@ -259,7 +270,14 @@ def prepare(clock_run: dict, settings: dict | None = None, progress=None) -> dic
     if not src or src["tool"] != "squirrel":
         raise ValueError("BEAST 패키지는 Squirrel 정렬이 필요합니다. 분자시계를 Squirrel 트리로 실행하세요.")
     p(5, "표본을 고르는 중…")
-    chosen = choose_tips(S["tips"], s["n_tips"], s["seed"])
+    if s["tip_names"]:
+        names = set(s["tip_names"])
+        chosen = sorted((t for t in S["tips"] if t["name"] in names and t["precision"] == "day"), key=lambda t: t["date"])
+        missing = names - {t["name"] for t in chosen}
+        if missing:
+            raise ValueError(f"고른 유전체 중 이 분자시계 실행에 없거나 날짜가 일 단위가 아닌 것이 있습니다: {', '.join(sorted(missing)[:8])}")
+    else:
+        chosen = choose_tips(S["tips"], s["n_tips"], s["seed"])
     if len(chosen) < 10:
         raise ValueError(f"BEAST에 쓸 수 있는 유전체(날짜가 일 단위이고 이상치가 아님)가 {len(chosen)}개뿐입니다.")
     want = {t["name"] for t in chosen}
@@ -276,7 +294,10 @@ def prepare(clock_run: dict, settings: dict | None = None, progress=None) -> dic
             if val:
                 groups.setdefault(f"{kind}.{val}", []).append(t["name"])
     groups = {g: m for g, m in groups.items() if 5 <= len(m) < len(chosen)}
-    d = folder(clock_run)
+    if s["tip_names"]:
+        groups = {g: [n for n in m if n in seqs] for g, m in s["groups"].items()}
+        groups = {g: m for g, m in groups.items() if len(m) >= 2}
+    d = folder(clock_run, s["tag"])
     d.mkdir(parents=True, exist_ok=True)
     rate0 = (S.get("time") or {}).get("rate") or (S.get("clock") or {}).get("rate") or 1e-5
     p(40, "XML을 쓰는 중…")
@@ -364,7 +385,7 @@ def run(clock_run: dict, settings: dict | None = None, progress=None, threads: i
     p = progress or (lambda *a: None)
     info = prepare(clock_run, settings, lambda pct, m="": p(pct * 0.02, m))
     s = info["settings"]
-    d = folder(clock_run)
+    d = folder(clock_run, s["tag"])
     for f in ("beast.log", "beast.trees", "beast.ops", "beast.screen.log", "summary.json"):
         (d / f).unlink(missing_ok=True)
     pre = env_prefix()
@@ -394,15 +415,15 @@ def run(clock_run: dict, settings: dict | None = None, progress=None, threads: i
     if proc.returncode != 0:
         tail = "".join(open(d / "beast.screen.log", encoding="utf-8").readlines()[-8:])
         raise RuntimeError(f"BEAST가 실패했습니다 (종료 코드 {proc.returncode}): {tail.strip()[-400:]}")
-    res = summarize(clock_run)
+    res = summarize(clock_run, s["tag"])
     res["seconds"] = round(time.time() - t0)
     (d / "summary.json").write_text(json.dumps(res, ensure_ascii=False), encoding="utf-8")
     p(100, "BEAST 완료")
     return res
 
 
-def summarize(clock_run: dict) -> dict:
-    d = folder(clock_run)
+def summarize(clock_run: dict, tag: str = "") -> dict:
+    d = folder(clock_run, tag)
     lg = d / "beast.log"
     if not lg.exists():
         return {}
@@ -411,20 +432,21 @@ def summarize(clock_run: dict) -> dict:
     P = r["params"]
     rate_key = "ucld.mean" if "ucld.mean" in P else "clock.rate"
     ages = {k[4:-1]: v for k, v in P.items() if k.startswith("age(") and k != "age(root)"}
+    stems = {k[5:-1]: v for k, v in P.items() if k.startswith("stem(")}
     return {"settings": s, "states": r["states"], "last_state": r.get("last_state"), "complete": r.get("last_state", 0) >= s.get("chain_length", 1), "root": P.get("age(root)"), "rate": P.get(rate_key),
-            "rate_param": rate_key, "groups": ages, "posterior": P.get("posterior"), "min_ess": min((v["ess"] for k, v in P.items() if k.startswith("age(") or k == rate_key), default=None)}
+            "rate_param": rate_key, "groups": ages, "stems": stems, "posterior": P.get("posterior"), "min_ess": min((v["ess"] for k, v in P.items() if k.startswith("age(") or k == rate_key), default=None)}
 
 
-def result(clock_run: dict) -> dict:
+def result(clock_run: dict, tag: str = "") -> dict:
     """What the page shows: the saved summary, or - while a chain runs - the summary of the log so far."""
-    d = folder(clock_run)
+    d = folder(clock_run, tag)
     f = d / "summary.json"
     if f.exists():
         try:
             return {**json.loads(f.read_text(encoding="utf-8")), "running": False}
         except ValueError:
             pass
-    s = summarize(clock_run) if (d / "beast.log").exists() else {}
+    s = summarize(clock_run, tag) if (d / "beast.log").exists() else {}
     return {**s, "running": bool(s)} if s else {}
 
 
@@ -434,9 +456,9 @@ def run_recorded(clock_run: dict, settings: dict | None = None, progress=None) -
     ds = datasets.get(clock_run["dataset_id"])
     st = status()
     s = parse_settings(settings)
-    d = folder(clock_run)
+    d = folder(clock_run, s["tag"])
     d.mkdir(parents=True, exist_ok=True)
-    name = f"{clock_run['name']}-beast"
+    name = f"{clock_run['name']}-beast" + (f"-{s['tag']}" if s["tag"] else "")
     taken = {r["name"] for r in nextstrain.list_runs(limit=100000)}
     base, k = name, 1
     while name in taken:
