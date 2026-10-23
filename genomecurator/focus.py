@@ -5,7 +5,7 @@ For a group (default: the genomes of one country, optionally only the private on
 * **distinct mutations**: every mutation carried by the group, with how often the others carry it - overall and among the others of the **same lineage** (what a lineage's own mutations do not explain) -
   and a class: carried by no other genome / by under 2% of them / by under 2% of the others of the same lineage / common. Mutations that nearly all the others of the group's lineages carry but the
   group lacks are listed as well (a lost marker or missing data);
-* **nearest relatives**: for each group genome the genomes with the fewest differences in mutations (symmetric difference of the mutation sets), with country, lineage and date;
+* **nearest relatives**: for each group genome the genomes with the fewest differences in mutations (symmetric difference of the mutation sets), with country, lineage and date, and how many genomes are *equally* near (a tie: the order among them, by date, says nothing);
 * for the few most distinct mutations, whether the callers (the run's alignment, snippy, lofreq, Nextclade) agree, and how often the tree says the mutation arose independently.
 
 Limits: a group of three genomes cannot support a statistical test (no p value is given for groups under ten); "nearest" depends on who was sequenced and is not a transmission route; a mutation seen
@@ -78,10 +78,15 @@ def analyze(run: dict, country: str = "South Korea", private_only: bool = False,
                 if miss:
                     x = info[k]
                     lost.append({"label": f"{x['ref']}{k[0]}{k[1]}", "gene": x["gene"], "aa": x["aa_change"], "missing_in": miss, "same_lineage": sc, "same_lineage_n": len(same)})
-    near = {}
+    near, ties = {}, {}
     for s in members:
         ds = sorted(((len(gm[s] ^ gm[o]), o) for o in O), key=lambda t: (t[0], str(meta[t[1]]["date"])))[:8]
         near[s] = [{"id": o, "distance": d, "country": meta[o]["country"], "lineage": meta[o]["lineage"], "date": meta[o]["date"]} for d, o in ds]
+        alld = [(len(gm[s] ^ gm[o]), o) for o in O]
+        best = min((d for d, _o in alld), default=None)
+        tied = [o for d, o in alld if d == best]
+        ties[s] = {"distance": best, "n": len(tied), "countries": dict(Counter((geo.resolve(meta[o]["country"]) or {}).get("name") or meta[o]["country"] for o in tied).most_common(8)),
+                   "first": min((str(meta[o]["date"]) for o in tied), default="")}
     tree = origins.independent_origins(run)
     for r in d_rows[:12]:
         if r["class"] in ("only", "rare", "rare_in_lineage"):
@@ -96,7 +101,7 @@ def analyze(run: dict, country: str = "South Korea", private_only: bool = False,
                 r["origins"] = {"events": t["events"], "settled": t["settled"]}
     n_by = Counter(r["class"] for r in d_rows)
     return {"country": country, "private_only": private_only, "members": len(members), "others": len(O), "same_lineage_others": len(same), "lineages": dict(glin), "profile": per,
-            "shared_by_all": len(shared), "classes": dict(n_by), "distinct": d_rows[:top], "n_distinct_total": len(d_rows), "lost": lost[:20], "nearest": near, "countries": _countries(meta),
+            "shared_by_all": len(shared), "classes": dict(n_by), "distinct": d_rows[:top], "n_distinct_total": len(d_rows), "lost": lost[:20], "nearest": near, "nearest_ties": ties, "countries": _countries(meta),
             "no_test": len(members) < MIN_FOR_TEST, "reference": mutprofile.summary(run).get("reference", "")}
 
 
