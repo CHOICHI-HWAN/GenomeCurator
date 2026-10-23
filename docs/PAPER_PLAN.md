@@ -1,6 +1,6 @@
 # Paper analysis plan: the first clade Ib genomes from South Korea (draft)
 
-**한국어:** [PAPER_PLAN.ko.md](PAPER_PLAN.ko.md)
+**한국어:** [PAPER_PLAN.ko.md](PAPER_PLAN.ko.md) · results so far: [PAPER_RESULTS.md](PAPER_RESULTS.md)
 
 Aim: report the first clade Ib genomes from Korea (three private genomes, lineage A.4.1, collected 2026-06-09 to 2026-07-10) and show (1) what is characteristic about them, (2) where and when they came from in genomic-epidemiology terms, (3) distinctive and notable mutations **with the evidence**. This document separates what is done, what is not, and what can and cannot be claimed. Figures are from this app's runs (clade Ib dataset, mutation-profile run 5, clock run 11); reproduce them from the same inputs before they go into a manuscript.
 
@@ -18,7 +18,7 @@ Aim: report the first clade Ib genomes from Korea (three private genomes, lineag
 | B5 | APOBEC3 concern | done | the temporal signal comes from APOBEC3-type changes (R^2 0.85); the others (1.4 per tip) show none (R^2 0.07) |
 | C1 | Introduction time | partial | rough: the Korean lineage lies inside the G156869A subclade, so it split off after that subclade arose (first sample 2026-02) and before the first Korean sample (2026-06-09): about early 2026 to June 2026. The earlier "late 2025 to April 2026" estimate rested on mistaking Belgium April for the nearest relative and is withdrawn |
 | C2 | Novel / adaptive mutations | partial | no strong candidate (few mutations with two or more independent origins; none above the neutral baseline) |
-| D1 | Public Korean IIb (166 genomes) | not done | sequences not downloaded |
+| D1 | Public Korean IIb (166 genomes) | on hold | 422 sequences (Korean IIb 166 + Asian IIb + C.1) were downloaded and QC, alignment, mutation profile and clock are done; the Nextstrain step failed and the focus is now clade Ib only (dataset 2) |
 
 ## 2. What can and cannot be claimed
 **Can**: the three genomes are Ib / A.4.1 with an identical profile and all A.4.1 markers; the only distinguishing mutation is G173208A, an independently recurrent APOBEC3-favoured change; the clock of human transmission is carried by APOBEC3-type changes (4.6 per year, R^2 0.85), so the estimated tMRCAs date **the start of APOBEC3 accumulation, i.e. sustained human transmission**; Ib root early 2023 (2022.7-2023.4), A.4.1 early 2025 (2024.9-2025.5); the Korean genomes lie inside the G156869A A.4.1 subclade (mostly Portugal and Germany, first sampled 2026-02) with one extra mutation.
@@ -30,7 +30,7 @@ Aim: report the first clade Ib genomes from Korea (three private genomes, lineag
 - **P3 Stability of rate and tMRCA.** Read the four-model comparison with doubled paths; repeat the chosen model with other seeds (ESS >= 200, longer chains for low-ESS parameters); vary the sample (100 / 150 / 300); one unit system (per site per year and per genome per year); test whether TreeTime's older root (2020.4) comes from the mixed clock by rerunning it on APOBEC3-type changes.
 - **P4 Evidence for characteristic / novel mutations.** One table of the 103 mutations (gene, amino-acid change, APOBEC3 or not, lineage marker or not; public tables use "Korean genome A/B/C", not private ids). G173208A: four callers, raw reads if available, context, the German A.2 genome (independent recurrence: two tree origins, absent in the other 275 A.4.1). Compare with the mpxv-lineages A.4.1 definition (all present / extra / missing). To call a mutation novel: search all public data (all clades), confirm with another caller, exclude sequencing error (resequencing).
 - **P5 Sequence quality and integrity (before writing).** N fraction, covered length (195.6 kb vs 196.4 kb), ITR handling, Squirrel / Nextclade / CheckV QC in one table; whether the identical profile of the three is a real transmission cluster (epidemiological links) or a duplication in processing; distinguish "absent" from "unknown" at masked sites.
-- **P6 Context (optional).** Public Korean IIb (166 genomes, 2022-08 to 2025-07, mostly C.1; about 33 MB) via *Get FASTA* after confirming count and size; for introduction and discussion only.
+- **P6 Context (on hold: only clade Ib for now).** Public Korean IIb (166 genomes, 2022-08 to 2025-07, mostly C.1; about 33 MB) via *Get FASTA* after confirming count and size; for introduction and discussion only.
 - **P7 Extras.** Site-wise selection tests outside the app on the HyPhy export; read PMC10256197 and the other Ib genomic-epidemiology reports in full before citing; cite only what has been read.
 
 ## 4. Figures and tables (draft)
