@@ -3697,3 +3697,27 @@ def test_clades_tsv_for_lineages_and_its_replay(monkeypatch, tmp_path):
     monkeypatch.setattr(lineages, "nc_unknown", lambda run: {"g5": [(100, 100)]})                                          # g5: the root site is N: it counts neither for nor against
     v = cladedefs.validate({}, "sh9")
     assert v["genomes"] == 5 and v["same"] == 4 and v["pairs"] == {"A.1 -> (root)": 1}                                    # g4 lacks the root site (it is not N): the replay does not reach A.1; g5 has an N at the root site and still reaches A.1
+
+
+def test_fix_auspice_puts_the_ib_lineage_labels_right(tmp_path, monkeypatch):
+    import json
+    from genomecurator import cladedefs, lineages
+    monkeypatch.setattr(lineages, "definitions", lambda: {"sh2023": {"": {"name": "", "parent": "", "clade": "Ib", "designation_date": "", "snps": []},
+                                                                    "A": {"name": "A", "parent": "None", "clade": "Ib", "designation_date": "", "snps": []},
+                                                                    "A.4": {"name": "A.4", "parent": "A", "clade": "Ib", "designation_date": "", "snps": []}}})
+    monkeypatch.setattr(lineages, "defining_snps", lambda ob, n: [])
+    tip = lambda n: {"name": n, "node_attrs": {"clade_membership": {"value": "IIb"}}}
+    tree = {"name": "root", "node_attrs": {"clade_membership": {"value": "IIb"}}, "branch_attrs": {"labels": {"clade": "Ib"}},
+            "children": [{"name": "n1", "branch_attrs": {"labels": {"clade": "sh2017/A"}}, "node_attrs": {"clade_membership": {"value": "IIb"}},
+                          "children": [tip("a1"), {"name": "n2", "branch_attrs": {"labels": {"clade": "A.4"}}, "node_attrs": {"clade_membership": {"value": "IIb"}}, "children": [tip("a2"), tip("a3")]}]}, tip("x")]}
+    f = tmp_path / "run.json"
+    f.write_text(json.dumps({"meta": {"colorings": [{"key": "clade_membership", "type": "categorical"}]}, "tree": tree}), encoding="utf-8")
+    out = cladedefs.fix_auspice(f)
+    d = json.loads(f.read_text(encoding="utf-8"))
+    assert out["lineages"] == {"A": 1, "A.4": 2} and (tmp_path / "run.orig.json").exists()
+    n1 = d["tree"]["children"][0]
+    assert n1["branch_attrs"]["labels"]["clade"] == "sh2023/A" and n1["node_attrs"]["lineage"]["value"] == "A" and n1["node_attrs"]["clade_membership"]["value"] == "Ib" and n1["node_attrs"]["outbreak"]["value"] == "sh2023"
+    a3 = n1["children"][1]["children"][1]
+    assert a3["node_attrs"]["lineage"]["value"] == "A.4" and a3["node_attrs"]["clade_membership"]["value"] == "Ib"
+    assert "lineage" not in d["tree"]["children"][1]["node_attrs"] and d["tree"]["children"][1]["node_attrs"]["clade_membership"]["value"] == "IIb"   # a tip outside the lineages is left alone
+    assert [c["key"] for c in d["meta"]["colorings"]] == ["clade_membership", "lineage"]

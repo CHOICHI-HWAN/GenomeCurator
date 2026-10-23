@@ -137,3 +137,47 @@ def validate(run: dict, outbreak: str = OUTBREAK) -> dict:
     total = sum(res.values())
     same = sum(v for (a, b), v in res.items() if a == b)
     return {"genomes": total, "same": same, "share": same / total if total else None, "pairs": {f"{a} -> {b or '(root)'}": v for (a, b), v in res.most_common() if a != b}, "examples": bad}
+
+
+def fix_auspice(path: Path, outbreak: str = OUTBREAK, clade: str = "Ib") -> dict:
+    """Make an Auspice file of a build run with the lineage `clades.tsv` read correctly. The workflow's `clades_renaming.py` knows only the hMPXV-1 lineage names: any name that is not clade I / Ia /
+    sh2024 / outgroup is taken as an `sh2017` lineage of clade IIb, so the Ib lineages come out as `IIb` (clade_membership) with the branch label `sh2017/<lineage>`. This reads the branch labels (the
+    lineage each branch starts), gives every node the lineage of its nearest labelled ancestor, and sets for the nodes of the outbreak's lineages `clade_membership` = Ib, `outbreak` = sh2023, `lineage` =
+    the lineage, with a `lineage` colouring and the branch label `sh2023/<lineage>`. The original file is kept as `<name>.orig.json`. -> {"nodes": changed nodes, "tips": tips, "lineages": {lineage: tips}}"""
+    import json
+    import sys
+    path = Path(path)
+    data = json.loads(path.read_text(encoding="utf-8"))
+    names = {n for n in own_sites(outbreak) if n}
+    sys.setrecursionlimit(max(sys.getrecursionlimit(), 20000))
+    stats, tips = Counter(), [0, 0]
+
+    def walk(node, cur):
+        lab = (node.get("branch_attrs", {}).get("labels") or {}).get("clade")
+        name = (lab or "").split("/")[-1]
+        if name in names:
+            cur = name
+            node.setdefault("branch_attrs", {}).setdefault("labels", {})["clade"] = f"{outbreak}/{name}"
+        elif lab:
+            cur = None if lab in ("Ib", "IIb", "unassigned") else cur
+        kids = node.get("children") or []
+        if cur:
+            na = node.setdefault("node_attrs", {})
+            na["clade_membership"] = {"value": clade}
+            na["outbreak"] = {"value": outbreak}
+            na["lineage"] = {"value": cur}
+            tips[0] += 1
+            if not kids:
+                stats[cur] += 1
+                tips[1] += 1
+        for c in kids:
+            walk(c, cur)
+    walk(data["tree"], None)
+    cols = data.setdefault("meta", {}).setdefault("colorings", [])
+    if not any(c.get("key") == "lineage" for c in cols):
+        cols.insert(1, {"key": "lineage", "title": "Lineage", "type": "categorical"})
+    orig = path.with_name(path.stem + ".orig.json")
+    if not orig.exists():
+        orig.write_bytes(path.read_bytes())
+    path.write_text(json.dumps(data, ensure_ascii=False), encoding="utf-8")
+    return {"nodes": tips[0], "tips": tips[1], "lineages": dict(stats)}

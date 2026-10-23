@@ -452,6 +452,10 @@ def run(ds: dict, runtime: str = "ambient", cores: int | None = None, force: boo
         p(96, "결과를 보관하는 중…")
         auspice_dir().mkdir(parents=True, exist_ok=True)
         shutil.copy2(src, auspice_dir() / f"{name}.json")
+        custom = params.get("clades")
+        if custom and Path(str(custom)).exists() and "# Lineages of sh2023" in Path(str(custom)).read_text(encoding="utf-8"):
+            from . import cladedefs                                              # the workflow's renaming script reads Ib lineages as hMPXV-1 ones: put the labels right
+            cladedefs.fix_auspice(auspice_dir() / f"{name}.json")
         root = wf / "auspice" / f"{name}_root-sequence.json"
         if root.exists():
             shutil.copy2(root, auspice_dir() / f"{name}_root-sequence.json")
