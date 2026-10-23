@@ -10,18 +10,18 @@ Aim: report the first clade Ib genomes from Korea (three private genomes, lineag
 | A1 | Clade / lineage | done | clade Ib, lineage A.4.1 (all three) |
 | A2 | Mutation profile | done | all three have 103 mutations (17 APOBEC3-type, 17%), an identical set |
 | A3 | Distinctive mutation | done | all A.4.1 markers present; the only mutation that sets them apart is G173208A (non-coding, APOBEC3 context): called by all four callers, 2 independent origins on the tree, elsewhere in only one German A.2 genome |
-| A4 | Nearest genomes | done | Belgian and German A.4.1 (2026-04-10 to 21), one mutation apart |
+| A4 | Nearest genomes | done | on the tree the three Korean genomes (one extra mutation, G173208A) sit inside a polytomy of the A.4.1 subclade defined by G156869A (205 genomes: Portugal 97, Germany 77, Ireland 11, Belgium 7, Slovakia 6, USA 4 + Korea 3; first sampled 2026-02); equally close genomes exist from Germany 2026-02/03, Belgium, Ireland, Slovakia and the USA. The earlier "Belgium 2026-04" was only the date order among ties |
 | B1 | Evolutionary rate of Ib | partial | BEAST strict-exponential 3.8e-5 /site/year (3.2 to 4.4e-5); root-to-tip APOBEC3-type 4.6 changes/year/genome (R^2 0.85) |
 | B2 | tMRCA of Ib and A.4.1 | partial | root 2023.05 (2022.66-2023.42), A.4.1 2025.23 (2024.93-2025.51); 100 tips, one seed; A.1 has ESS 47 |
 | B3 | Model choice | partial | strict-exponential highest (GSS: log BF 4.5 over second; estimators differ 2-5); a rerun with doubled paths is in progress |
 | B4 | Temporal signal | done | BETS log BF: relaxed 42-45; strict PS 51.9 / SS 50.8 / GSS 49.9 |
 | B5 | APOBEC3 concern | done | the temporal signal comes from APOBEC3-type changes (R^2 0.85); the others (1.4 per tip) show none (R^2 0.07) |
-| C1 | Introduction time | partial | rough: after A.4.1 emerged; split from the European lineage between late 2025 and April 2026 (95%) from a single-mutation difference - not a formal analysis |
+| C1 | Introduction time | partial | rough: the Korean lineage lies inside the G156869A subclade, so it split off after that subclade arose (first sample 2026-02) and before the first Korean sample (2026-06-09): about early 2026 to June 2026. The earlier "late 2025 to April 2026" estimate rested on mistaking Belgium April for the nearest relative and is withdrawn |
 | C2 | Novel / adaptive mutations | partial | no strong candidate (few mutations with two or more independent origins; none above the neutral baseline) |
 | D1 | Public Korean IIb (166 genomes) | not done | sequences not downloaded |
 
 ## 2. What can and cannot be claimed
-**Can**: the three genomes are Ib / A.4.1 with an identical profile and all A.4.1 markers; the only distinguishing mutation is G173208A, an independently recurrent APOBEC3-favoured change; the clock of human transmission is carried by APOBEC3-type changes (4.6 per year, R^2 0.85), so the estimated tMRCAs date **the start of APOBEC3 accumulation, i.e. sustained human transmission**; Ib root early 2023 (2022.7-2023.4), A.4.1 early 2025 (2024.9-2025.5); the nearest genomes are April 2026 Belgian / German A.4.1.
+**Can**: the three genomes are Ib / A.4.1 with an identical profile and all A.4.1 markers; the only distinguishing mutation is G173208A, an independently recurrent APOBEC3-favoured change; the clock of human transmission is carried by APOBEC3-type changes (4.6 per year, R^2 0.85), so the estimated tMRCAs date **the start of APOBEC3 accumulation, i.e. sustained human transmission**; Ib root early 2023 (2022.7-2023.4), A.4.1 early 2025 (2024.9-2025.5); the Korean genomes lie inside the G156869A A.4.1 subclade (mostly Portugal and Germany, first sampled 2026-02) with one extra mutation.
 **Cannot**: the route or direction of introduction (three Korean genomes, sampling skewed to Europe, Uganda, Congo, unsampled intermediate hosts); that adaptive mutations were found; that the tool is the first of its kind (only MpoxRadar and PyR0 were read; VIRUS-MVP could not be); the virus's deep origin (the non-APOBEC rate is not measurable here); that these are the first Ib genomes from Korea until public databases are checked directly and the date of that check is written down.
 
 ## 3. Analyses to do (priority order)
