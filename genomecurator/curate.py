@@ -233,9 +233,11 @@ def delete_watch(watch_id: int) -> dict:
 # ---------------------------------------------------------------------- merge
 def merge(per_source: dict[str, dict[str, dict]], choices: dict[str, dict[str, dict]] | None = None) -> dict[str, tuple[dict, dict]]:
     """NCBI defines the accession set; other sources enrich. -> {acc: (record, provenance)}.
+    Records that only Pathoplexus has (deposited there, or not yet mirrored by NCBI) join the set too: Pathoplexus is the freshest source.
     `choices` {accession: {field: {source, value}}} are a person's decisions (resolve.py): they win over the source priority."""
     merged = {}
-    for acc in per_source["ncbi"]:
+    ppx_only = [a for a, r in per_source.get("pathoplexus", {}).items() if a not in per_source["ncbi"] and r.get("ppx_length")]
+    for acc in list(per_source["ncbi"]) + ppx_only:
         rec, prov = {}, {}
         for src in config.VALUE_SOURCES:
             for k, v in per_source.get(src, {}).get(acc, {}).items():
@@ -252,6 +254,15 @@ def merge(per_source: dict[str, dict[str, dict]], choices: dict[str, dict[str, d
                     v = "; ".join(str(x) for x in v)
                 if v not in (None, ""):
                     rec[field], prov[field] = v, ch["source"]
+        nv = per_source["ncbi"].get(acc, {}).get("accession_version")
+        if nv:   # the INSDC version is NCBI's to state: Pathoplexus keeps the version it ingested, and a download by that version fails once NCBI has a newer one
+            rec["accession_version"], prov["accession_version"] = nv, "ncbi"
+        if acc not in per_source["ncbi"]:   # NCBI states length and status itself; for these two Pathoplexus has to
+            rec["genome_length"], prov["genome_length"] = rec.get("ppx_length"), "pathoplexus"
+            rec["genome_status"], prov["genome_status"] = sources.ppx_status(rec), "pathoplexus"
+            rec.setdefault("genome_name", rec.get("strain") or acc)
+        for k in ("ppx_length", "ppx_completeness"):
+            rec.pop(k, None), prov.pop(k, None)
         merged[acc] = (rec, prov)
     return merged
 
@@ -293,6 +304,10 @@ def _below_coverage(con, watch_id: int, per_source: dict) -> dict[str, float]:
         ln = r.get("genome_length") or 0
         if r.get("genome_status") != "Complete" and 100 * ln / ref < config.MIN_COVERAGE_PCT:
             out[acc] = 100 * ln / ref
+    for acc, r in per_source.get("pathoplexus", {}).items():   # records only Pathoplexus has
+        ln = r.get("ppx_length") or 0
+        if acc not in ncbi and ln and sources.ppx_status(r) != "Complete" and 100 * ln / ref < config.MIN_COVERAGE_PCT:
+            out[acc] = 100 * ln / ref
     return out
 
 
@@ -324,7 +339,7 @@ def _check(watch_name: str, progress=None) -> int | None:
         if below:
             notes.append(f"기준 게놈의 {config.MIN_COVERAGE_PCT:g}% 미만이라 큐레이션하지 않는 유전체 {len(below):,}건")
         from . import qc
-        ncs = {a: r for a, r in qc.nextclade_source(w["id"], con).items() if a in per_source["ncbi"]}
+        ncs = {a: r for a, r in qc.nextclade_source(w["id"], con).items() if a in per_source["ncbi"] or a in per_source.get("pathoplexus", {})}
         if ncs:      # Nextclade's clade/lineage from the stored sequences take part as one more source (QC tab)
             per_source["nextclade"] = ncs
             notes.append(f"Nextclade clade/lineage {len(ncs)}건 포함")
@@ -435,6 +450,11 @@ def _needs_sequence(con, it) -> bool:
 
 
 # -------------------------------------------------------------------- dry-run
+def _ppx_org(con, watch_id: int):
+    r = con.execute("SELECT pathoplexus_organism FROM watchlist WHERE id=?", (watch_id,)).fetchone()
+    return r[0] if r else None
+
+
 def _versioned(acc: str, rec: dict) -> str:
     v = rec.get("accession_version")
     return f"{acc}.{v}" if v else acc
@@ -472,7 +492,7 @@ def _dryrun(changeset_id: int, sample: int | None = None, progress=None) -> dict
         picked = list(recs)[:sample]
         if picked:
             try:
-                got = sources.download_ncbi_fasta([_versioned(a, recs[a]) for a in picked])
+                got = sources.download_ncbi_fasta([_versioned(a, recs[a]) for a in picked], ppx_organism=_ppx_org(con, wid))
                 for a in picked:
                     va = _versioned(a, recs[a])
                     seq = got.get(va)
@@ -572,7 +592,7 @@ def _apply(changeset_id: int, progress=None, fetch_sequences: bool = True) -> di
             batch = todo[start:start + 100]
             p(5 + 65 * start // max(len(todo), 1), f"서열 다운로드 중… {start}/{len(todo)}")
             try:
-                got = sources.download_ncbi_fasta([v for _, v in batch])
+                got = sources.download_ncbi_fasta([v for _, v in batch], ppx_organism=w["pathoplexus_organism"])
             except Exception as e:  # one bad batch must not lose the whole run
                 _log.warning("apply: sequence download failed for %d accessions (%s ... ): %s: %s", len(batch), batch[0][1], type(e).__name__, e)
                 for a, v in batch:
@@ -736,7 +756,7 @@ def fetch_missing_sequences(watch_id: int, genome_ids: list[str] | None = None, 
             p(5 + 90 * start // len(rows), f"서열 다운로드 중… {start:,}/{len(rows):,}{eta}")
             ver = {r["accession"]: _versioned(r["accession"], {"accession_version": r["accession_version"]}) for r in batch}
             try:
-                got = sources.download_ncbi_fasta(list(ver.values()))
+                got = sources.download_ncbi_fasta(list(ver.values()), ppx_organism=w["pathoplexus_organism"])
             except Exception as e:
                 for r in batch:
                     failed[r["accession"]] = f"download error: {e}"

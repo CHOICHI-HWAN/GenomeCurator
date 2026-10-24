@@ -3799,3 +3799,45 @@ def test_single_class_alignments_and_masked_columns():
         assert len(al[0].find("sequence")[0].tail) == len(cols)                                                          # only the sites of that class
     parsed = beastprep.parse_settings({"partition": "apobec_only", "mask_columns": [5, 3, 3, "7"]})
     assert parsed["partition"] == "apobec_only" and parsed["mask_columns"] == [3, 5, 7] and beastprep.parse_settings({"partition": "x"})["partition"] == ""
+
+
+def test_pathoplexus_only_records_join_the_merge(monkeypatch):
+    # a record only Pathoplexus has (no INSDC accession, or one NCBI does not serve) is curated too, with Pathoplexus values first
+    from genomecurator import curate, sources
+    k, rec = sources.normalize_ppx({"accessionVersion": "PP_0001.2", "accession": "PP_0001", "version": 2, "length": 190000, "completeness": 0.97,
+                                    "sampleCollectionDate": "2026-07-03", "geoLocCountry": "Kenya", "lineage": "A.2"})
+    assert k == "PP_0001" and rec["accession_version"] == 2 and rec["ppx_length"] == 190000
+    k2, rec2 = sources.normalize_ppx({"accessionVersion": "PP_0002.1", "insdcAccessionFull": "OZ9.1", "length": 1000, "completeness": 0.3})
+    assert k2 == "OZ9" and rec2["accession_version"] == 1
+    assert sources.normalize_ppx({}) is None
+    ps = {"ncbi": {"A1": {"genome_length": 5, "genome_status": "Complete"}}, "pathoplexus": {"A1": {"ppx_length": 5, "collection_date": "2026"}, k: rec, k2: rec2}}
+    m = curate.merge(ps)
+    assert set(m) == {"A1", "PP_0001", "OZ9"}
+    r, pv = m["PP_0001"]
+    assert r["genome_length"] == 190000 and r["genome_status"] == "Complete" and pv["collection_date"] == "pathoplexus" and "ppx_length" not in r
+    assert m["OZ9"][0]["genome_status"] == "Partial"
+    assert m["A1"][0]["genome_length"] == 5 and "ppx_length" not in m["A1"][0]   # NCBI keeps stating length and status for its own records
+
+
+def test_download_falls_back_to_pathoplexus_for_what_ncbi_lacks(monkeypatch):
+    from genomecurator import sources
+    import io, zipfile
+    buf = io.BytesIO()
+    with zipfile.ZipFile(buf, "w") as z:
+        z.writestr("ncbi_dataset/data/genomic.fna", ">A1.1 x\nACGT\n")
+
+    class R:
+        content = buf.getvalue()
+        status_code = 200
+    monkeypatch.setattr(sources, "_ncbi_get", lambda *a, **k: R)
+    monkeypatch.setattr(sources, "download_pathoplexus_fasta", lambda ids, org: {i: "GGGG" for i in ids} if org == "mpox" else {})
+    got = sources.download_ncbi_fasta(["A1.1", "PP_1.1", "OZ9.1"], ppx_organism="mpox")
+    assert got == {"A1.1": "ACGT", "PP_1.1": "GGGG", "OZ9.1": "GGGG"}
+    assert "PP_1.1" not in sources.download_ncbi_fasta(["A1.1", "PP_1.1"])
+
+
+def test_ncbi_states_the_insdc_version(monkeypatch):
+    from genomecurator import curate
+    m = curate.merge({"ncbi": {"A1": {"accession_version": 2}}, "pathoplexus": {"A1": {"accession_version": 1, "collection_date": "2026-01"}}})
+    rec, prov = m["A1"]
+    assert rec["accession_version"] == 2 and prov["accession_version"] == "ncbi" and prov["collection_date"] == "pathoplexus"

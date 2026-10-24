@@ -14,6 +14,7 @@ Virus Genome Metadata Curator(패키지 `genomecurator`, 이전 표시 이름 "G
 ## [Unreleased]
 
 ### 추가
+- **Pathoplexus에만 있는 레코드도 수집합니다.** Pathoplexus에는 있지만 NCBI에는 없는 레코드(INSDC 번호 없이 Pathoplexus에 직접 등록된 것, 또는 NCBI가 아직 가져오지 않은 INSDC 레코드)가 이제 확인 단계에서 신규 유전체로 들어옵니다. 키는 INSDC 번호이고, 없으면 Pathoplexus 번호(`PP_...`)입니다. 필드는 Pathoplexus 값이 우선이고, NCBI가 없으니 길이와 상태(기준 길이의 95% 이상이면 Complete)도 Pathoplexus가 채웁니다. NCBI가 주지 않는 서열은 Pathoplexus(LAPIS)에서 받습니다(표본 점검, 적용, "Get FASTA"). 기준 길이 미달 규칙도 NCBI 레코드와 똑같이 적용됩니다. NCBI에 있는 레코드의 INSDC 버전은 NCBI 값을 씁니다(Pathoplexus는 가져온 시점의 버전을 유지해서, NCBI가 레코드를 고친 뒤에는 그 버전으로 받을 수 없습니다).
 - **BEAST 민감도 옵션**: `partition: apobec_only` / `other_only`는 APOBEC3 맥락 자리만 또는 그 외 자리만으로 일반 모델을 돌리고, `mask_columns`는 고른 정렬 열(예: 반복해서 변한 자리)을 뺍니다. 날짜 정보를 무엇이 담고 있는지 확인하는 용도입니다.
 - **BEAST: 줄기 나이를 기록하는 그룹의 단계통 지표.** 요약에 그룹마다 사후 표본 중 그 그룹이 한 클레이드인 비율(`monophyly`)이 나옵니다. 나라의 줄기 나이를 그 나라 유전체가 얼마나 자주 한 클레이드를 이루는지와 함께 읽을 수 있습니다. 나라별 A.4.1 분석에서 씁니다.
 - **BEAST: 월까지만 있는 날짜를 그 달의 가운데로 쓸 수 있음**(BEAST 설정의 `month_dates`; 분자시계 실행은 이미 월을 월 범위로 다루고 가운데를 날짜로 줍니다). 흔히 쓰는 관습이며 BEAST의 새 기능이 필요 없습니다. 오차는 최대 반 달로, 여기서 다루는 mpox 계통의 속도에서는 변이 약 0.5개입니다. 연도만 있는 날짜는 계속 뺍니다. 패키지의 `dates.tsv`에 월 단위 팁이 표시됩니다. 옵션을 켜지 않으면 달라지는 것이 없습니다(일 단위 날짜만).

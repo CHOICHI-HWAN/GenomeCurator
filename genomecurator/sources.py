@@ -207,8 +207,9 @@ def fetch_ncbi(taxon: str, filters: dict | None = None) -> dict[str, dict]:
             params["page_token"] = tok
 
 
-def download_ncbi_fasta(accessions: list[str], progress=None) -> dict[str, str]:
-    """accessions may carry .version. Returns {accession-with-version: sequence}."""
+def download_ncbi_fasta(accessions: list[str], progress=None, ppx_organism: str | None = None) -> dict[str, str]:
+    """accessions may carry .version. Returns {accession-with-version: sequence}. With ppx_organism, what NCBI does not serve (Pathoplexus-only
+    records, or INSDC records NCBI has not mirrored) is fetched from Pathoplexus."""
     seqs: dict[str, str] = {}
     with _client() as c:
         for i in range(0, len(accessions), 100):
@@ -223,6 +224,10 @@ def download_ncbi_fasta(accessions: list[str], progress=None) -> dict[str, str]:
                     continue
                 text = z.read(name).decode()
             seqs.update(parse_fasta(text))
+    if ppx_organism:
+        missing = [a for a in accessions if a not in seqs]
+        if missing:
+            seqs.update(download_pathoplexus_fasta(missing, ppx_organism))
     return seqs
 
 
@@ -306,7 +311,7 @@ PPX_KNOWN = ["mpox", "ebola-zaire", "ebola-sudan", "ebola-bdbv", "marburg", "cch
 _PPX_FIELDS = ["insdcAccessionFull", "insdcAccessionBase", "accessionVersion", "specimenCollectorSampleId",
                "hostNameScientific", "hostNameCommon", "geoLocCountry", "geoLocAdmin1", "sampleCollectionDate",
                "authorAffiliations", "earliestReleaseDate", "anatomicalPart", "bodyProduct",
-               "bioprojectAccession", "biosampleAccession", "insdcRawReadsAccession"]
+               "bioprojectAccession", "biosampleAccession", "insdcRawReadsAccession", "accession", "version", "length", "completeness"]
 # Organism-specific classification fields (mpox: clade/lineage, dengue: serotype/lineage, measles: genotype ...).
 # LAPIS rejects unknown field names, so the ones an organism really has are discovered first.
 _PPX_TAXON = ["clade", "lineage", "genotype", "subtype", "serotype", "outbreak"]
@@ -444,15 +449,30 @@ def pathoplexus_slug_for(accession_version: str) -> str | None:
     return None
 
 
+PPX_COMPLETE_FROM = 0.95   # a Pathoplexus-only record counts as 'Complete' from this share of the reference length (NCBI states it itself, Pathoplexus does not)
+
+
+def ppx_status(rec: dict) -> str:
+    c = rec.get("ppx_completeness")
+    return "Complete" if c is not None and float(c) >= PPX_COMPLETE_FROM else "Partial"
+
+
 def normalize_ppx(row: dict) -> tuple[str, dict] | None:
-    """One LAPIS details row -> (base accession, partial record) or None when it has no INSDC accession."""
+    """One LAPIS details row -> (key, partial record). The key is the INSDC accession when there is one, else the Pathoplexus accession
+    (a record deposited only at Pathoplexus). None when the row has neither."""
     full = row.get("insdcAccessionFull") or row.get("insdcAccessionBase")
-    if not full:
-        return None
-    base, ver = split_version(full)
+    if full:
+        base, ver = split_version(full)
+    else:
+        base, ver = split_version(row.get("accessionVersion") or "")
+        base = row.get("accession") or base
+        ver = row.get("version") or ver
+        if not base:
+            return None
     geo = ", ".join(x for x in (row.get("geoLocCountry"), row.get("geoLocAdmin1")) if x)
     rec = {"accession_version": ver,
            "pathoplexus_accession": row.get("accessionVersion"),
+           "ppx_length": row.get("length"), "ppx_completeness": row.get("completeness"),   # only for records NCBI does not have (curate.merge)
            "strain": row.get("specimenCollectorSampleId"),
            "host_name": row.get("hostNameScientific") or row.get("hostNameCommon"),
            "isolation_country": row.get("geoLocCountry"),
@@ -467,6 +487,22 @@ def normalize_ppx(row: dict) -> tuple[str, dict] | None:
            "biosample_accession": row.get("biosampleAccession"),
            "sra_accession": row.get("insdcRawReadsAccession")}
     return base, {k: v for k, v in rec.items() if v not in (None, "", "None")}
+
+
+def download_pathoplexus_fasta(ids: list[str], organism: str) -> dict[str, str]:
+    """Sequences from Pathoplexus (LAPIS). ids are 'ACC.version': a Pathoplexus accession ('PP_...') or an INSDC one that NCBI does not serve.
+    Returns {id: sequence}; an id Pathoplexus does not know is simply absent."""
+    out: dict[str, str] = {}
+    with _client() as c:
+        for i in ids:
+            key = "accessionVersion" if i.startswith("PP_") else "insdcAccessionFull"
+            r = _get(c, f"{config.PATHOPLEXUS_BASE}/{organism}/sample/unalignedNucleotideSequences", params={key: i}, timeout=120)
+            if r.status_code != 200:
+                continue
+            seqs = parse_fasta(r.text)
+            if len(seqs) == 1:
+                out[i] = next(iter(seqs.values()))
+    return out
 
 
 def fetch_pathoplexus(watch_name: str, taxon: str = "", taxon_id: int | None = None) -> dict[str, dict]:
