@@ -62,7 +62,8 @@ def parse_settings(raw: dict | None) -> dict:
     if out["clock"] not in CLOCKS or out["tree_prior"] not in PRIORS:
         raise ValueError(f"시계는 {', '.join(CLOCKS)}, 트리 사전분포는 {', '.join(PRIORS)} 중 하나입니다.")
     out["month_dates"] = bool(s.get("month_dates"))                                # use month-only dates at the middle of the month
-    out["partition"] = "apobec" if str(s.get("partition") or "") == "apobec" else ""   # separate rates for the APOBEC3-context sites and the others
+    out["partition"] = str(s.get("partition") or "") if str(s.get("partition") or "") in ("apobec", "apobec_only", "other_only") else ""   # apobec: separate rates for the APOBEC3-context sites and the others; *_only: a plain model on one class of site
+    out["mask_columns"] = sorted({int(x) for x in (s.get("mask_columns") or [])})   # alignment columns (0-based) left out of the alignment
     out["tag"] = re.sub(r"[^A-Za-z0-9_.\-]", "_", str(s.get("tag") or ""))[:40]
     out["tip_names"] = [str(x) for x in (s.get("tip_names") or [])]            # an explicit set of tips instead of the balanced subsample
     out["groups"] = {str(k): [str(x) for x in v] for k, v in (s.get("groups") or {}).items()}   # taxon sets whose MRCA age is logged (with tip_names)
@@ -145,9 +146,13 @@ def build_xml(seqs: dict[str, str], dates: dict[str, float], groups: dict[str, l
             w(f'\t\t<taxon idref="{_safe(n)}"/>')
         w('\t</taxa>')
     part = s.get("partition") == "apobec"
-    if part and gss:
+    if (part or s.get("partition") in ("apobec_only", "other_only")) and gss:
         raise ValueError("분할 모델(APOBEC3 자리 대 그 외)은 한계우도 추정(GSS)과 함께 쓸 수 없습니다.")
-    if part:
+    if s.get("partition") in ("apobec_only", "other_only"):                     # one class of site, a plain (unpartitioned) model on it
+        ca, cb = apobec_columns(seqs)
+        cols = ca if s["partition"] == "apobec_only" else cb
+        sets, nsites = [("", {n: "".join(seqs[n][i] for i in cols) for n in names})], [len(cols)]
+    elif part:
         ca, cb = apobec_columns(seqs)
         sets = [(".a", {n: "".join(seqs[n][i] for i in ca) for n in names}), (".b", {n: "".join(seqs[n][i] for i in cb) for n in names})]
         nsites = [len(ca), len(cb)]
@@ -329,6 +334,9 @@ def prepare(clock_run: dict, settings: dict | None = None, progress=None) -> dic
         if name in want:
             seqs[name] = seq.upper()
     chosen = [t for t in chosen if t["name"] in seqs]
+    if s["mask_columns"]:                                                      # columns left out (e.g. sites that mutated again and again): the alignment is shortened
+        drop = set(s["mask_columns"])
+        seqs = {n: "".join(c for i, c in enumerate(q) if i not in drop) for n, q in seqs.items()}
     dates = {t["name"]: t["date"] for t in chosen}
     groups: dict[str, list[str]] = {}
     for t in chosen:

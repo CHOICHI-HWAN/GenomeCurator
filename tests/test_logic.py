@@ -3780,3 +3780,22 @@ def test_stem_groups_log_a_stem_age_and_a_monophyly_indicator():
     assert root.find("tmrcaStatistic[@id='stem(g2)']") is None and root.find("monophylyStatistic[@id='monophyly(g2)']") is None            # only the groups asked for
     ids = {e.get("idref") for e in root.find("mcmc").find("log[@id='fileLog']")}
     assert {"stem(g1)", "monophyly(g1)", "age(g1)", "age(g2)"} <= ids
+
+
+def test_single_class_alignments_and_masked_columns():
+    import random
+    import xml.etree.ElementTree as ET
+    from genomecurator import beastprep
+    rng = random.Random(4)
+    base = "TCAGACGT" * 6
+    seqs = {f"s{i}": "".join(c if rng.random() > 0.05 else rng.choice("ACGT") for c in base) for i in range(6)}
+    dates = {n: 2025 + i / 20 for i, n in enumerate(seqs)}
+    s = {"n_tips": 6, "chain_length": 5000, "samples": 100, "clock": "strict", "tree_prior": "exponential", "seed": 1, "threads": 0}
+    a, b = beastprep.apobec_columns({k: base for k in seqs})
+    for kind, cols in (("apobec_only", a), ("other_only", b)):
+        root = ET.fromstring(beastprep.build_xml(seqs, dates, {}, {**s, "partition": kind}, 1e-5))
+        al = root.findall("alignment")
+        assert [x.get("id") for x in al] == ["alignment"] and root.find("compoundParameter") is None                  # one plain alignment, no partition
+        assert len(al[0].find("sequence")[0].tail) == len(cols)                                                          # only the sites of that class
+    parsed = beastprep.parse_settings({"partition": "apobec_only", "mask_columns": [5, 3, 3, "7"]})
+    assert parsed["partition"] == "apobec_only" and parsed["mask_columns"] == [3, 5, 7] and beastprep.parse_settings({"partition": "x"})["partition"] == ""
