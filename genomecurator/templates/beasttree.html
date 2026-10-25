@@ -1,0 +1,25 @@
+{% extends "base.html" %}{% block body %}
+<div class="pagehead"><h2>BEAST 요약 트리 <span class="mut" style="font-size:14px;font-weight:400">{{ tag or '(기본)' }} · PearTree</span></h2></div>
+<div class="anav"><div class="bc"><a href="/dataset/{{ run.dataset_id }}">{{ run.dataset_name or '데이터셋' }}</a> › <a href="/clock/{{ run.id }}">분자시계 실행 {{ run.started[:16].replace('T', ' ') }}</a> › BEAST 트리</div></div>
+{% if not pt.installed %}
+<div class="card">PearTree(Andrew Rambaut, MIT)를 아직 받지 않았습니다. 받으면 이 컴퓨터의 데이터 폴더에 약 4 MB가 저장되고, 트리는 브라우저 안에서만 처리됩니다(어디로도 보내지 않음).
+ <div class="mut" style="font-size:12px;margin-top:4px">PearTree와 pearcore를 GitHub(artic-network/peartree, rambaut/pearcore-lib)의 고정된 버전으로 받습니다. pearcore에는 라이선스 파일이 없어 이 저장소에는 넣지 않고 설치할 때 받아 옵니다.</div>
+ <button class="btn" id="inst" style="margin-top:8px" onclick="inst()">PearTree 받기</button> <span id="im" class="mut"></span></div>
+<script>
+async function inst(){const b=document.getElementById('inst'),m=document.getElementById('im');b.disabled=true;m.textContent='받는 중…';
+ const r=await (await fetch('/api/peartree/install',{method:'POST'})).json();
+ for(;;){await new Promise(x=>setTimeout(x,1500));const j=await (await fetch('/api/job/'+r.job)).json();
+  if(j.status==='done'){location.reload();return}
+  if(j.status==='error'||j.status==='failed'){m.textContent='실패: '+(j.error||j.message||'');b.disabled=false;return}}}
+</script>
+{% else %}
+<div class="mut" style="font-size:12.5px;margin:4px 0">팁에 날짜·계통·클레이드·나라가 붙어 있습니다(색칠: 왼쪽 패널의 Colour by). 이 트리에는 비공개 유전체 id가 들어 있을 수 있으니 화면·내보내기 파일을 공개하지 마세요.
+ <a href="/api/clock/{{ run.id }}/beast/tree?tag={{ tag|urlencode }}&download=1">트리 내려받기</a></div>
+<iframe id="pt" style="width:100%;height:calc(100vh - 260px);min-height:480px;border:1px solid #ccc;border-radius:6px" title="PearTree"></iframe>
+<script>
+const tu=location.origin+'/api/clock/{{ run.id }}/beast/tree?file=annotated&tag='+encodeURIComponent({{ tag|tojson }});
+const st=btoa(JSON.stringify({axisShow:'time',axisDateAnnotation:'date'}));
+document.getElementById('pt').src='/tools/peartree/peartree/peartree.html?theme=light&nostore=1&treeUrl='+encodeURIComponent(tu)+'&settings='+encodeURIComponent(st);
+</script>
+{% endif %}
+{% endblock %}

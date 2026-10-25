@@ -535,6 +535,25 @@ def mcc_tree(clock_run: dict, tag: str = "", kind: str = "hipstr", burnin: float
     return {"tree": out.name, "tips": tips.name if tips.exists() else None, "trees": n, "burnin_trees": skip, "newest_tip": newest, "kind": kind}
 
 
+def annotated_tree(clock_run: dict, tag: str = "", kind: str = "hipstr") -> Path:
+    """`mcc-<kind>.annotated.tree`: the summary tree with date, lineage, clade and country on the tips (from dates.tsv), for the in-app PearTree viewer."""
+    from . import peartree
+    info = mcc_tree(clock_run, tag, kind)
+    d = folder(clock_run, tag)
+    src, out = d / info["tree"], d / f"mcc-{kind}.annotated.tree"
+    if out.exists() and out.stat().st_mtime >= src.stat().st_mtime and out.stat().st_mtime >= (d / "dates.tsv").stat().st_mtime:
+        return out
+    tips = {}
+    lines = (d / "dates.tsv").read_text(encoding="utf-8").splitlines()
+    head = lines[0].split("\t")
+    for ln in lines[1:]:
+        c = ln.split("\t")
+        if len(c) == len(head):
+            tips[c[0]] = {h: v for h, v in zip(head[1:], c[1:]) if h != "precision"}
+    out.write_text(peartree.annotate(src.read_text(encoding="utf-8"), tips), encoding="utf-8")
+    return out
+
+
 def result(clock_run: dict, tag: str = "") -> dict:
     """What the page shows: the saved summary, or - while a chain runs - the summary of the log so far."""
     d = folder(clock_run, tag)

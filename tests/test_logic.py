@@ -3863,3 +3863,15 @@ def test_mcc_tree_is_made_once_and_remade_when_the_chain_grows(tmp_path, monkeyp
     import pytest
     with pytest.raises(ValueError):
         beastprep.mcc_tree({"run_dir": str(run)}, "t1", kind="nope")
+
+
+def test_peartree_annotation_goes_into_the_tips_only(tmp_path, monkeypatch):
+    from genomecurator import peartree
+    nx = ("#NEXUS\nBegin trees;\n\tTranslate\n\t\t1 A,\n\t\t2 B\n\t\t;\n"
+          "tree TREE1 = [&R] (1[&rate=1]:0.1,2[&rate=2]:0.2)[&posterior=1]:0.0;\nEnd;\n")
+    out = peartree.annotate(nx, {"A": {"date": "2024.5", "country": 'Ger"many'}, "B": {"lineage": "A.4.1", "empty": ""}})
+    assert '1[&date=2024.5,country="Germany",rate=1]' in out and '2[&lineage="A.4.1",rate=2]' in out
+    assert ")[&posterior=1]" in out                      # an internal node is left alone
+    assert peartree.annotate("no translate", {}) == "no translate"
+    monkeypatch.setattr(peartree.config, "DATA_DIR", tmp_path)
+    assert peartree.status()["installed"] is False and peartree.status()["url"] is None

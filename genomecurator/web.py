@@ -6,7 +6,7 @@ from fastapi import FastAPI, Form, Request
 from fastapi.responses import FileResponse, HTMLResponse, JSONResponse, RedirectResponse, Response, StreamingResponse
 from fastapi.templating import Jinja2Templates
 
-from . import beastprep, cladedefs, clock, clockclass, continents, focus, hyphyexport, intake, lineagetree, mutgantt, nextcladecall, pipeline, support, variantcall, variantflow, __version__, analysis, completeness, datasets, exclusions, export, cooccur, geo, heatmap, vocab, insight, lineages, mutprofile, nextstrain, novel, outbreak, pathoplexus, private, qc, squirrel, config, curate, jobs, log
+from . import peartree, beastprep, cladedefs, clock, clockclass, continents, focus, hyphyexport, intake, lineagetree, mutgantt, nextcladecall, pipeline, support, variantcall, variantflow, __version__, analysis, completeness, datasets, exclusions, export, cooccur, geo, heatmap, vocab, insight, lineages, mutprofile, nextstrain, novel, outbreak, pathoplexus, private, qc, squirrel, config, curate, jobs, log
 from .db import audit_now, connect
 
 _log = log.get("web")
@@ -1387,6 +1387,8 @@ def create_app(scheduler: bool = True) -> FastAPI:
             return JSONResponse({"error": "clock run not found"}, 404)
         try:
             info = beastprep.mcc_tree(r, tag, kind)
+            if file == "annotated":
+                return FileResponse(beastprep.annotated_tree(r, tag, kind), media_type="text/plain; charset=utf-8")
         except (ValueError, RuntimeError) as e:
             return JSONResponse({"error": str(e)}, 400)
         name = info["tips"] if file == "tips" else info["tree"]
@@ -1395,6 +1397,25 @@ def create_app(scheduler: bool = True) -> FastAPI:
         path = beastprep.folder(r, tag) / name
         headers = {"X-Newest-Tip": str(info["newest_tip"] or "")}
         return FileResponse(path, media_type="text/plain; charset=utf-8", filename=(f"{r['name']}-{tag or 'beast'}-{name}" if download else None), headers=headers)
+
+    @app.get("/beasttree/{rid}")
+    def beast_tree_page(request: Request, rid: int, tag: str = ""):
+        r = nextstrain.get_run(rid)
+        if not r or r["tool"] != "clock":
+            return JSONResponse({"error": "clock run not found"}, 404)
+        return render(request, "beasttree.html", nav="res", run=r, tag=tag, pt=peartree.status())
+
+    @app.post("/api/peartree/install")
+    def api_peartree_install():
+        return start_job(lambda p: peartree.install(p), "PearTree 설치", "install")
+
+    @app.get("/tools/peartree/{path:path}")
+    def peartree_files(path: str):
+        base = peartree.root().resolve()
+        f = (base / path).resolve()
+        if not peartree.installed() or base not in f.parents or not f.is_file():
+            return JSONResponse({"error": "not found"}, 404)
+        return FileResponse(f)
 
     @app.post("/api/clock/{rid}/beast/prepare")
     async def api_clock_beast_prepare(request: Request, rid: int):
