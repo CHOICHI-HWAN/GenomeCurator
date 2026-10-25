@@ -3875,3 +3875,12 @@ def test_peartree_annotation_goes_into_the_tips_only(tmp_path, monkeypatch):
     assert peartree.annotate("no translate", {}) == "no translate"
     monkeypatch.setattr(peartree.config, "DATA_DIR", tmp_path)
     assert peartree.status()["installed"] is False and peartree.status()["url"] is None
+
+
+def test_bets_estimations_with_a_name_keep_their_own_folders():
+    from genomecurator import beastprep
+    run = {"run_dir": "/x/clock"}
+    a, b = beastprep.parse_bets_settings({"name": "strict s1"}), beastprep.parse_bets_settings({"name": "relaxed"})
+    assert beastprep._root(run, a) != beastprep._root(run, b) and beastprep._root(run, a).name == "strict_s1"
+    assert beastprep._root(run, beastprep.parse_bets_settings({})) == beastprep.bets_folder(run)
+    assert beastprep._root(run, beastprep.parse_bets_settings({"compare": True})).name == "models"

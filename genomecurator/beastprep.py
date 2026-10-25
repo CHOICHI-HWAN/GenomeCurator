@@ -611,6 +611,7 @@ def parse_bets_settings(raw: dict | None) -> dict:
         raise ValueError("BETS 설정의 숫자가 올바르지 않습니다.")
     out["clock"], out["tree_prior"], out["estimator"] = str(s["clock"]), str(s["tree_prior"]), str(s["estimator"])
     out["compare"] = bool(s.get("compare"))
+    out["name"] = re.sub(r"[^A-Za-z0-9_.\-]", "_", str(s.get("name") or ""))[:40]     # its own folder `bets/<name>/`, so that two estimations can run side by side
     if not 10 <= out["n_tips"] <= 300:
         raise ValueError("표본 유전체 수는 10~300입니다.")
     if out["initial_chain"] < 10000 or out["step_chain"] < 1000 or not 4 <= out["path_steps"] <= 500:
@@ -626,7 +627,7 @@ def bets_folder(clock_run: dict) -> Path:
 
 def _root(clock_run: dict, s: dict) -> Path:
     """Where this BETS flavour keeps its analyses: `bets/` (dated vs undated) or `bets/models/` (the four-model comparison)."""
-    return bets_folder(clock_run) / ("models" if s.get("compare") else "")
+    return bets_folder(clock_run) / (s["name"] if s.get("name") else "models" if s.get("compare") else "")
 
 
 def _models(s: dict) -> list[dict]:
@@ -856,8 +857,8 @@ def compare_models(res: dict) -> dict:
     return {"estimator": est, "ranking": ranking, "text": text}
 
 
-def bets_result(clock_run: dict, compare: bool = False) -> dict:
-    f = (bets_folder(clock_run) / ("models" if compare else "") / "summary.json")
+def bets_result(clock_run: dict, compare: bool = False, name: str = "") -> dict:
+    f = (bets_folder(clock_run) / (_safe(name) if name else "models" if compare else "") / "summary.json")
     try:
         return json.loads(f.read_text(encoding="utf-8")) if f.exists() else {}
     except ValueError:
@@ -871,7 +872,7 @@ def run_bets_recorded(clock_run: dict, settings: dict | None = None, progress=No
     ds = datasets.get(clock_run["dataset_id"])
     st = status()
     s = parse_bets_settings(settings)
-    name = f"{clock_run['name']}-{'models' if s['compare'] else 'bets'}"
+    name = f"{clock_run['name']}-{'models' if s['compare'] else 'bets'}" + (f"-{s['name']}" if s["name"] else "")
     taken = {r["name"] for r in nextstrain.list_runs(limit=100000)}
     base, k = name, 1
     while name in taken:
