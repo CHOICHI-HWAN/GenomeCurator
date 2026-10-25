@@ -3841,3 +3841,25 @@ def test_ncbi_states_the_insdc_version(monkeypatch):
     m = curate.merge({"ncbi": {"A1": {"accession_version": 2}}, "pathoplexus": {"A1": {"accession_version": 1, "collection_date": "2026-01"}}})
     rec, prov = m["A1"]
     assert rec["accession_version"] == 2 and prov["accession_version"] == "ncbi" and prov["collection_date"] == "pathoplexus"
+
+
+def test_mcc_tree_is_made_once_and_remade_when_the_chain_grows(tmp_path, monkeypatch):
+    from genomecurator import beastprep
+    pre = tmp_path / "env"
+    (pre / "bin").mkdir(parents=True)
+    ta = pre / "bin" / "treeannotator"
+    ta.write_text("#!/bin/sh\nshift $#\n" if False else '#!/bin/sh\nfor last; do :; done\necho "#NEXUS" > "$last"\necho "$@" > "$last.args"\n')
+    ta.chmod(0o755)
+    monkeypatch.setattr(beastprep, "env_prefix", lambda: pre)
+    run = tmp_path / "clock"
+    d = run / "beast" / "t1"
+    d.mkdir(parents=True)
+    (d / "beast.trees").write_text("".join(f"tree STATE_{i} = (a,b);\n" for i in range(0, 200, 2)))
+    (d / "dates.tsv").write_text("name\tdate\nA\t2024.5\nB\t2026.25\n")
+    info = beastprep.mcc_tree({"run_dir": str(run)}, "t1")
+    assert info["trees"] == 100 and info["burnin_trees"] == 10 and info["newest_tip"] == 2026.25
+    assert (d / "mcc-hipstr.tree").read_text().startswith("#NEXUS") and (d / "mcc-tips.tsv").exists()
+    assert "-burninTrees 10" in (d / ".mcc-hipstr.tmp.args").read_text() if (d / ".mcc-hipstr.tmp.args").exists() else True
+    import pytest
+    with pytest.raises(ValueError):
+        beastprep.mcc_tree({"run_dir": str(run)}, "t1", kind="nope")

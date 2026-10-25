@@ -1376,7 +1376,25 @@ def create_app(scheduler: bool = True) -> FastAPI:
         d = beastprep.folder(r)
         return {"status": beastprep.status(), "defaults": beastprep.DEFAULTS, "runs": [{k: x[k] for k in ("id", "name", "status", "started", "finished", "error")} for x in b],
                 "result": beastprep.result(r), "files": [{"name": f.name, "size": f.stat().st_size} for f in sorted(d.iterdir()) if f.is_file()] if d.exists() else [],
-                "tips_usable": sum(1 for t in clock.summary(r).get("tips", []) if not t["outlier"] and t["precision"] == "day")}
+                "tips_usable": sum(1 for t in clock.summary(r).get("tips", []) if not t["outlier"] and t["precision"] == "day"),
+                "trees": sorted(f.parent.name for f in d.glob("*/beast.trees")) + (["" ] if (d / "beast.trees").exists() else [])}
+
+    @app.get("/api/clock/{rid}/beast/tree")
+    def api_clock_beast_tree(rid: int, tag: str = "", kind: str = "hipstr", file: str = "tree", download: int = 0):
+        """The summary tree of a BEAST chain (NEXUS), or `file=tips` for the tip table; made on first use with TreeAnnotator."""
+        r = nextstrain.get_run(rid)
+        if not r or r["tool"] != "clock":
+            return JSONResponse({"error": "clock run not found"}, 404)
+        try:
+            info = beastprep.mcc_tree(r, tag, kind)
+        except (ValueError, RuntimeError) as e:
+            return JSONResponse({"error": str(e)}, 400)
+        name = info["tips"] if file == "tips" else info["tree"]
+        if not name:
+            return JSONResponse({"error": "not available"}, 404)
+        path = beastprep.folder(r, tag) / name
+        headers = {"X-Newest-Tip": str(info["newest_tip"] or "")}
+        return FileResponse(path, media_type="text/plain; charset=utf-8", filename=(f"{r['name']}-{tag or 'beast'}-{name}" if download else None), headers=headers)
 
     @app.post("/api/clock/{rid}/beast/prepare")
     async def api_clock_beast_prepare(request: Request, rid: int):

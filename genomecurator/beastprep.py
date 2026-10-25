@@ -496,6 +496,45 @@ def summarize(clock_run: dict, tag: str = "") -> dict:
             "rate_param": rate_key, "groups": ages, "stems": stems, "monophyly": mono, "partition": {k: P[k] for k in ("rate.apobec", "rate.other", "rate.ratio") if k in P}, "posterior": P.get("posterior"), "min_ess": min((v["ess"] for k, v in P.items() if k.startswith("age(") or k == rate_key), default=None)}
 
 
+def mcc_tree(clock_run: dict, tag: str = "", kind: str = "hipstr", burnin: float = 0.1, force: bool = False) -> dict:
+    """The summary tree of a finished chain, written as `mcc-<kind>.tree` (NEXUS, node heights as medians, with posterior and 95% HPD annotations) next to `beast.trees`,
+    and `mcc-tips.tsv` (tip, date, lineage, clade, country, ...) to join onto the tips in a tree viewer such as PearTree. -> {tree, tips, trees, burnin_trees, newest_tip}"""
+    pre = env_prefix()
+    if not pre:
+        raise RuntimeError(f"BEAST 환경이 없습니다: {status()['how']}")
+    if kind not in ("hipstr", "mcc", "mrhipstr"):
+        raise ValueError("요약 트리 종류는 hipstr, mcc, mrhipstr 중 하나입니다.")
+    d = folder(clock_run, tag)
+    src = d / "beast.trees"
+    if not src.exists():
+        raise ValueError("이 분석에는 beast.trees가 없습니다.")
+    out = d / f"mcc-{kind}.tree"
+    n = 0
+    with open(src, encoding="utf-8", errors="replace") as fh:
+        for line in fh:
+            if line.lstrip().lower().startswith("tree "):
+                n += 1
+    skip = int(n * burnin)
+    if force or not out.exists() or out.stat().st_mtime < src.stat().st_mtime:
+        tmp = d / f".mcc-{kind}.tmp"
+        r = subprocess.run([str(pre / "bin" / "treeannotator"), "-type", kind, "-heights", "median", "-burninTrees", str(skip), str(src), str(tmp)],
+                           capture_output=True, text=True, timeout=1800)
+        if r.returncode != 0 or not tmp.exists():
+            raise RuntimeError("TreeAnnotator가 실패했습니다: " + (r.stderr or r.stdout)[-400:])
+        tmp.replace(out)
+    tips = d / "mcc-tips.tsv"
+    newest = None
+    dates = d / "dates.tsv"
+    if dates.exists():
+        tips.write_text(dates.read_text(encoding="utf-8"), encoding="utf-8")
+        try:
+            rows = [ln.split("\t") for ln in dates.read_text(encoding="utf-8").splitlines()[1:] if ln.strip()]
+            newest = max(float(x[1]) for x in rows)
+        except (ValueError, IndexError):
+            newest = None
+    return {"tree": out.name, "tips": tips.name if tips.exists() else None, "trees": n, "burnin_trees": skip, "newest_tip": newest, "kind": kind}
+
+
 def result(clock_run: dict, tag: str = "") -> dict:
     """What the page shows: the saved summary, or - while a chain runs - the summary of the log so far."""
     d = folder(clock_run, tag)
