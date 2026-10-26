@@ -61,6 +61,7 @@ def parse_settings(raw: dict | None) -> dict:
         raise ValueError("체인 길이는 10,000 이상, 표본 수는 100~100,000이어야 합니다.")
     if out["clock"] not in CLOCKS or out["tree_prior"] not in PRIORS:
         raise ValueError(f"시계는 {', '.join(CLOCKS)}, 트리 사전분포는 {', '.join(PRIORS)} 중 하나입니다.")
+    out["site_rates"] = str(s.get("site_rates") or "gamma") if str(s.get("site_rates") or "gamma") in ("gamma", "inv", "gamma_inv") else "gamma"   # rate variation among sites: gamma(4), a proportion of invariant sites, or both
     out["month_dates"] = bool(s.get("month_dates"))                                # use month-only dates at the middle of the month
     out["partition"] = str(s.get("partition") or "") if str(s.get("partition") or "") in ("apobec", "apobec_only", "other_only") else ""   # apobec: separate rates for the APOBEC3-context sites and the others; *_only: a plain model on one class of site
     out["mask_columns"] = sorted({int(x) for x in (s.get("mask_columns") or [])})   # alignment columns (0-based) left out of the alignment
@@ -130,6 +131,7 @@ def apobec_columns(seqs: dict[str, str]) -> tuple[list[int], list[int]]:
 def build_xml(seqs: dict[str, str], dates: dict[str, float], groups: dict[str, list[str]], s: dict, rate0: float, fileprefix: str = "beast", mle: dict | None = None, proper: bool = False, fixed_freq: bool = False, gss: dict | None = None, init: dict | None = None) -> str:
     """The BEAST 1.10-style XML. `proper`: only proper priors (the clock rate and the population size get log-normal priors instead of the vague gamma / 1/x ones): a marginal likelihood, and so a Bayes factor, exists only for proper priors. `fixed_freq`: the base frequencies are the alignment's own and not sampled (needed for generalized stepping-stone sampling, which has no working prior for a simplex). `gss` = {"log", "burnin", "chain_length", "path_steps", "alpha"}: instead of path sampling / stepping-stone sampling, generalized stepping-stone sampling against a working prior built from the posterior samples of an earlier ordinary run of this model (`log` is read from the folder BEAST runs in, the first `burnin` states are discarded). `init` = {parameter id: starting value}: the chain starts there (for GSS, from the middle of the earlier posterior - a start outside the working prior has zero density and BEAST refuses it). `mle` = {"chain_length", "path_steps", "alpha"}: after the initial chain, path sampling and stepping-stone sampling of the marginal likelihood (`marginalLikelihoodEstimator`, written to `<prefix>.mle.log`). `seqs` {taxon: aligned sequence}, `dates` {taxon: decimal year}, `groups` {name: [taxa]} for the tMRCA of each group, `rate0` the starting clock rate (substitutions / site / year)."""
     names = list(seqs)
+    sr = s.get("site_rates", "gamma")
     chain, every = s["chain_length"], max(1, s["chain_length"] // s["samples"])
     L = []
     w = L.append
@@ -198,14 +200,18 @@ def build_xml(seqs: dict[str, str], dates: dict[str, float], groups: dict[str, l
         w(f'\t<HKYModel id="hky{suf}"><frequencies><frequencyModel dataType="nucleotide"><frequencies><parameter id="frequencies{suf}" value="' + freq_value + '"/></frequencies></frequencyModel></frequencies>'
           f'<kappa><parameter id="kappa{suf}" value="2.0" lower="0.0"/></kappa></HKYModel>')
         w(f'\t<siteModel id="siteModel{suf}"><substitutionModel><HKYModel idref="hky{suf}"/></substitutionModel>' + (f'<relativeRate><parameter id="mu{suf}" value="1.0" lower="0.0"/></relativeRate>' if part else "")
-          + f'<gammaShape gammaCategories="4"><parameter id="alpha{suf}" value="0.5" lower="0.0"/></gammaShape></siteModel>')
+          + (f'<gammaShape gammaCategories="4"><parameter id="alpha{suf}" value="0.5" lower="0.0"/></gammaShape>' if sr != "inv" else "")
+          + (f'<proportionInvariant><parameter id="pInv{suf}" value="0.5" lower="0.0" upper="1.0"/></proportionInvariant>' if sr != "gamma" else "") + '</siteModel>')
     if part:
         w('\t<compoundParameter id="allMus"><parameter idref="mu.a"/><parameter idref="mu.b"/></compoundParameter>')
     w('\t<treeDataLikelihood id="treeLikelihood" useAmbiguities="false">' + "".join(f'<partition><patterns idref="patterns{suf}"/><siteModel idref="siteModel{suf}"/></partition>' for suf, _q in sets) + f'<treeModel idref="treeModel"/>{rate_ref}</treeDataLikelihood>')
     w('\t<operators id="operators" optimizationSchedule="default">')
     for suf, _q in sets:
         w(f'\t\t<scaleOperator scaleFactor="0.75" weight="0.1"><parameter idref="kappa{suf}"/></scaleOperator>')
-        w(f'\t\t<scaleOperator scaleFactor="0.75" weight="0.1"><parameter idref="alpha{suf}"/></scaleOperator>')
+        if sr != "inv":
+            w(f'\t\t<scaleOperator scaleFactor="0.75" weight="0.1"><parameter idref="alpha{suf}"/></scaleOperator>')
+        if sr != "gamma":
+            w(f'\t\t<randomWalkOperator windowSize="0.1" weight="0.1"><parameter idref="pInv{suf}"/></randomWalkOperator>')
         if not fixed_freq:
             w(f'\t\t<deltaExchange delta="0.01" weight="0.1"><parameter idref="frequencies{suf}"/></deltaExchange>')
     if part:                                                                                     # the relative rates of the two partitions: their mean over the sites stays 1, so the clock rate is the genome-wide rate
@@ -229,7 +235,10 @@ def build_xml(seqs: dict[str, str], dates: dict[str, float], groups: dict[str, l
     w('\t\t<posterior id="posterior"><prior id="prior">')
     for suf, _q in sets:
         w(f'\t\t\t<logNormalPrior mean="1.0" stdev="1.25" offset="0.0" meanInRealSpace="false"><parameter idref="kappa{suf}"/></logNormalPrior>')
-        w(f'\t\t\t<exponentialPrior mean="0.5" offset="0.0"><parameter idref="alpha{suf}"/></exponentialPrior>')
+        if sr != "inv":
+            w(f'\t\t\t<exponentialPrior mean="0.5" offset="0.0"><parameter idref="alpha{suf}"/></exponentialPrior>')
+        if sr != "gamma":
+            w(f'\t\t\t<uniformPrior lower="0.0" upper="1.0"><parameter idref="pInv{suf}"/></uniformPrior>')
         if not fixed_freq:
             w(f'\t\t\t<dirichletPrior alpha="1.0" sumsTo="1.0"><parameter idref="frequencies{suf}"/></dirichletPrior>')
     if part:
@@ -256,7 +265,7 @@ def build_xml(seqs: dict[str, str], dates: dict[str, float], groups: dict[str, l
       '<column label="Likelihood" dp="4" width="12"><likelihood idref="likelihood"/></column><column label="rootAge" sf="6" width="12"><tmrcaStatistic idref="age(root)"/></column></log>')
     w(f'\t\t<log id="fileLog" logEvery="{every}" fileName="{fileprefix}.log" overwrite="false"><posterior idref="posterior"/><prior idref="prior"/><likelihood idref="likelihood"/>'
       '<parameter idref="treeModel.rootHeight"/><tmrcaStatistic idref="age(root)"/>' + "".join(f'<tmrcaStatistic idref="age({_safe(g)})"/>' + (f'<tmrcaStatistic idref="stem({_safe(g)})"/><monophylyStatistic idref="monophyly({_safe(g)})"/>' if g in s.get("stem_groups", []) else "") for g in groups) + '<treeLengthStatistic idref="treeLength"/>'
-      '<parameter idref="demographic.popSize"/>' + ('<parameter idref="demographic.growthRate"/>' if s["tree_prior"] == "exponential" else "") + "".join(f'<parameter idref="kappa{suf}"/><parameter idref="alpha{suf}"/>' for suf, _q in sets) + ('<parameter idref="mu.a"/><parameter idref="mu.b"/>' if part else "") +
+      '<parameter idref="demographic.popSize"/>' + ('<parameter idref="demographic.growthRate"/>' if s["tree_prior"] == "exponential" else "") + "".join(f'<parameter idref="kappa{suf}"/>' + (f'<parameter idref="alpha{suf}"/>' if sr != "inv" else "") + (f'<parameter idref="pInv{suf}"/>' if sr != "gamma" else "") for suf, _q in sets) + ('<parameter idref="mu.a"/><parameter idref="mu.b"/>' if part else "") +
       f'<parameter idref="{rate_param}"/>' + ('<parameter idref="ucld.stdev"/>' if s["clock"] == "relaxed" else "") + '<rateStatistic idref="meanRate"/><treeDataLikelihood idref="treeLikelihood"/><coalescentLikelihood idref="coalescent"/></log>')
     w(f'\t\t<logTree id="treeFileLog" logEvery="{every}" nexusFormat="true" fileName="{fileprefix}.trees" sortTranslationTable="true"><treeModel idref="treeModel"/>'
       f'<trait name="rate" tag="rate">{rate_ref}</trait><posterior idref="posterior"/></logTree>')

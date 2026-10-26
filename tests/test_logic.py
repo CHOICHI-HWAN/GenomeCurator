@@ -3899,3 +3899,17 @@ def test_tip_labels_say_country_date_lineage_and_id():
     m = beastprep._tip_label("PP_X", {"date": "2025.6", "precision": "range", "country": "Democratic Republic of the Congo", "lineage": "A.1"})
     assert m == "DR Congo  2025-08  A.1  PP_X"
     assert "?" in beastprep._tip_label("Z", {"date": "x"})
+
+
+def test_beast_site_rates_option_writes_the_invariant_sites_parameter():
+    from genomecurator import beastprep
+    seqs = {"A": "ACGTACGTAC", "B": "ACGTACGTAT", "C": "ACGAACGTAT", "D": "ACGAACGTAC"}
+    dates = {"A": 2024.0, "B": 2024.2, "C": 2024.5, "D": 2024.9}
+    def xml(sr):
+        s = beastprep.parse_settings({"site_rates": sr, "chain_length": 100000, "samples": 1000, "n_tips": 10})
+        return beastprep.build_xml(seqs, dates, {}, s, 3e-5)
+    g, i, gi = xml("gamma"), xml("inv"), xml("gamma_inv")
+    assert "pInv" not in g and 'id="alpha"' in g
+    assert 'id="pInv"' in i and "gammaShape" not in i and 'idref="alpha"' not in i
+    assert 'id="pInv"' in gi and "gammaShape" in gi
+    assert beastprep.parse_settings({"site_rates": "x"})["site_rates"] == "gamma"

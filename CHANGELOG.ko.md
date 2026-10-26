@@ -14,6 +14,7 @@ Virus Genome Metadata Curator(패키지 `genomecurator`, 이전 표시 이름 "G
 ## [Unreleased]
 
 ### 추가
+- **BEAST: 자리별 속도 변이 방식을 고를 수 있습니다**(BEAST 설정의 `site_rates`: `gamma`(기본, 4범주), `inv`(불변 자리 비율), `gamma_inv`). ModelFinder 같은 모형 선택 도구가 가리킨 치환 모형을 쓰고 날짜에 미치는 영향을 확인할 수 있습니다. 옵션을 주지 않으면 달라지는 것이 없습니다.
 - **BETS 추정에 이름을 붙일 수 있습니다**(BETS 설정의 `name`): 추정마다 자기 폴더 `bets/<name>/`을 써서 두 추정(예: strict와 relaxed 시계)을 동시에 돌릴 수 있습니다. 전에는 같은 `bets/` 폴더를 함께 써서 동시에 시작하면 서로의 분석을 덮어썼습니다.
 - **BEAST 결과를 보는 트리 뷰어로 PearTree를 씁니다.** 클럭 화면의 BEAST 분석에서 요약 트리를 앱 안의 PearTree(Andrew Rambaut, MIT)로 열고, 팁에 날짜·계통·클레이드·나라가 붙어 있어 그 값으로 색을 칠할 수 있습니다(시간 축은 팁 날짜로 맞춥니다). PearTree는 페이지 안에서 돌고 어디로도 보내지 않습니다. 코드는 이 저장소에 들어 있지 않고, 분석 화면에서 PearTree와 `pearcore` 라이브러리(저장소에 라이선스 파일 없음)의 고정된 버전을 데이터 폴더로 한 번 받습니다(약 4 MB).
 - **BEAST 요약 트리.** 클럭 화면에 BEAST 분석마다 요약 트리(NEXUS: 처음 쓸 때 TreeAnnotator가 만들며 기본은 HIPSTR, 노드 높이는 중앙값, 앞 10% 트리 제외, 노드에 사후확률과 95% HPD)와 팁 표(날짜, 계통, 클레이드, 나라)가 나열됩니다. 팁 표는 PearTree나 FigTree 같은 트리 뷰어에서 팁에 붙여 쓸 수 있습니다(`/api/clock/<id>/beast/tree?tag=...`). 분석에 비공개 유전체가 들어 있으면 트리에도 그 id가 들어 있으니 공개된 곳에 올리지 마세요.
