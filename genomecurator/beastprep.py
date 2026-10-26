@@ -517,8 +517,11 @@ def mcc_tree(clock_run: dict, tag: str = "", kind: str = "hipstr", burnin: float
     skip = int(n * burnin)
     if force or not out.exists() or out.stat().st_mtime < src.stat().st_mtime:
         tmp = d / f".mcc-{kind}.tmp"
-        r = subprocess.run([str(pre / "bin" / "treeannotator"), "-type", kind, "-heights", "median", "-burninTrees", str(skip), str(src), str(tmp)],
-                           capture_output=True, text=True, timeout=1800)
+        for attempt in (1, 2):       # on a busy machine TreeAnnotator's worker threads sometimes die; a second try works
+            r = subprocess.run([str(pre / "bin" / "treeannotator"), "-type", kind, "-heights", "median", "-burninTrees", str(skip), str(src), str(tmp)],
+                               capture_output=True, text=True, timeout=1800)
+            if r.returncode == 0 and tmp.exists():
+                break
         if r.returncode != 0 or not tmp.exists():
             raise RuntimeError("TreeAnnotator가 실패했습니다: " + (r.stderr or r.stdout)[-400:])
         tmp.replace(out)

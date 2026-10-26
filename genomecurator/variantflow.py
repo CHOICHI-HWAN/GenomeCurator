@@ -54,6 +54,11 @@ def available(run: dict) -> bool:
     return result_file(run).exists()
 
 
+def member_names(run: dict) -> set:
+    """The run's members as the sequence names in the input FASTA: a private genome is `private:<id>` in the member list and `<id>` in the FASTA, the mutation table and the call tables."""
+    return {m.split(":", 1)[1] if m.startswith("private:") else m for m in nextstrain.run_members(run)}
+
+
 def run_for_mutprofile(run: dict, cores: int | None = None, progress=None, max_n: float | None = 0.05) -> dict:
     """Run the flow for a finished mutation-profile run. Calling it again after an interruption continues in the same folder."""
     from . import datasets
@@ -62,7 +67,7 @@ def run_for_mutprofile(run: dict, cores: int | None = None, progress=None, max_n
         raise RuntimeError(f"Snakemake / snippy / lofreq 환경이 없습니다: {st['how']}")
     p = progress or (lambda *a: None)
     ds = datasets.get(run["dataset_id"])
-    members = set(nextstrain.run_members(run))
+    members = member_names(run)
     ref = mutprofile.summary(run).get("reference", "")
     fa, _gff = mutprofile.reference_by_name(ref)
     wd = workdir(run)

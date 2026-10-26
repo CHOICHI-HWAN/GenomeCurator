@@ -3884,3 +3884,9 @@ def test_bets_estimations_with_a_name_keep_their_own_folders():
     assert beastprep._root(run, a) != beastprep._root(run, b) and beastprep._root(run, a).name == "strict_s1"
     assert beastprep._root(run, beastprep.parse_bets_settings({})) == beastprep.bets_folder(run)
     assert beastprep._root(run, beastprep.parse_bets_settings({"compare": True})).name == "models"
+
+
+def test_variantflow_members_carry_private_genomes_under_their_fasta_names(tmp_path):
+    from genomecurator import variantflow
+    (tmp_path / "members.txt").write_text("A1\nprivate:K1\nB2\n")
+    assert variantflow.member_names({"run_dir": str(tmp_path)}) == {"A1", "K1", "B2"}
