@@ -13,12 +13,12 @@ async function inst(){const b=document.getElementById('inst'),m=document.getElem
   if(j.status==='error'||j.status==='failed'){m.textContent='실패: '+(j.error||j.message||'');b.disabled=false;return}}}
 </script>
 {% else %}
-<div class="mut" style="font-size:12.5px;margin:4px 0">팁에 날짜·계통·클레이드·나라가 붙어 있습니다(기본은 나라별 색, 바꾸려면 왼쪽 패널의 Colour by). 이 트리에는 비공개 유전체 id가 들어 있을 수 있으니 화면·내보내기 파일을 공개하지 마세요.
+<div class="mut" style="font-size:12.5px;margin:4px 0">팁 이름은 「나라 날짜 계통 ID」이고 ★는 한국입니다. 날짜·계통·클레이드·나라가 따로도 붙어 있습니다(기본은 나라별 색, 바꾸려면 왼쪽 패널의 Colour by). 이 트리에는 비공개 유전체 id가 들어 있을 수 있으니 화면·내보내기 파일을 공개하지 마세요.
  <a href="/api/clock/{{ run.id }}/beast/tree?tag={{ tag|urlencode }}&download=1">트리 내려받기</a></div>
 <iframe id="pt" style="width:100%;height:calc(100vh - 260px);min-height:480px;border:1px solid #ccc;border-radius:6px" title="PearTree"></iframe>
 <script>
 const tu=location.origin+'/api/clock/{{ run.id }}/beast/tree?file=annotated&tag='+encodeURIComponent({{ tag|tojson }});
-const st=btoa(JSON.stringify({axisShow:'time',axisDateAnnotation:'date',tipColourBy:'country'}));
+const st=btoa(JSON.stringify({axisShow:'time',axisDateAnnotation:'date',tipColourBy:'country',tipLabelShow:'label'}));
 document.getElementById('pt').src='/tools/peartree/peartree/peartree.html?theme=light&nostore=1&treeUrl='+encodeURIComponent(tu)+'&settings='+encodeURIComponent(st);
 </script>
 {% endif %}

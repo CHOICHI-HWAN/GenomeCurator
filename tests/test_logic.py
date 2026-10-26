@@ -3890,3 +3890,12 @@ def test_variantflow_members_carry_private_genomes_under_their_fasta_names(tmp_p
     from genomecurator import variantflow
     (tmp_path / "members.txt").write_text("A1\nprivate:K1\nB2\n")
     assert variantflow.member_names({"run_dir": str(tmp_path)}) == {"A1", "K1", "B2"}
+
+
+def test_tip_labels_say_country_date_lineage_and_id():
+    from genomecurator import beastprep
+    k = beastprep._tip_label("KDCA205", {"date": "2026.4356", "precision": "day", "country": "South Korea", "lineage": "A.4.1"})
+    assert k.startswith("★ South Korea  2026-06-") and k.endswith("A.4.1  KDCA205")
+    m = beastprep._tip_label("PP_X", {"date": "2025.6", "precision": "range", "country": "Democratic Republic of the Congo", "lineage": "A.1"})
+    assert m == "DR Congo  2025-08  A.1  PP_X"
+    assert "?" in beastprep._tip_label("Z", {"date": "x"})

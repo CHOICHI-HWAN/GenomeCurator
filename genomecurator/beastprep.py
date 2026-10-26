@@ -15,7 +15,7 @@ import random
 import re
 import subprocess
 import time
-from datetime import date
+from datetime import date, datetime, timedelta
 from pathlib import Path
 
 from . import aligned, clock, log, nextstrain, runs
@@ -538,12 +538,30 @@ def mcc_tree(clock_run: dict, tag: str = "", kind: str = "hipstr", burnin: float
     return {"tree": out.name, "tips": tips.name if tips.exists() else None, "trees": n, "burnin_trees": skip, "newest_tip": newest, "kind": kind}
 
 
+def _short_country(c: str) -> str:
+    return {"Democratic Republic of the Congo": "DR Congo", "United States of America": "USA", "United Kingdom": "UK", "Central African Republic": "CAR"}.get(c, c)
+
+
+def _tip_label(name: str, a: dict) -> str:
+    """`Country  date  lineage  id`: what a tip stands for, readable in the viewer; the country is first so the tips of one place sit together in the eye, and Korea is marked."""
+    try:
+        y = float(a.get("date", ""))
+        yr = int(y)
+        d = datetime(yr, 1, 1) + timedelta(days=round((y - yr) * (365 + (yr % 4 == 0))))
+        date = d.strftime("%Y-%m-%d") if a.get("precision") == "day" else d.strftime("%Y-%m")
+    except (TypeError, ValueError):
+        date = "?"
+    c = _short_country(a.get("country") or "")
+    star = "\u2605 " if c == "South Korea" else ""
+    return f"{star}{c or '?'}  {date}  {a.get('lineage') or ''}  {name}".replace('"', "")
+
+
 def annotated_tree(clock_run: dict, tag: str = "", kind: str = "hipstr") -> Path:
-    """`mcc-<kind>.annotated.tree`: the summary tree with date, lineage, clade and country on the tips (from dates.tsv), for the in-app PearTree viewer."""
+    """`mcc-<kind>.annotated.tree`: the summary tree with a readable `label` (country, date, lineage, id) and date, lineage, clade and country on the tips (from dates.tsv), for the in-app PearTree viewer."""
     from . import peartree
     info = mcc_tree(clock_run, tag, kind)
     d = folder(clock_run, tag)
-    src, out = d / info["tree"], d / f"mcc-{kind}.annotated.tree"
+    src, out = d / info["tree"], d / f"mcc-{kind}.annotated.v2.tree"
     if out.exists() and out.stat().st_mtime >= src.stat().st_mtime and out.stat().st_mtime >= (d / "dates.tsv").stat().st_mtime:
         return out
     tips = {}
@@ -552,7 +570,10 @@ def annotated_tree(clock_run: dict, tag: str = "", kind: str = "hipstr") -> Path
     for ln in lines[1:]:
         c = ln.split("\t")
         if len(c) == len(head):
-            tips[c[0]] = {h: v for h, v in zip(head[1:], c[1:]) if h != "precision"}
+            row = dict(zip(head, c))
+            a = {"label": _tip_label(c[0], row)}
+            a.update({h: v for h, v in row.items() if h not in ("name", "precision")})
+            tips[c[0]] = a
     out.write_text(peartree.annotate(src.read_text(encoding="utf-8"), tips), encoding="utf-8")
     return out
 
