@@ -5,3 +5,11 @@ __pycache__/
 superset/home/
 참조자료/
 private/
+
+# raw sequencing reads of the private (unpublished) genomes: never commit
+RAWS/
+*.fastq
+*.fastq.gz
+*.fq.gz
+*.bam
+*.cram
