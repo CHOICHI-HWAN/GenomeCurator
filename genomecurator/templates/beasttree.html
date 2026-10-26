@@ -15,11 +15,20 @@ async function inst(){const b=document.getElementById('inst'),m=document.getElem
 {% else %}
 <div class="mut" style="font-size:12.5px;margin:4px 0">팁 이름은 「나라 날짜 계통 ID」이고 ★는 한국입니다. 날짜·계통·클레이드·나라가 따로도 붙어 있습니다(기본은 나라별 색, 바꾸려면 왼쪽 패널의 Colour by). 이 트리에는 비공개 유전체 id가 들어 있을 수 있으니 화면·내보내기 파일을 공개하지 마세요.
  <a href="/api/clock/{{ run.id }}/beast/tree?tag={{ tag|urlencode }}&download=1">트리 내려받기</a></div>
-<iframe id="pt" style="width:100%;height:calc(100vh - 260px);min-height:480px;border:1px solid #ccc;border-radius:6px" title="PearTree"></iframe>
+<div id="ptmsg" class="card mut" style="margin:6px 0">트리를 만드는 중입니다(처음 한 번은 TreeAnnotator가 요약 트리를 만들어 몇 초~1분 걸립니다)…</div>
+<iframe id="pt" style="width:100%;height:calc(100vh - 260px);min-height:480px;border:1px solid #ccc;border-radius:6px;display:none" title="PearTree"></iframe>
 <script>
-const tu=location.origin+'/api/clock/{{ run.id }}/beast/tree?file=annotated&tag='+encodeURIComponent({{ tag|tojson }});
-const st=btoa(JSON.stringify({axisShow:'time',axisDateAnnotation:'date',tipColourBy:'country',tipLabelShow:'label'}));
-document.getElementById('pt').src='/tools/peartree/peartree/peartree.html?theme=light&nostore=1&treeUrl='+encodeURIComponent(tu)+'&settings='+encodeURIComponent(st);
+(async()=>{const msg=document.getElementById('ptmsg'),fr=document.getElementById('pt');
+ try{const r=await fetch('/api/clock/{{ run.id }}/beast/tree?file=annotated&tag='+encodeURIComponent({{ tag|tojson }}));
+  const txt=await r.text();
+  if(!r.ok){let e=txt;try{e=JSON.parse(txt).error||txt}catch(_){}msg.innerHTML='트리를 만들지 못했습니다: '+String(e).replace(/[<>&]/g,'')+' <a href="">다시 시도</a>';return}
+  if(!txt.includes('#NEXUS')){msg.textContent='트리 파일 형식이 올바르지 않습니다.';return}
+  const st=btoa(JSON.stringify({axisShow:'time',axisDateAnnotation:'date',tipColourBy:'country',tipLabelShow:'label'}));
+  // PearTree reads only http(s) addresses from the URL, so the tree text is handed over by message once its page is up
+  fr.addEventListener('load',()=>{let n=0;const send=()=>{fr.contentWindow.postMessage({type:'pt:loadTree',text:txt,filename:{{ (tag or 'beast')|tojson }}+'.tree'},location.origin);if(++n<4)setTimeout(send,1500)};setTimeout(send,800)});
+  fr.src='/tools/peartree/peartree/peartree.html?theme=light&nostore=1&settings='+encodeURIComponent(st);
+  fr.style.display='';msg.style.display='none';
+ }catch(e){msg.textContent='트리를 불러오지 못했습니다: '+e}})();
 </script>
 {% endif %}
 {% endblock %}
