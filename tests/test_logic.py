@@ -3927,3 +3927,57 @@ def test_beast_skygrid_tree_prior_replaces_the_parametric_coalescent():
     assert 'idref="coalescent"' not in x and "demographic.growthRate" not in x
     e = beastprep.build_xml(seqs, dates, {}, beastprep.parse_settings({"tree_prior": "exponential", "chain_length": 100000, "samples": 1000, "n_tips": 10}), 3e-5)
     assert "skygrid" not in e and 'idref="coalescent"' in e
+
+
+_TOY_TREE = """#NEXUS
+Begin trees;
+\tTranslate
+\t\t1 g1,
+\t\t2 g2,
+\t\t3 g3,
+\t\t4 g4,
+\t\t5 g5,
+\t\t6 g6,
+\t\t7 g7,
+\t\t8 g8
+;
+tree TREE1 = [&R] ((((1[&country=AA,lineage=L1,date=2021.9]:0.3,2[&country=AA,lineage=L1,date=2021.95]:0.3)[&posterior=0.99]:0.2,3[&country=BB,lineage=L1,date=2022.0]:0.5)[&posterior=0.99]:0.2,(4[&country=BB,lineage=L1,date=2022.0]:0.2,5[&country=BB,lineage=L1,date=2022.05]:0.2)[&posterior=0.5]:0.5)[&posterior=1.0]:0.1,(6[&country=CC,lineage=L2,date=2022.1]:0.3,(7[&country=CC,lineage=L2,date=2022.1]:0.1,8[&country=DD,lineage=L2,date=2022.2]:0.2):0.2):0.4);
+End;
+"""
+
+
+def test_treefigure_parses_collapses_and_refuses_unaliased_private_genomes(tmp_path):
+    import pytest
+    from genomecurator import treefigure
+    root = treefigure.parse_nexus_tree(_TOY_TREE)
+    treefigure.set_times(root)
+    names = [t["name"] for t in treefigure.tips(root)]
+    assert names == ["g1", "g2", "g3", "g4", "g5", "g6", "g7", "g8"] and root["children"][0]["meta"].get("posterior") == "1.0"
+    assert abs(treefigure.tips(root)[0]["t"] - 2021.9) < 1e-9 and root["t"] < 2021.9       # the first dated tip sits at its date, the root before it
+    D = treefigure.display_tree(root, {"g7", "g8"}, collapse_min=3)
+    rows = treefigure._leaves(D, [])
+    assert [r["kind"] for r in rows].count("tri") == 1 and sum(1 for r in rows if r["kind"] == "tip") == 3          # the 3-tip clade collapses, the clade of interest and its path do not
+    with pytest.raises(ValueError):
+        treefigure.check_labels(["g1", "private:x"], {})
+    with pytest.raises(ValueError):
+        treefigure.check_labels(["g1", "secret1"], {}, private_ids={"secret1"})
+    treefigure.check_labels(["g1", "secret1"], {"secret1": "alias"}, private_ids={"secret1"})
+
+
+def test_treefigure_render_is_reproducible_and_writes_a_manifest(tmp_path):
+    import json
+    import pytest
+    pytest.importorskip("matplotlib")
+    from genomecurator import repro, treefigure
+    tree = tmp_path / "toy.tree"
+    tree.write_text(_TOY_TREE, encoding="utf-8")
+    kw = dict(focus={"g7", "g8"}, labels={}, title="T", collapse_min=3, formats=("svg",))
+    a = treefigure.render(tree, tmp_path / "a" / "fig", **kw)
+    b = treefigure.render(tree, tmp_path / "b" / "fig", **kw)
+    assert (tmp_path / "a" / "fig.svg").read_bytes() == (tmp_path / "b" / "fig.svg").read_bytes()      # the same inputs give the same file
+    assert a["rows"] == b["rows"] == 4 and a["collapsed"] == 1
+    m = json.loads((tmp_path / "a" / "fig.manifest.json").read_text())
+    assert m["inputs"][0]["sha256"] == repro.sha256(tree) and m["outputs"][0]["sha256"] == repro.sha256(tmp_path / "a" / "fig.svg") and m["parameters"]["collapse_min"] == 3
+    assert repro.verify(tmp_path / "a" / "fig.manifest.json", base=".") == []
+    tree.write_text(_TOY_TREE.replace("0.99", "0.98"), encoding="utf-8")
+    assert any("content differs" in x for x in repro.verify(tmp_path / "a" / "fig.manifest.json", base="."))

@@ -14,6 +14,7 @@ Virus Genome Metadata Curator(패키지 `genomecurator`, 이전 표시 이름 "G
 ## [Unreleased]
 
 ### 추가
+- **재현 가능한 트리 그림.** `genomecurator.treefigure.render()`가 BEAST 요약 트리를 논문용 그림(달력 축, 관심 클레이드를 마지막에, 곁가지를 구성 표시 삼각형으로 접기, 리니지 칩, 사후확률 표시, 신용구간 막대)으로 한 번에 그리고, `genomecurator.repro.manifest()`가 그림 옆에 `<그림>.manifest.json`을 씁니다: 모든 입력의 SHA-256, 매개변수, 프로그램·라이브러리·BEAST·TreeAnnotator 버전, 쓴 파일의 SHA-256(`repro.verify`로 확인). 같은 입력이면 SVG가 바이트까지 같습니다. 트리 안의 비공개 유전체에는 별칭이 있어야 하며 없으면 그림을 만들지 않습니다. matplotlib은 선택입니다(`genomecurator[figures]`). docs/REPRODUCIBILITY.ko.md 참고.
 - **BEAST: SkyGrid 트리 사전분포**(`tree_prior: skygrid`, `skygrid_points`로 격자 수 지정, 기본은 한 달에 한 칸, 표본 기간보다 1년 더 멀리까지). 성장률 하나 대신 시간에 따라 변하는 집단 크기를 써서, 날짜 추정이 지수 성장·일정 크기 사전분포에만 기대지 않는지 확인할 수 있습니다. 주변우도 비교(BETS·GSS)에는 쓸 수 없고, 그 비교는 계속 strict·relaxed × constant·exponential입니다.
 - **BEAST: 자리별 속도 변이 방식을 고를 수 있습니다**(BEAST 설정의 `site_rates`: `gamma`(기본, 4범주), `inv`(불변 자리 비율), `gamma_inv`). ModelFinder 같은 모형 선택 도구가 가리킨 치환 모형을 쓰고 날짜에 미치는 영향을 확인할 수 있습니다. 옵션을 주지 않으면 달라지는 것이 없습니다.
 - **BETS 추정에 이름을 붙일 수 있습니다**(BETS 설정의 `name`): 추정마다 자기 폴더 `bets/<name>/`을 써서 두 추정(예: strict와 relaxed 시계)을 동시에 돌릴 수 있습니다. 전에는 같은 `bets/` 폴더를 함께 써서 동시에 시작하면 서로의 분석을 덮어썼습니다.

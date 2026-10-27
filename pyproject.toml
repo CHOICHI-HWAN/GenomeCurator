@@ -19,6 +19,8 @@ dependencies = [
 
 [project.optional-dependencies]
 dev = ["pytest>=8"]
+# figures from a BEAST summary tree (genomecurator.treefigure)
+figures = ["matplotlib>=3.8"]
 # only for scripts/demo (recording the README GIFs): drives a headless Chrome and assembles the GIFs
 demo = ["pillow>=10", "websocket-client>=1.6"]
 
