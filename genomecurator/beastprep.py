@@ -23,7 +23,8 @@ from . import aligned, clock, log, nextstrain, runs
 _log = log.get("beast")
 DEFAULTS = {"n_tips": 150, "chain_length": 30000000, "samples": 10000, "clock": "relaxed", "tree_prior": "exponential", "seed": 1, "threads": 0}
 CLOCKS = ("strict", "relaxed")
-PRIORS = ("constant", "exponential")
+PRIORS = ("constant", "exponential")                     # the parametric tree priors the marginal-likelihood comparison (BETS / GSS) uses
+TREE_PRIORS = PRIORS + ("skygrid",)                       # all tree priors a BEAST analysis accepts
 
 
 def env_prefix() -> Path | None:
@@ -59,9 +60,10 @@ def parse_settings(raw: dict | None) -> dict:
         raise ValueError("표본 유전체 수는 10~600입니다.")
     if out["chain_length"] < 10000 or not 100 <= out["samples"] <= 100000:
         raise ValueError("체인 길이는 10,000 이상, 표본 수는 100~100,000이어야 합니다.")
-    if out["clock"] not in CLOCKS or out["tree_prior"] not in PRIORS:
-        raise ValueError(f"시계는 {', '.join(CLOCKS)}, 트리 사전분포는 {', '.join(PRIORS)} 중 하나입니다.")
+    if out["clock"] not in CLOCKS or out["tree_prior"] not in TREE_PRIORS:
+        raise ValueError(f"시계는 {', '.join(CLOCKS)}, 트리 사전분포는 {', '.join(TREE_PRIORS)} 중 하나입니다.")
     out["site_rates"] = str(s.get("site_rates") or "gamma") if str(s.get("site_rates") or "gamma") in ("gamma", "inv", "gamma_inv") else "gamma"   # rate variation among sites: gamma(4), a proportion of invariant sites, or both
+    out["skygrid_points"] = max(8, min(200, int(s.get("skygrid_points") or 36)))      # SkyGrid: number of grid cells (one per month by default)
     out["month_dates"] = bool(s.get("month_dates"))                                # use month-only dates at the middle of the month
     out["partition"] = str(s.get("partition") or "") if str(s.get("partition") or "") in ("apobec", "apobec_only", "other_only") else ""   # apobec: separate rates for the APOBEC3-context sites and the others; *_only: a plain model on one class of site
     out["mask_columns"] = sorted({int(x) for x in (s.get("mask_columns") or [])})   # alignment columns (0-based) left out of the alignment
@@ -166,11 +168,14 @@ def build_xml(seqs: dict[str, str], dates: dict[str, float], groups: dict[str, l
             w(f'\t\t<sequence><taxon idref="{_safe(n)}"/>{sq[n]}</sequence>')
         w('\t</alignment>')
         w(f'\t<patterns id="patterns{suf}" from="1" strip="false"><alignment idref="alignment{suf}"/></patterns>')
-    if s["tree_prior"] == "constant":
+    sky = s["tree_prior"] == "skygrid"
+    if sky:                                                                   # the starting tree only needs a demographic model; the SkyGrid itself is the tree prior below
+        w('\t<constantSize id="demographic" units="years"><populationSize><parameter id="demographic.popSize" value="1.0" lower="0.0"/></populationSize></constantSize>')
+    elif s["tree_prior"] == "constant":
         w('\t<constantSize id="demographic" units="years"><populationSize><parameter id="demographic.popSize" value="1.0" lower="0.0"/></populationSize></constantSize>')
     else:
         w('\t<exponentialGrowth id="demographic" units="years"><populationSize><parameter id="demographic.popSize" value="1.0" lower="0.0"/></populationSize><growthRate><parameter id="demographic.growthRate" value="1.0"/></growthRate></exponentialGrowth>')
-    w('\t<coalescentSimulator id="startingTree"><taxa idref="taxa"/><' + ("constantSize" if s["tree_prior"] == "constant" else "exponentialGrowth") + ' idref="demographic"/></coalescentSimulator>')
+    w('\t<coalescentSimulator id="startingTree"><taxa idref="taxa"/><' + ("exponentialGrowth" if s["tree_prior"] == "exponential" else "constantSize") + ' idref="demographic"/></coalescentSimulator>')
     w('\t<treeModel id="treeModel"><coalescentTree idref="startingTree"/><rootHeight><parameter id="treeModel.rootHeight"/></rootHeight>'
       '<nodeHeights internalNodes="true"><parameter id="treeModel.internalNodeHeights"/></nodeHeights><nodeHeights internalNodes="true" rootNode="true"><parameter id="treeModel.allInternalNodeHeights"/></nodeHeights></treeModel>')
     w('\t<treeLengthStatistic id="treeLength"><treeModel idref="treeModel"/></treeLengthStatistic>')
@@ -180,7 +185,13 @@ def build_xml(seqs: dict[str, str], dates: dict[str, float], groups: dict[str, l
         if g in s.get("stem_groups", []):
             w(f'\t<tmrcaStatistic id="stem({_safe(g)})" absolute="true" includeStem="true"><treeModel idref="treeModel"/><mrca><taxa idref="group.{_safe(g)}"/></mrca></tmrcaStatistic>')
             w(f'\t<monophylyStatistic id="monophyly({_safe(g)})"><mrca><taxa idref="group.{_safe(g)}"/></mrca><treeModel idref="treeModel"/></monophylyStatistic>')       # 1 in the samples where the group is a clade
-    w('\t<coalescentLikelihood id="coalescent"><model><' + ("constantSize" if s["tree_prior"] == "constant" else "exponentialGrowth") + ' idref="demographic"/></model><populationTree><treeModel idref="treeModel"/></populationTree></coalescentLikelihood>')
+    if sky:
+        span = max(dates.values()) - min(dates.values()); cut = round(span + 1.0, 2); npts = int(s.get("skygrid_points", 36))   # the grid reaches one year beyond the sampled span
+        w(f'\t<gmrfSkyGridLikelihood id="skygrid"><populationSizes><parameter id="skygrid.logPopSize" dimension="{npts + 1}" value="1.0"/></populationSizes>'
+          f'<precisionParameter><parameter id="skygrid.precision" value="0.1" lower="0.0"/></precisionParameter><numGridPoints><parameter id="skygrid.numGridPoints" value="{npts}"/></numGridPoints>'
+          f'<cutOff><parameter id="skygrid.cutOff" value="{cut}"/></cutOff><populationTree><treeModel idref="treeModel"/></populationTree></gmrfSkyGridLikelihood>')
+    else:
+        w('\t<coalescentLikelihood id="coalescent"><model><' + ("constantSize" if s["tree_prior"] == "constant" else "exponentialGrowth") + ' idref="demographic"/></model><populationTree><treeModel idref="treeModel"/></populationTree></coalescentLikelihood>')
     if s["clock"] == "strict":
         w(f'\t<strictClockBranchRates id="branchRates"><rate><parameter id="clock.rate" value="{rate0:.4e}" lower="0.0"/></rate></strictClockBranchRates>')
         rate_param, rate_ref = "clock.rate", '<strictClockBranchRates idref="branchRates"/>'
@@ -227,7 +238,11 @@ def build_xml(seqs: dict[str, str], dates: dict[str, float], groups: dict[str, l
     w('\t\t<wilsonBalding weight="3"><treeModel idref="treeModel"/></wilsonBalding>')
     w('\t\t<scaleOperator scaleFactor="0.75" weight="3"><parameter idref="treeModel.rootHeight"/></scaleOperator>')
     w('\t\t<uniformOperator weight="30"><parameter idref="treeModel.internalNodeHeights"/></uniformOperator>')
-    w('\t\t<scaleOperator scaleFactor="0.75" weight="3"><parameter idref="demographic.popSize"/></scaleOperator>')
+    if sky:
+        w('\t\t<gmrfGridBlockUpdateOperator scaleFactor="1.0" weight="30"><gmrfSkyrideLikelihood idref="skygrid"/></gmrfGridBlockUpdateOperator>')
+        w('\t\t<scaleOperator scaleFactor="0.75" weight="1"><parameter idref="skygrid.precision"/></scaleOperator>')
+    else:
+        w('\t\t<scaleOperator scaleFactor="0.75" weight="3"><parameter idref="demographic.popSize"/></scaleOperator>')
     if s["tree_prior"] == "exponential":
         w('\t\t<randomWalkOperator windowSize="1.0" weight="3"><parameter idref="demographic.growthRate"/></randomWalkOperator>')
     w('\t</operators>')
@@ -252,21 +267,23 @@ def build_xml(seqs: dict[str, str], dates: dict[str, float], groups: dict[str, l
         w(f'\t\t\t<gammaPrior shape="0.001" scale="1000.0" offset="0.0"><parameter idref="{rate_param}"/></gammaPrior>')
     if s["clock"] == "relaxed":
         w('\t\t\t<exponentialPrior mean="0.3333333333333333" offset="0.0"><parameter idref="ucld.stdev"/></exponentialPrior>')
-    if proper:
+    if sky:
+        w('\t\t\t<gammaPrior shape="0.001" scale="1000.0" offset="0.0"><parameter idref="skygrid.precision"/></gammaPrior>')       # the usual vague prior on the smoothing precision
+    elif proper:
         w('\t\t\t<logNormalPrior mean="0.0" stdev="2.0" offset="0.0" meanInRealSpace="false"><parameter idref="demographic.popSize"/></logNormalPrior>')
     else:
         w('\t\t\t<oneOnXPrior><parameter idref="demographic.popSize"/></oneOnXPrior>')
     if s["tree_prior"] == "exponential":
         w('\t\t\t<laplacePrior mean="0.0" scale="100.0"><parameter idref="demographic.growthRate"/></laplacePrior>')
-    w('\t\t\t<coalescentLikelihood idref="coalescent"/>')
+    w('\t\t\t<gmrfSkyGridLikelihood idref="skygrid"/>' if sky else '\t\t\t<coalescentLikelihood idref="coalescent"/>')
     w('\t\t</prior><likelihood id="likelihood"><treeDataLikelihood idref="treeLikelihood"/></likelihood></posterior>')
     w('\t\t<operators idref="operators"/>')
     w(f'\t\t<log id="screenLog" logEvery="{every * 10}"><column label="Posterior" dp="4" width="12"><posterior idref="posterior"/></column><column label="Prior" dp="4" width="12"><prior idref="prior"/></column>'
       '<column label="Likelihood" dp="4" width="12"><likelihood idref="likelihood"/></column><column label="rootAge" sf="6" width="12"><tmrcaStatistic idref="age(root)"/></column></log>')
     w(f'\t\t<log id="fileLog" logEvery="{every}" fileName="{fileprefix}.log" overwrite="false"><posterior idref="posterior"/><prior idref="prior"/><likelihood idref="likelihood"/>'
-      '<parameter idref="treeModel.rootHeight"/><tmrcaStatistic idref="age(root)"/>' + "".join(f'<tmrcaStatistic idref="age({_safe(g)})"/>' + (f'<tmrcaStatistic idref="stem({_safe(g)})"/><monophylyStatistic idref="monophyly({_safe(g)})"/>' if g in s.get("stem_groups", []) else "") for g in groups) + '<treeLengthStatistic idref="treeLength"/>'
-      '<parameter idref="demographic.popSize"/>' + ('<parameter idref="demographic.growthRate"/>' if s["tree_prior"] == "exponential" else "") + "".join(f'<parameter idref="kappa{suf}"/>' + (f'<parameter idref="alpha{suf}"/>' if sr != "inv" else "") + (f'<parameter idref="pInv{suf}"/>' if sr != "gamma" else "") for suf, _q in sets) + ('<parameter idref="mu.a"/><parameter idref="mu.b"/>' if part else "") +
-      f'<parameter idref="{rate_param}"/>' + ('<parameter idref="ucld.stdev"/>' if s["clock"] == "relaxed" else "") + '<rateStatistic idref="meanRate"/><treeDataLikelihood idref="treeLikelihood"/><coalescentLikelihood idref="coalescent"/></log>')
+      '<parameter idref="treeModel.rootHeight"/><tmrcaStatistic idref="age(root)"/>' + "".join(f'<tmrcaStatistic idref="age({_safe(g)})"/>' + (f'<tmrcaStatistic idref="stem({_safe(g)})"/><monophylyStatistic idref="monophyly({_safe(g)})"/>' if g in s.get("stem_groups", []) else "") for g in groups) + '<treeLengthStatistic idref="treeLength"/>' +
+      ('<parameter idref="skygrid.precision"/><parameter idref="skygrid.logPopSize"/>' if sky else '<parameter idref="demographic.popSize"/>') + ('<parameter idref="demographic.growthRate"/>' if s["tree_prior"] == "exponential" else "") + "".join(f'<parameter idref="kappa{suf}"/>' + (f'<parameter idref="alpha{suf}"/>' if sr != "inv" else "") + (f'<parameter idref="pInv{suf}"/>' if sr != "gamma" else "") for suf, _q in sets) + ('<parameter idref="mu.a"/><parameter idref="mu.b"/>' if part else "") +
+      f'<parameter idref="{rate_param}"/>' + ('<parameter idref="ucld.stdev"/>' if s["clock"] == "relaxed" else "") + '<rateStatistic idref="meanRate"/><treeDataLikelihood idref="treeLikelihood"/>' + ('<gmrfSkyGridLikelihood idref="skygrid"/>' if sky else '<coalescentLikelihood idref="coalescent"/>') + '</log>')
     w(f'\t\t<logTree id="treeFileLog" logEvery="{every}" nexusFormat="true" fileName="{fileprefix}.trees" sortTranslationTable="true"><treeModel idref="treeModel"/>'
       f'<trait name="rate" tag="rate">{rate_ref}</trait><posterior idref="posterior"/></logTree>')
     w('\t</mcmc>')

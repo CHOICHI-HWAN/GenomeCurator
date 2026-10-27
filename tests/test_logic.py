@@ -3913,3 +3913,17 @@ def test_beast_site_rates_option_writes_the_invariant_sites_parameter():
     assert 'id="pInv"' in i and "gammaShape" not in i and 'idref="alpha"' not in i
     assert 'id="pInv"' in gi and "gammaShape" in gi
     assert beastprep.parse_settings({"site_rates": "x"})["site_rates"] == "gamma"
+
+
+def test_beast_skygrid_tree_prior_replaces_the_parametric_coalescent():
+    from genomecurator import beastprep
+    seqs = {"A": "ACGTACGTAC", "B": "ACGTACGTAT", "C": "ACGAACGTAT", "D": "ACGAACGTAC"}
+    dates = {"A": 2024.0, "B": 2024.2, "C": 2024.5, "D": 2025.0}
+    s = beastprep.parse_settings({"tree_prior": "skygrid", "skygrid_points": 12, "chain_length": 100000, "samples": 1000, "n_tips": 10})
+    x = beastprep.build_xml(seqs, dates, {}, s, 3e-5)
+    assert "<gmrfSkyGridLikelihood id=\"skygrid\">" in x and 'dimension="13"' in x and 'id="skygrid.numGridPoints" value="12"' in x
+    assert 'id="skygrid.cutOff" value="2.0"' in x                      # the sampled span (1 year) plus one year
+    assert "gmrfGridBlockUpdateOperator" in x and "skygrid.precision" in x
+    assert 'idref="coalescent"' not in x and "demographic.growthRate" not in x
+    e = beastprep.build_xml(seqs, dates, {}, beastprep.parse_settings({"tree_prior": "exponential", "chain_length": 100000, "samples": 1000, "n_tips": 10}), 3e-5)
+    assert "skygrid" not in e and 'idref="coalescent"' in e
