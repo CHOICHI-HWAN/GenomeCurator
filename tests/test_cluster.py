@@ -215,3 +215,16 @@ def test_http_api_needs_a_key_and_admin_is_local(tmp_path, monkeypatch):
     assert cl.post("/api/cluster/nodes", json={"name": "n1"}).status_code == 400
     assert cl.get("/cluster").status_code == 200 and cl.get("/api/cluster/state").json()["nodes"][0]["name"] == "n1"
     assert cl.post("/api/cluster/w/claim", json={}, headers={"Authorization": "Bearer " + r.json()["key"]}).json() == {"job": None}
+
+
+def test_other_machines_reach_the_worker_api_only(tmp_path, monkeypatch):
+    _env(tmp_path, monkeypatch)
+    from fastapi.testclient import TestClient
+    from genomecurator import web
+    remote = TestClient(web.create_app(scheduler=False), client=("10.0.0.7", 5000))
+    assert remote.get("/").status_code == 403 and remote.get("/api/cluster/state").status_code == 403
+    assert remote.post("/api/cluster/nodes", json={"name": "x"}).status_code == 403
+    assert remote.post("/api/cluster/w/claim", json={}).status_code == 403          # reaches the API, which wants a key
+    assert "worker API" not in remote.post("/api/cluster/w/claim", json={}).text
+    monkeypatch.setenv("GC_ALLOW_REMOTE_UI", "1")
+    assert remote.get("/cluster").status_code == 200

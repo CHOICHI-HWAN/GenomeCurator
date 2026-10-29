@@ -189,6 +189,16 @@ def create_app(scheduler: bool = True) -> FastAPI:
     app = FastAPI(title="Virus Genome Metadata Curator")
 
     @app.middleware("http")
+    async def other_machines_reach_the_cluster_api_only(request: Request, call_next):
+        """The app has no log-in: every page shows (and every route changes) the curated and private data. When it listens on the network for the cluster
+        (`serve --host 0.0.0.0`), another machine may therefore use only the worker API, which asks for a worker key; everything else answers 403.
+        GC_ALLOW_REMOTE_UI=1 lifts this (for a trusted network where the whole app is meant to be shared)."""
+        host = request.client.host if request.client else ""
+        if host not in ("127.0.0.1", "::1", "localhost", "testclient") and not request.url.path.startswith("/api/cluster/w/") and os.environ.get("GC_ALLOW_REMOTE_UI") != "1":
+            return JSONResponse({"error": "this machine may use the cluster worker API only; open the app on the main server itself"}, 403)
+        return await call_next(request)
+
+    @app.middleware("http")
     async def refuse_cross_site_writes(request: Request, call_next):
         """The app runs on the user's own machine, so a web page opened in the same browser must not be able to make it change anything: a write (POST / PUT / PATCH / DELETE)
         whose Origin is another site is refused for every route, including the ones that predate the per-route check."""

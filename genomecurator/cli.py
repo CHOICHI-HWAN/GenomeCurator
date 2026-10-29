@@ -153,7 +153,7 @@ def _main(argv=None):
     cs.add_argument("folder")
     cs.add_argument("--label", default="")
     s = sub.add_parser("serve", help="run the web UI")
-    s.add_argument("--host", default="127.0.0.1")
+    s.add_argument("--host", default="127.0.0.1", help="address to listen on; 0.0.0.0 lets cluster workers on other servers connect (other machines then reach the worker API only)")
     s.add_argument("--port", type=int, default=8000)
     s.add_argument("--no-scheduler", action="store_true")
     s.add_argument("--superset", action="store_true", help="also start Apache Superset (port 8089) next to the app")
