@@ -2314,7 +2314,7 @@ def create_app(scheduler: bool = True) -> FastAPI:
         if format == "csv":
             return Response("accession\n" + "\n".join(accs) + "\n", media_type="text/csv",
                             headers={"Content-Disposition": f'attachment; filename="sources_{region.replace("+", "_")}_{watch}.csv"'})
-        return {"region": region, "n": len(accs), "accessions": accs[:max(1, min(limit, 5000))]}
+        return {"region": region, "n": len(accs), "accessions": accs[:max(1, min(limit, 200000))]}
 
     @app.get("/api/changeset/{cid}/impact")
     def changeset_impact_api(cid: int):

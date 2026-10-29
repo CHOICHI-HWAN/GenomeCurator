@@ -3984,6 +3984,7 @@ def test_treefigure_render_is_reproducible_and_writes_a_manifest(tmp_path):
 
 
 def test_source_overlap_counts_every_venn_region(tmp_path, monkeypatch):
+    import json
     from genomecurator import config, curate
     from genomecurator.db import connect
     monkeypatch.setattr(config, "DATA_DIR", tmp_path)
@@ -3999,7 +4000,8 @@ def test_source_overlap_counts_every_venn_region(tmp_path, monkeypatch):
     rows = [("ncbi", "A", "2026-01-02T00:00:00"), ("bvbrc", "A", "2026-01-02T00:00:00"), ("bvbrc", "B", "2026-01-02T00:00:00"),
             ("ncbi", "OLD", "2026-01-01T00:00:00"), ("nextclade", "A", "2026-01-02T00:00:00")]
     con.executemany("INSERT INTO source_record(source,accession,watch_id,payload_json,fetched_at) VALUES(?,?,1,'{}',?)", rows)
-    con.execute("INSERT INTO changeset(id,watch_id) VALUES(7,1)")
+    con.execute("INSERT INTO changeset(id,watch_id,status,summary_json,dryrun_json) VALUES(7,1,'READY',?,?)",
+                (json.dumps({"new": 1, "changed": 0, "removed": 0, "sources": {"ncbi": 1, "bvbrc": 2}, "notes": []}), json.dumps({"checks": []})))
     con.execute("INSERT INTO changeset_item(changeset_id,accession,kind) VALUES(7,'B','new')")
     con.commit()
     o = curate.source_overlap(1, 7)
@@ -4013,3 +4015,15 @@ def test_source_overlap_counts_every_venn_region(tmp_path, monkeypatch):
     r = cl.get("/api/sources/overlap/accessions?watch=1&region=ncbi%2Bbvbrc&format=csv")
     assert r.text == "accession\nA\n" and "attachment" in r.headers["content-disposition"]
     assert cl.get("/static/gc/venn.js").status_code == 200 and cl.get("/static/gc/x.js").status_code == 404
+    import re
+    import shutil
+    import subprocess
+    page = cl.get("/changeset/7")
+    assert page.status_code == 200 and 'id="sources"' in page.text and "setExt" in page.text
+    if shutil.which("node"):                     # the page scripts are built from strings: check that they still parse
+        for path in ("/changeset/7", "/"):
+            js = "\n".join(re.findall(r"<script>(.*?)</script>", cl.get(path).text, re.S))
+            f = tmp_path / "p.js"
+            f.write_text(js, encoding="utf-8")
+            r = subprocess.run(["node", "--check", str(f)], capture_output=True, text=True)
+            assert r.returncode == 0, f"{path}: {r.stderr[:300]}"

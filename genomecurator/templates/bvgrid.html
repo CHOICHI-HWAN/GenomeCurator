@@ -84,7 +84,7 @@ const LINKS={genbank:a=>'https://www.ncbi.nlm.nih.gov/nuccore/'+a,sra_accession:
  bioproject_accession:a=>'https://www.ncbi.nlm.nih.gov/bioproject/?term='+a,biosample_accession:a=>'https://www.ncbi.nlm.nih.gov/biosample/'+a};
 const cell=(k,r)=>{const v=r[k];if(!LINKS[k]||!v)return esc(v);
  return String(v).split(/[;,]\s*/).filter(Boolean).map(a=>`<a href="${esc(LINKS[k](a.replace(/\.\d+$/,'')))}" target="_blank" rel="noopener" onclick="event.stopPropagation()">${esc(a)}</a>`).join(', ')};
-function match(r,skip){for(const k in st.f){if(k===skip||!st.f[k].size)continue;if(!st.f[k].has(val(r,k)))return false}
+function match(r,skip){if(st.ext&&!st.ext.set.has(r.accession))return false;for(const k in st.f){if(k===skip||!st.f[k].size)continue;if(!st.f[k].has(val(r,k)))return false}
  if(st.q){const q=st.q.toLowerCase();if(!cols.some(c=>String(r[c.k]??'').toLowerCase().includes(q)))return false}return true}
 let view=[];
 function filt(){view=rows.filter(r=>match(r));if(st.sort){const k=st.sort,d=st.dir;view.sort((a,b)=>{let x=a[k],y=b[k];if(x==null||x==='')return 1;if(y==null||y==='')return -1;
@@ -153,12 +153,13 @@ function table(){const vc=cols.filter(c=>st.vis.has(c.k));
  let pn='';const lo=Math.max(0,st.pg-2),hi=Math.min(pages-1,st.pg+2);for(let i=lo;i<=hi;i++)pn+=`<span class="pn ${i===st.pg?'on':''}" data-p="${i}">${i+1}</span>`;$('gpages').innerHTML=pn;
  const ga=$('gall');if(ga)ga.checked=view.length>0&&view.every(r=>st.sel.has(r.id))}
 function draw(){filt();$('fp').innerHTML=facetsHtml();$('fp').style.display=st.panelF===false?'none':'';
- const ch=[];for(const k in st.f)st.f[k].forEach(v=>ch.push(`<span class="chip">${esc(label(k))}: ${esc(v)}<a data-rm="${esc(k)}" data-v="${esc(v)}">✕</a></span>`));
+ const ch=st.ext?[`<span class="chip">${esc(st.ext.label)}<a data-rmext="1">✕</a></span>`]:[];for(const k in st.f)st.f[k].forEach(v=>ch.push(`<span class="chip">${esc(label(k))}: ${esc(v)}<a data-rm="${esc(k)}" data-v="${esc(v)}">✕</a></span>`));
  $('chips').style.display=ch.length?'flex':'none';$('chips').innerHTML=ch.join('');table();rp()}
 document.addEventListener('click',e=>{const t=e.target;
  const fv=t.closest('.fv');if(fv){const k=fv.dataset.k,v=fv.dataset.v;(st.f[k]=st.f[k]||new Set());st.f[k].has(v)?st.f[k].delete(v):st.f[k].add(v);st.pg=0;draw();return}
  if(t.dataset.more){st['m'+t.dataset.more]=!st['m'+t.dataset.more];$('fp').innerHTML=facetsHtml();return}
  if(t.dataset.rm){st.f[t.dataset.rm].delete(t.dataset.v);draw();return}
+ if(t.dataset.rmext){st.ext=null;st.pg=0;draw();window.onGridExt&&window.onGridExt(null);return}
  if(t.dataset.p){st.pg=+t.dataset.p;table();return}
  const th=t.closest('th[data-s]');if(th){const k=th.dataset.s;st.dir=st.sort===k?-st.dir:1;st.sort=k;draw();return}
  if(t.id==='gall'){view.forEach(r=>t.checked?st.sel.add(r.id):st.sel.delete(r.id));table();rp();return}
@@ -188,10 +189,12 @@ new URLSearchParams(location.search).getAll('f').forEach(s=>{const i=s.indexOf('
 document.addEventListener('keydown',e=>{if(e.key==='Escape'&&document.getElementById('gbox').classList.contains('max'))G.max()});
 draw();
 const dl=(name,text,type)=>{const a=document.createElement('a');a.href=URL.createObjectURL(new Blob([text],{type}));a.download=name;a.click()};
-return{redraw(){draw()},current:()=>st.cur,toggleRp(){st.rpHide=!st.rpHide;try{localStorage.setItem('gcRp',st.rpHide?'0':'1')}catch(e){}rp()},
+return{redraw(){draw()},
+ /* a filter from outside the grid (e.g. a Venn region): only rows whose accession is in `accessions`; null removes it */
+ setExt(label,accessions){st.ext=accessions?{label,set:new Set(accessions)}:null;st.pg=0;draw()},ext:()=>st.ext&&st.ext.label,current:()=>st.cur,toggleRp(){st.rpHide=!st.rpHide;try{localStorage.setItem('gcRp',st.rpHide?'0':'1')}catch(e){}rp()},
  max(){const b=document.getElementById('gbox'),on=b.classList.toggle('max');document.body.style.overflow=on?'hidden':'';
   document.getElementById('b_max').innerHTML=on?'<i>⤡</i>Restore':'<i>⤢</i>Maximize'},
- clear(){st.f={};st.q='';$('gq').value='';st.pg=0;draw()},page(d){st.pg=Math.max(0,st.pg+d);table()},size(v){st.ps=+v;st.pg=0;table()},
+ clear(){st.f={};st.q='';if(st.ext){st.ext=null;window.onGridExt&&window.onGridExt(null)}$('gq').value='';st.pg=0;draw()},page(d){st.pg=Math.max(0,st.pg+d);table()},size(v){st.ps=+v;st.pg=0;table()},
  togglePanel(){st.panelF=st.panelF===false;draw()},
  tsv(sel){const vc=cols.filter(c=>st.vis.has(c.k));const list=sel?view.filter(r=>st.sel.has(r.id)):view;
   dl('genomes.tsv','﻿'+[vc.map(c=>c.label).join('\t')].concat(list.map(r=>vc.map(c=>String(r[c.k]??'').replace(/[\t\n]/g,' ')).join('\t'))).join('\n'),'text/tab-separated-values')},
