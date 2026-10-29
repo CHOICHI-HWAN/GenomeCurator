@@ -228,3 +228,37 @@ def test_other_machines_reach_the_worker_api_only(tmp_path, monkeypatch):
     assert "worker API" not in remote.post("/api/cluster/w/claim", json={}).text
     monkeypatch.setenv("GC_ALLOW_REMOTE_UI", "1")
     assert remote.get("/cluster").status_code == 200
+
+
+def test_activating_a_server_as_a_sub_server_runs_jobs_and_survives_a_restart(tmp_path, monkeypatch):
+    c = _env(tmp_path, monkeypatch)
+    from genomecurator import clusterworker, web
+    monkeypatch.setenv("PATH", str(tmp_path) + ":" + __import__("os").environ["PATH"])
+    _fake_beast(tmp_path)                                   # found as "beast" on the PATH of this "sub-server"
+    (tmp_path / "fakebeast").rename(tmp_path / "beastbin")
+    monkeypatch.setattr(clusterworker, "find_beast", lambda explicit=None: str(tmp_path / "beastbin"))
+    srv, port = _serve(web.create_app(scheduler=False))
+    try:
+        key = c.create_node("sub1")["key"]
+        jid = c.submit_beast(_pkg(tmp_path))
+        with pytest.raises(ValueError):
+            clusterworker.sub_start("not-an-address", key)
+        st = clusterworker.sub_start(f"http://127.0.0.1:{port}", key)
+        assert st["enabled"] and st["running"]
+        for _ in range(200):
+            if c.get_job(jid)["state"] == "done":
+                break
+            time.sleep(0.1)
+        assert c.get_job(jid)["state"] == "done"
+        cfgf = tmp_path / "cluster" / "worker.json"
+        assert (cfgf.stat().st_mode & 0o077) == 0                       # the key is readable by the owner only
+        clusterworker.sub_stop(wait=True)
+        assert not clusterworker.sub_status()["running"] and json.loads(cfgf.read_text())["enabled"] is False
+        clusterworker.sub_start()                                        # the stored address and key are enough
+        assert clusterworker.sub_status()["running"]
+        clusterworker.sub_autostart()                                    # (re)starts only when enabled; harmless otherwise
+        clusterworker.sub_stop(wait=True, forget=True)
+        assert "key" not in json.loads(cfgf.read_text())
+    finally:
+        clusterworker.sub_stop(wait=True)
+        srv.should_exit = True

@@ -187,6 +187,9 @@ def create_app(scheduler: bool = True) -> FastAPI:
     jobs.mark_interrupted()      # whatever the table still calls running died with the previous process
     nextstrain.mark_interrupted()
     app = FastAPI(title="Virus Genome Metadata Curator")
+    if scheduler:
+        from . import clusterworker
+        clusterworker.sub_autostart()      # a server that was activated as a sub-server stays one after a restart
 
     @app.middleware("http")
     async def other_machines_reach_the_cluster_api_only(request: Request, call_next):
@@ -1904,6 +1907,29 @@ def create_app(scheduler: bool = True) -> FastAPI:
         if (e := _cluster_admin(request)):
             return e
         return {"cancelled": cluster.cancel(jid)}
+
+    @app.get("/api/cluster/sub")
+    def cluster_sub_status():
+        from . import clusterworker
+        return clusterworker.sub_status()
+
+    @app.post("/api/cluster/sub/activate")
+    async def cluster_sub_activate(request: Request):
+        if (e := _cluster_admin(request)):
+            return e
+        from . import clusterworker
+        b = await request.json()
+        try:
+            return clusterworker.sub_start(str(b.get("main", "")), str(b.get("key", "")))
+        except ValueError as ex:
+            return JSONResponse({"error": str(ex)}, 400)
+
+    @app.post("/api/cluster/sub/deactivate")
+    async def cluster_sub_deactivate(request: Request):
+        if (e := _cluster_admin(request)):
+            return e
+        from . import clusterworker
+        return clusterworker.sub_stop(forget=bool((await request.json()).get("forget")))
 
     @app.post("/api/cluster/w/hello")
     async def cluster_w_hello(request: Request):

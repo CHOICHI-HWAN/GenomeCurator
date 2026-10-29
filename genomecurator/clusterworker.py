@@ -101,7 +101,11 @@ class Worker:
         self.main, self.work = Main(base, key), Path(workdir)
         self.beast, self.poll, self.beat, self.retry = find_beast(beast), poll, beat, retry
         self.stop = threading.Event()
+        self.status = {"state": "starting", "job": None, "error": None, "since": time.strftime("%Y-%m-%dT%H:%M:%S")}
         self.work.mkdir(parents=True, exist_ok=True)
+
+    def _set(self, state: str, job: str | None = None, error: str | None = None) -> None:
+        self.status = {"state": state, "job": job, "error": error, "since": time.strftime("%Y-%m-%dT%H:%M:%S")}
 
     # ---- one job
     def _state(self, jd: Path, **kw) -> dict:
@@ -127,6 +131,7 @@ class Worker:
         (jd / "in").mkdir(parents=True)
         (jd / "run").mkdir()
         self._state(jd, phase="running", job=job)
+        self._set("running", jid)
         try:
             for i in job["inputs"]:
                 dest = jd / "in" / i["name"]
@@ -251,15 +256,100 @@ class Worker:
                 job = self.main.json("POST", "/api/cluster/w/claim", {"kinds": caps["kinds"]}).get("job")
                 if job:
                     self.run_job(job)
+                    self._set("idle")
                     continue
+                if self.status["state"] != "idle":
+                    self._set("idle")
             except Gone as e:
                 _log.error("the main server refused this worker (%s); check the key", e)
+                self._set("refused", error="the main server did not accept the key or the address")
                 self.stop.wait(60)
                 continue
             except Exception as e:
                 _log.warning("main server not reachable (%s)", e)
+                self._set("unreachable", error=str(e)[:200])
                 known = False
                 self.stop.wait(self.retry)
                 continue
             self.stop.wait(self.poll)
         _log.info("worker stopped")
+
+
+# ---- the "activate this server as a sub-server" switch of the Cluster page: the worker runs inside this program on a background thread
+def _cfg_path() -> Path:
+    from . import config
+    return config.DATA_DIR / "cluster" / "worker.json"
+
+
+def load_config() -> dict:
+    try:
+        return json.loads(_cfg_path().read_text(encoding="utf-8"))
+    except (OSError, ValueError):
+        return {}
+
+
+def save_config(cfg: dict) -> None:
+    p = _cfg_path()
+    p.parent.mkdir(parents=True, exist_ok=True)
+    p.write_text(json.dumps(cfg), encoding="utf-8")
+    try:
+        os.chmod(p, 0o600)                      # holds the worker key; kept out of the database and so out of backups
+    except OSError:
+        pass
+
+
+_sub: dict = {"worker": None, "thread": None}
+
+
+def sub_status() -> dict:
+    cfg, w = load_config(), _sub["worker"]
+    running = bool(w and _sub["thread"] and _sub["thread"].is_alive())
+    return {"enabled": bool(cfg.get("enabled")), "running": running, "main": cfg.get("main", ""), "has_key": bool(cfg.get("key")),
+            **({"status": w.status, "beast": w.beast} if running else {})}
+
+
+def sub_start(main: str | None = None, key: str | None = None, beast: str | None = None) -> dict:
+    """Activate: remember the address and key (for the next start of the program) and start the worker thread."""
+    cfg = load_config()
+    if main:
+        cfg["main"] = main.strip()
+    if key:
+        cfg["key"] = key.strip()
+    if not cfg.get("main", "").startswith(("http://", "https://")) or not cfg.get("key"):
+        raise ValueError("the address of the main server (http://host:port) and the worker key are needed")
+    sub_stop(wait=True)
+    cfg["enabled"] = True
+    save_config(cfg)
+    from . import config
+    w = Worker(cfg["main"], cfg["key"], config.DATA_DIR / "cluster" / "worker", beast or cfg.get("beast"))
+    t = threading.Thread(target=w.serve, daemon=True, name="cluster-worker")
+    _sub["worker"], _sub["thread"] = w, t
+    t.start()
+    return sub_status()
+
+
+def sub_stop(wait: bool = False, forget: bool = False) -> dict:
+    """Deactivate. A job in progress is left to the main server (it goes back to the queue after the lease)."""
+    w, t = _sub["worker"], _sub["thread"]
+    if w:
+        w.stop.set()
+        if wait and t:
+            t.join(15)
+    _sub["worker"] = _sub["thread"] = None
+    cfg = load_config()
+    if cfg:
+        cfg["enabled"] = False
+        if forget:
+            cfg.pop("key", None)
+        save_config(cfg)
+    return sub_status()
+
+
+def sub_autostart() -> None:
+    """At the start of the program: a server that was activated stays a sub-server."""
+    cfg = load_config()
+    if cfg.get("enabled") and cfg.get("main") and cfg.get("key"):
+        try:
+            sub_start()
+        except Exception:
+            _log.warning("could not restart the sub-server worker", exc_info=True)
