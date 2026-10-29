@@ -34,6 +34,10 @@ pre{margin:8px 0 0;max-height:210px;overflow:auto;background:var(--bg);border:1p
  <div class="m"><div class="row" style="justify-content:space-between"><span>디스크 (데이터 폴더)</span><b id="dsk">-</b></div><div class="bar"><i id="dskb" style="width:0"></i></div><div class="mut" id="dskx"></div></div>
 </div></div>
 
+<div class="card"><div class="row"><h2 style="margin:0">기록</h2><span id="nds" class="mut"></span><span style="flex:1"></span>
+ <select id="hr" onchange="hist()" style="padding:5px 8px;border-radius:6px;background:var(--bg);color:var(--fg);border:1px solid var(--bd)"><option value="60">1시간</option><option value="360">6시간</option><option value="1440">24시간</option><option value="10080">7일</option></select></div>
+ <div id="hc" style="margin-top:10px" class="mut">불러오는 중…</div></div>
+
 <div class="card"><h2>분석 환경 점검</h2>
  <div id="envl" class="mut">확인 중…</div>
  <div class="mut" style="margin-top:6px">세 항목이 모두 통과해야 서브서버로 참여를 요청할 수 있습니다. 빠진 것은 아래 <b>환경 설치</b>로 채우세요.</div></div>
@@ -55,6 +59,7 @@ pre{margin:8px 0 0;max-height:210px;overflow:auto;background:var(--bg);border:1p
  <pre id="il" style="display:none"></pre></div>
 <div class="mut" id="ver"></div>
 </main>
+<script src="/static/gc/minichart.js"></script>
 <script>
 const $=id=>document.getElementById(id);
 const esc=s=>String(s==null?"":s).replace(/[&<>"]/g,c=>({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;"}[c]));
@@ -96,8 +101,10 @@ async function load(){let j;try{j=await (await fetch("/api/cluster/sub")).json()
  $("bx").textContent=b.ok?"":((j.install||{}).installer?"":"mamba/conda가 없어 이 화면에서 설치할 수 없습니다");
  $("inst").style.display=!b.ok&&(j.install||{}).installer?"":"none";$("inst").disabled=!!busy;
  if(ij){$("il").style.display="block";$("il").innerHTML=(ij.error?'<span class="err">'+esc(ij.error)+"</span>\n":"")+(ij.log||[]).slice(-40).map(x=>esc(x.t+"  "+x.msg)).join("\n");$("il").scrollTop=1e9}
+ const nd=j.netdata||{};$("nds").innerHTML=nd.ok?'Netdata '+esc(nd.version||"")+' · <a href="http://'+location.hostname+':'+(nd.port||19999)+'" target="_blank" style="color:var(--acc)">대시보드 ↗</a>'+(nd.claimed?' · <span class="warn">Netdata Cloud에 연결되어 있습니다</span>':''):'Netdata 없음 (기록 그래프는 Netdata가 있을 때만)';
  SHELL=!!j.shell;$("shs").className="pill "+(j.shell?"on":"off");$("shs").textContent=!j.shell_supported?"이 OS에서는 지원하지 않음":j.shell?"허용됨":"꺼짐";$("shb").textContent=j.shell?"끄기":"허용";$("shb").disabled=!j.shell_supported;
  $("shl").textContent=(j.shell_sessions||[]).length?"지금 접속 중: "+j.shell_sessions.map(x=>x.from+" ("+x.since.replace("T"," ")+"부터)").join(", "):"";
  $("ver").textContent="GenomeCurator "+(j.version||"")}
-$("hn").textContent=location.host;load();setInterval(load,3000);
+async function hist(){try{const h=await (await fetch("/api/cluster/sub/history?minutes="+$("hr").value)).json();miniCharts($("hc"),h)}catch(e){$("hc").textContent="기록을 불러오지 못했습니다."}}
+$("hn").textContent=location.host;load();hist();setInterval(load,3000);setInterval(hist,30000);
 </script></body></html>

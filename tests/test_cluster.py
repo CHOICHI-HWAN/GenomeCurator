@@ -503,3 +503,128 @@ def test_the_main_server_opens_a_terminal_on_a_sub_server_that_allows_it(tmp_pat
     with sub.websocket_connect("/api/cluster/shell") as ws:                              # the same token cannot be used twice
         ws.send_text(json.dumps({"token": tok}))
         assert "used already" in ws.receive_text()
+
+
+def _fake_netdata(new_names=True, claimed=False):
+    """A stand-in Netdata agent: /api/v1/info and /api/v1/data for the four charts (also under /host/<name>/ like a streaming parent)."""
+    import http.server
+    now = int(time.time())
+    charts = {"system.cpu": (["time", "user", "system"], lambda i: [60.0, 5.0 + i]),
+              "system.ram": (["time", "free", "used", "cached", "buffers"], lambda i: [50.0, 30.0, 15.0, 5.0]),
+              "system.load": (["time", "load1", "load5", "load15"], lambda i: [3.0, 2.0, 1.0]),
+              "system.io": ((["time", "reads", "writes"] if new_names else ["time", "in", "out"]), lambda i: [2048.0, -4096.0]),
+              "system.net": (["time", "received", "sent"], lambda i: [1000.0, -500.0])}
+
+    class H(http.server.BaseHTTPRequestHandler):
+        def log_message(self, *a):
+            pass
+
+        def do_GET(self):
+            from urllib.parse import urlparse, parse_qs
+            u = urlparse(self.path)
+            path = u.path.split("/api/", 1)[-1]
+            if path == "v1/info":
+                body = {"version": "v2.0.0", "agent-claimed": claimed}
+            elif path == "v1/data":
+                lab, fn = charts[parse_qs(u.query)["chart"][0]]
+                body = {"labels": lab, "data": [[now - 60 * i] + fn(i) for i in range(5)]}           # newest first, like Netdata
+            else:
+                self.send_response(404)
+                self.end_headers()
+                return
+            b = json.dumps(body).encode()
+            self.send_response(200)
+            self.send_header("Content-Type", "application/json")
+            self.end_headers()
+            self.wfile.write(b)
+    srv = http.server.ThreadingHTTPServer(("127.0.0.1", 0), H)
+    threading.Thread(target=srv.serve_forever, daemon=True).start()
+    return srv, f"http://127.0.0.1:{srv.server_address[1]}"
+
+
+@pytest.mark.parametrize("new_names", [True, False])
+def test_netdata_history_is_read_oldest_first_in_plain_units(new_names):
+    from genomecurator import netdata
+    srv, base = _fake_netdata(new_names, claimed=True)
+    try:
+        assert netdata.probe(base) == {"ok": True, "version": "v2.0.0", "claimed": True, "port": srv.server_address[1]}
+        h = netdata.history(base, minutes=10)
+        assert h["t"] == sorted(h["t"]) and len(h["t"]) == 5
+        assert h["cpu"][0] == 69.0 and h["cpu"][-1] == 65.0                     # oldest (i=4) first
+        assert h["mem"][0] == 30.0 and h["load1"][0] == 3.0
+        assert h["disk_read"][0] == 2.0 and h["disk_write"][0] == 4.0           # KiB/s -> MiB/s, sign dropped
+        assert h["net_in"][0] == 1.0 and h["net_out"][0] == 0.5                # kbit/s -> Mbit/s
+        assert netdata.history(base, minutes=10, host="sub-a")["source"].endswith("/host/sub-a")
+    finally:
+        srv.shutdown()
+    assert netdata.probe("http://127.0.0.1:9") == {"ok": False}
+    assert netdata.history_or_none("http://127.0.0.1:9")["ok"] is False
+
+
+def test_main_server_shows_a_sub_servers_history_with_its_jobs(tmp_path, monkeypatch):
+    c = _env(tmp_path, monkeypatch)
+    from fastapi.testclient import TestClient
+    from genomecurator import netdata, web
+    srv, base = _fake_netdata()
+    try:
+        node = c.create_node("sub1")
+        n = c.authenticate(node["key"])
+        c.hello(n, {"kinds": ["beast"], "ip": "127.0.0.1", "host": "sub1", "netdata": {"ok": True, "port": srv.server_address[1]}})
+        jid = c.submit_beast(_pkg(tmp_path))
+        c.claim(n)
+        main = TestClient(web.create_app(scheduler=False))
+        h = main.get(f"/api/cluster/nodes/{node['id']}/history?minutes=30").json()
+        assert h["ok"] and len(h["cpu"]) == 5 and h["jobs"][0]["label"].startswith("BEAST") and h["jobs"][0]["end"] is None
+        assert main.get("/static/gc/minichart.js").status_code == 200
+        # no agent on the sub-server: read it through the main server's own Netdata (a streaming parent), by host name
+        c.hello(n, {"kinds": ["beast"], "ip": "127.0.0.1", "host": "sub1", "netdata": {"ok": False}})
+        monkeypatch.setattr(netdata, "LOCAL", base)
+        h = main.get(f"/api/cluster/nodes/{node['id']}/history").json()
+        assert h["ok"] and h["source"].endswith("/host/sub1")
+        sub = TestClient(web.create_app(scheduler=False))
+        assert sub.get("/api/cluster/sub/history?minutes=30").json()["ok"]
+        assert jid
+    finally:
+        srv.shutdown()
+
+
+@pytest.mark.skipif(__import__("shutil").which("node") is None, reason="node is needed to check the page scripts")
+def test_the_cluster_pages_scripts_parse(tmp_path, monkeypatch):
+    """The pages are mostly JavaScript built from strings; a quote out of place breaks a whole page and no API test notices."""
+    import re
+    import subprocess
+    c = _env(tmp_path, monkeypatch)
+    from fastapi.testclient import TestClient
+    from genomecurator import web
+    node = c.create_node("n1")
+    cl = TestClient(web.create_app(scheduler=False))
+    for path in ("/cluster", "/cluster/sub", f"/cluster/shell/{node['id']}"):
+        html = cl.get(path).text
+        js = "\n".join(re.findall(r"<script>(.*?)</script>", html, re.S))
+        f = tmp_path / "page.js"
+        f.write_text(js, encoding="utf-8")
+        r = subprocess.run(["node", "--check", str(f)], capture_output=True, text=True)
+        assert r.returncode == 0, f"{path}: {r.stderr[:400]}"
+    from pathlib import Path
+    r = subprocess.run(["node", "--check", str(Path(web.__file__).parent / "static" / "gc" / "minichart.js")], capture_output=True, text=True)
+    assert r.returncode == 0, r.stderr
+
+
+def test_netdata_streaming_guide_names_the_link_address_and_who_streams(tmp_path, monkeypatch):
+    c = _env(tmp_path, monkeypatch)
+    from fastapi.testclient import TestClient
+    from genomecurator import netdata, web
+    srv, base = _fake_netdata()
+    try:
+        monkeypatch.setattr(netdata, "LOCAL", base)
+        monkeypatch.setattr(netdata, "streaming_hosts", lambda b=None: ["main", "sub1"])
+        n = c.authenticate(c.create_node("sub1")["key"])
+        c.hello(n, {"ip": "127.0.0.1", "host": "sub1"})
+        j = TestClient(web.create_app(scheduler=False)).get("/api/cluster/netdata").json()
+        key = netdata.stream_key()
+        assert j["parent_address"] == "127.0.0.1" and f"[{key}]" in j["parent_conf"] and "allow from = 127.0.0.*" in j["parent_conf"]
+        assert f"api key = {key}" in j["child_conf"] and "destination = 127.0.0.1:19999" in j["child_conf"]
+        assert j["streaming"] == [{"name": "sub1", "host": "sub1", "streams": True}]
+        assert netdata.stream_key() == key                                       # made once
+    finally:
+        srv.shutdown()

@@ -17,6 +17,9 @@
  <button onclick="addNode()">키 만들기</button><span class="mut" id="nmsg"></span></div>
 <div id="keybox" class="msg" style="display:none"></div></details>
 
+<details id="ndd" style="margin:6px 0 14px"><summary><b>Netdata 스트리밍 (선택)</b> <span class="mut">— 서브서버의 Netdata가 메인의 Netdata로 지표를 보내게 하면, 클라우드 없이 메인 한곳에 모든 서버의 기록이 모입니다</span></summary>
+<div id="ndbox" class="mut" style="margin-top:8px">불러오는 중…</div></details>
+
 <h3>작업</h3>
 <div style="display:flex;gap:8px;align-items:center;margin:0 0 10px;flex-wrap:wrap">
  <input id="jf" placeholder="BEAST 폴더 (데이터 폴더 기준, 예: nextstrain/runs/.../beast/a41-x)" style="width:520px">
@@ -30,6 +33,7 @@
 .jl2{max-height:220px;overflow:auto;font:12px/1.5 Consolas,Menlo,monospace;background:var(--stripe);padding:6px 10px;border-radius:4px}
 .envd{background:var(--stripe);padding:10px 14px}.envd table{margin:0}.envd td{padding:2px 10px 2px 0;border:0;vertical-align:top}
 </style>
+<script src="/static/gc/minichart.js"></script>
 <script>
 const ST={queued:"대기",running:"실행 중",done:"완료",error:"오류",cancelled:"취소"};
 const esc=s=>String(s==null?"":s).replace(/[&<>"']/g,c=>({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;","'":"&#39;"}[c]));
@@ -61,7 +65,10 @@ function envDetail(n){const c=n.caps||{},m=n.metrics||{};const row=(k,v)=>'<tr><
  +row("도구",esc(Object.entries(c.tools||{}).map(([k,v])=>k+" "+v).join(", ")||"-"))+row("호스트",esc(c.host||"-"))+row("OS",esc(c.platform||"-"))
  +row("Python / 앱",esc((c.python||"-")+" / GenomeCurator "+(c.app_version||"-")))+row("CPU",esc((c.cpus||"-")+"코어 · 사용 "+(m.cpu_pct==null?"-":Math.round(m.cpu_pct)+"%")+(m.load1!=null?" · 부하 "+m.load1:"")))
  +row("메모리",esc(gb(m.mem_used)+" / "+gb(m.mem_total||c.mem_total)))+row("디스크",esc("여유 "+gb(m.disk_free)+" / "+gb(m.disk_total)))
- +row("기록",esc((n.note||"")+" · 등록 "+(n.created||"").replace("T"," ")))+'</table></div>'}
+ +row("기록",esc((n.note||"")+" · 등록 "+(n.created||"").replace("T"," ")))+row("Netdata",c.netdata&&c.netdata.ok?esc(c.netdata.version||"")+' · <a href="http://'+esc(c.ip)+':'+(c.netdata.port||19999)+'" target="_blank">대시보드 ↗</a>'+(c.netdata.claimed?' · <span style="color:var(--bad)">Netdata Cloud 연결됨</span>':''):'없음')+'</table>'
+ +'<div style="display:flex;align-items:center;gap:8px;margin-top:10px"><b>기록</b><select onchange="HR[\''+n.id+'\']=this.value;loadHist(\''+n.id+'\')">'+[[60,"1시간"],[360,"6시간"],[1440,"24시간"],[10080,"7일"]].map(([v,l])=>'<option value="'+v+'"'+((HR[n.id]||60)==v?" selected":"")+'>'+l+'</option>').join("")+'</select></div><div id="hist-'+n.id+'" class="mut">불러오는 중…</div></div>'}
+const HR={},HC={};
+async function loadHist(id){HC[id]=Object.assign(HC[id]||{ok:false,error:"불러오는 중"},{_at:Date.now()});try{HC[id]=await (await fetch("/api/cluster/nodes/"+id+"/history?minutes="+(HR[id]||60))).json()}catch(e){HC[id]={ok:false,error:"불러오지 못함"}}HC[id]._at=Date.now();const el=document.getElementById("hist-"+id);if(el)miniCharts(el,HC[id])}
 async function detail(id){const j=await (await fetch("/api/cluster/job/"+id)).json();
  return '<div class="jl2">'+(j.log||[]).map(x=>'<div>'+esc(x.t.slice(11))+'  '+esc(x.msg)+'</div>').join("")+'</div>'+(j.error?'<div style="color:var(--bad);margin-top:6px">'+esc(j.error)+'</div>':"")
  +(j.outputs&&j.outputs.length?'<div class="mut" style="margin-top:6px">결과 '+j.outputs.map(o=>esc(o.name)+" ("+o.sha256.slice(0,10)+"…)").join(", ")+'</div>':"")}
@@ -70,8 +77,9 @@ async function load(){if(busy)return;busy=true;try{const s=await (await fetch("/
  const pend=(s.requests||[]).filter(r=>r.state==="pending");REQ=Object.fromEntries(pend.map(r=>[r.id,r]));
  const keep={};document.querySelectorAll("#rt input[type=checkbox]").forEach(x=>keep[x.id]=x.checked);
  document.querySelector("#rt tbody").innerHTML=pend.map(r=>{const i=r.info||{};return '<tr><td><b>'+esc(r.name)+'</b><br><span class="mut">'+esc(i.platform||"")+'</span></td><td class="nw">'+esc(r.ip)+'</td><td class="nw">'+ago(r.created)+'</td><td>'+envPill(i.env)+'<br><span class="mut" style="font-size:12px">'+envChecks(i.env)+'</span></td><td class="mut">'+(i.cpus||"?")+'코어 · '+gb(i.mem_total)+'<br>'+res(i.metrics)+'</td><td class="nw"><label><input type="checkbox" id="rp-'+r.id+'"'+(keep["rp-"+r.id]?" checked":"")+'> 허용</label></td><td class="nw"><button onclick="approve(\''+r.id+'\')">승인</button> <button onclick="reject(\''+r.id+'\')">거절</button></td></tr>'}).join("")||'<tr><td colspan="7" class="mut">승인을 기다리는 요청이 없습니다.</td></tr>';
- const nr=[];for(const n of s.nodes){const c=n.caps||{},rj=n.running;nr.push('<tr class="nr" data-id="'+n.id+'" style="cursor:pointer"><td><span class="cst '+(n.online?(n.paused?"off":"on"):"bad")+'">'+(n.online?(n.paused?"정지":"연결"):"끊김")+'</span></td><td><b>'+esc(n.name)+'</b><br><span class="mut">'+esc(c.host||"")+'</span></td><td>'+envPill(c.env)+'<br><span class="mut">'+esc(c.tools&&c.tools.beast?"BEAST "+c.tools.beast:"")+'</span></td><td class="mut">'+res(n.metrics)+'</td><td class="nw">'+ago(n.last_seen)+'</td><td>'+(rj?esc(rj.label)+prog(rj.pct,rj.msg,rj.claimed)+stale(rj):'<span class="mut">'+(n.paused?"정지됨":"없음")+'</span>')+'</td><td class="nw">'+(n.allow_private?"허용":"-")+'</td><td class="nw">(n.metrics&&n.metrics.shell?'<button onclick="event.stopPropagation();window.open(\'/cluster/shell/'+n.id+'\',\'_blank\')">터미널</button> ':'')+'<button id="rc-'+n.id+'" onclick="event.stopPropagation();recheck(\''+n.id+'\')">환경 다시 점검</button> <button onclick="event.stopPropagation();revoke(\''+n.id+'\')">폐기</button></td></tr>');
+ const nr=[];for(const n of s.nodes){const c=n.caps||{},rj=n.running;nr.push('<tr class="nr" data-id="'+n.id+'" style="cursor:pointer"><td><span class="cst '+(n.online?(n.paused?"off":"on"):"bad")+'">'+(n.online?(n.paused?"정지":"연결"):"끊김")+'</span></td><td><b>'+esc(n.name)+'</b><br><span class="mut">'+esc(c.host||"")+'</span>'+(c.netdata&&c.netdata.ok?' <a href="http://'+esc(c.ip)+':'+(c.netdata.port||19999)+'" target="_blank" onclick="event.stopPropagation()" style="font-size:12px">Netdata ↗</a>':'')+'</td><td>'+envPill(c.env)+'<br><span class="mut">'+esc(c.tools&&c.tools.beast?"BEAST "+c.tools.beast:"")+'</span></td><td class="mut">'+res(n.metrics)+'</td><td class="nw">'+ago(n.last_seen)+'</td><td>'+(rj?esc(rj.label)+prog(rj.pct,rj.msg,rj.claimed)+stale(rj):'<span class="mut">'+(n.paused?"정지됨":"없음")+'</span>')+'</td><td class="nw">'+(n.allow_private?"허용":"-")+'</td><td class="nw">'+(n.metrics&&n.metrics.shell?'<button onclick="event.stopPropagation();window.open(\'/cluster/shell/'+n.id+'\',\'_blank\')">터미널</button> ':'')+'<button id="rc-'+n.id+'" onclick="event.stopPropagation();recheck(\''+n.id+'\')">환경 다시 점검</button> <button onclick="event.stopPropagation();revoke(\''+n.id+'\')">폐기</button></td></tr>');
   if(openN.has(n.id))nr.push('<tr><td colspan="8" style="padding:0">'+envDetail(n)+'</td></tr>')}
+ setTimeout(()=>{for(const id of openN){const el=document.getElementById("hist-"+id);if(el&&HC[id])miniCharts(el,HC[id]);if(!HC[id]||Date.now()-(HC[id]._at||0)>30000)loadHist(id)}},0);
  document.querySelector("#nt tbody").innerHTML=nr.join("")||'<tr><td colspan="8" class="mut">승인된 서브서버가 없습니다.</td></tr>';
  document.querySelectorAll("#nt tr.nr").forEach(r=>r.onclick=()=>{const id=r.dataset.id;openN.has(id)?openN.delete(id):openN.add(id);busy=false;load()});
  const rows=[];for(const j of s.jobs){rows.push('<tr class="jr" data-id="'+j.id+'" style="cursor:pointer"><td><span class="cst '+j.state+'">'+ST[j.state]+'</span></td><td>'+esc(j.label)+(j.private?' <span class="mut">(비공개)</span>':"")+'</td><td class="nw">'+esc(j.node||"-")+'</td><td class="nw">'+j.attempts+"/"+j.max_attempts+'</td><td class="nw">'+esc((j.created||"").replace("T"," "))+'</td><td>'+(j.state==="running"?prog(j.pct,j.msg,j.claimed)+stale(j):'<span class="mut">'+esc(j.state==="error"?j.error:j.msg||"")+'</span>')+'</td><td>'+(j.state==="queued"||j.state==="running"?'<button onclick="event.stopPropagation();cancel(\''+j.id+'\')">취소</button>':"")+'</td></tr>');
@@ -80,6 +88,14 @@ async function load(){if(busy)return;busy=true;try{const s=await (await fetch("/
  for(const id of open_){const c=document.querySelector('tr.dt[data-for="'+id+'"] td');if(c)c.innerHTML=await detail(id)}
  document.querySelectorAll("#jt tr.jr").forEach(r=>r.onclick=()=>{const id=r.dataset.id;open_.has(id)?open_.delete(id):open_.add(id);busy=false;load()})
 }finally{busy=false}}
+async function ndLoad(){const j=await (await fetch("/api/cluster/netdata")).json();const b=document.getElementById("ndbox");
+ const pre=t=>'<pre style="background:var(--stripe);padding:8px 10px;border-radius:4px;overflow:auto;font-size:12px;margin:4px 0">'+esc(t)+'</pre>';
+ b.innerHTML=(j.main&&j.main.ok?'메인 Netdata: <b>'+esc(j.main.version)+'</b> <a href="http://'+location.hostname+':'+(j.main.port||19999)+'" target="_blank">대시보드 ↗</a>'+(j.main.claimed?' <span style="color:var(--bad)">Netdata Cloud에 연결되어 있습니다</span>':''):'<span style="color:var(--bad)">이 서버에서 Netdata가 응답하지 않습니다.</span>')
+ +'<ol style="margin:8px 0 4px 18px;padding:0"><li>메인(부모) 설정 — 메인의 Netdata에 붙여 넣고 다시 시작:'+pre(j.parent_conf)+'</li><li>서브서버(자식) 설정 — 각 서브서버의 Netdata에 붙여 넣고 다시 시작 (메인 주소 <b>'+esc(j.parent_address)+'</b>는 서브서버로 가는 연결에서 찾은 것입니다):'+pre(j.child_conf)+'</li>'
+ +'<li>확인: 아래에 "보내는 중"이 뜨면 연결된 것입니다. 서브서버에서 Netdata Cloud는 끄기를 권합니다(<code>/var/lib/netdata/cloud.d</code>를 옮기고 다시 시작).</li></ol>'
+ +'<div>'+(j.streaming||[]).map(x=>esc(x.name)+': '+(x.streams?'<span style="color:var(--ok)">보내는 중</span>':'<span class="mut">아직 안 보냄</span>')).join(" · ")+'</div>'
+ +'<div style="font-size:12px;margin-top:4px">설정 변경은 root 권한이 필요해 이 앱이 하지 않습니다. 스트리밍이 되면 서브서버에 직접 닿지 않아도 기록 그래프가 메인 Netdata에서 그려집니다.</div>'}
+document.getElementById("ndd").addEventListener("toggle",e=>{if(e.target.open)ndLoad()});
 load();setInterval(load,5000);
 </script>
 {% endblock %}

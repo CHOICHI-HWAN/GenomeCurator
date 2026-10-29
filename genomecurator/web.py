@@ -1937,7 +1937,81 @@ def create_app(scheduler: bool = True) -> FastAPI:
     @app.get("/api/cluster/sub")
     def cluster_sub_status():
         from . import clusterworker, sysinfo
-        return {**clusterworker.sub_status(), "metrics": sysinfo.snapshot(config.DATA_DIR), "install": clusterworker.install_state(), "env": clusterworker.local_env(), "version": __version__}
+        return {**clusterworker.sub_status(), "metrics": sysinfo.snapshot(config.DATA_DIR), "install": clusterworker.install_state(), "env": clusterworker.local_env(),
+                "netdata": _local_netdata(), "version": __version__}
+
+    _nd_cache: dict = {"at": 0.0, "v": None}
+
+    def _local_netdata() -> dict:
+        from . import netdata
+        if time.time() - _nd_cache["at"] > 30:
+            _nd_cache["v"], _nd_cache["at"] = netdata.probe(), time.time()
+        return _nd_cache["v"]
+
+    @app.get("/api/cluster/sub/history")
+    def cluster_sub_history(minutes: int = 60):
+        """History of this machine from its own Netdata agent, with the periods of the cluster jobs it ran."""
+        from . import clusterworker, netdata
+        h = netdata.history_or_none(netdata.LOCAL, minutes)
+        st = clusterworker.sub_status()
+        jobs = []
+        for x in st.get("history") or []:
+            try:
+                end = time.mktime(time.strptime(x["ended"], "%Y-%m-%dT%H:%M:%S"))
+                jobs.append({"start": end - (x.get("seconds") or 0), "end": end, "label": x.get("label")})
+            except (KeyError, ValueError, TypeError):
+                pass
+        s_ = st.get("status") or {}
+        if s_.get("state") == "running":
+            try:
+                jobs.append({"start": time.mktime(time.strptime(s_["since"], "%Y-%m-%dT%H:%M:%S")), "end": None, "label": s_.get("label")})
+            except (KeyError, ValueError):
+                pass
+        h["jobs"] = jobs
+        return h
+
+    @app.get("/api/cluster/netdata")
+    def cluster_netdata():
+        """Netdata on the main server and how to make the sub-servers stream to it (configuration text to copy; nothing is changed here)."""
+        from . import netdata
+        local = _local_netdata()
+        nodes = cluster.list_nodes()
+        first_ip = next(((n.get("caps") or {}).get("ip") for n in nodes if (n.get("caps") or {}).get("ip")), None)
+        parent = netdata.address_towards(first_ip) or "MAIN-ADDRESS"
+        key = netdata.stream_key()
+        hosts = netdata.streaming_hosts() if local.get("ok") else []
+        return {"main": local, "parent_address": parent, "parent_conf": netdata.parent_conf(key, (parent.rsplit(".", 1)[0] + ".*") if parent.count(".") == 3 else "*"), "child_conf": netdata.child_conf(key, parent),
+                "streaming": [{"name": n["name"], "host": (n.get("caps") or {}).get("host"), "streams": (n.get("caps") or {}).get("host") in hosts} for n in nodes],
+                "hosts": hosts}
+
+    @app.get("/api/cluster/nodes/{nid}/history")
+    def cluster_node_history(nid: str, minutes: int = 60):
+        """History of a sub-server: from its Netdata agent directly, else through the Netdata of this (main) server when the sub-server streams to it."""
+        from . import netdata
+        n = next((x for x in cluster.list_nodes() if x["id"] == nid), None)
+        if not n:
+            return JSONResponse({"error": "no such sub-server"}, 404)
+        caps = n.get("caps") or {}
+        nd = caps.get("netdata") or {}
+        h = {"ok": False, "error": "the sub-server reported no Netdata agent"}
+        if nd.get("ok") and caps.get("ip"):
+            host = caps["ip"] if ":" not in caps["ip"] else f"[{caps['ip']}]"
+            h = netdata.history_or_none(f"http://{host}:{nd.get('port') or netdata.PORT}", minutes)
+        if not h.get("ok") and caps.get("host") and _local_netdata().get("ok"):
+            h2 = netdata.history_or_none(netdata.LOCAL, minutes, host=caps["host"])
+            h = h2 if h2.get("ok") else h
+        con = connect()
+        try:
+            rows = con.execute("SELECT label, claimed, finished, state FROM cluster_job WHERE node_id=? AND claimed IS NOT NULL ORDER BY claimed DESC LIMIT 50", (nid,)).fetchall()
+        finally:
+            con.close()
+        def ts(x):
+            try:
+                return time.mktime(time.strptime(x, "%Y-%m-%dT%H:%M:%S")) if x else None
+            except ValueError:
+                return None
+        h["jobs"] = [{"start": ts(r["claimed"]), "end": ts(r["finished"]) if r["state"] != "running" else None, "label": r["label"]} for r in rows if ts(r["claimed"])]
+        return h
 
     @app.post("/api/cluster/sub/install")
     async def cluster_sub_install(request: Request):
@@ -2017,6 +2091,10 @@ def create_app(scheduler: bool = True) -> FastAPI:
 
     # ---- web terminal: the main server makes a one-time token, the browser connects to the sub-server with it
     XTERM = {"xterm.js": "application/javascript", "addon-fit.js": "application/javascript", "xterm.css": "text/css"}
+
+    @app.get("/static/gc/minichart.js")
+    def minichart_js():
+        return FileResponse(Path(__file__).parent / "static" / "gc" / "minichart.js", media_type="application/javascript", headers={"Cache-Control": "max-age=3600"})
 
     @app.get("/static/xterm/{name}")
     def xterm_file(name: str):

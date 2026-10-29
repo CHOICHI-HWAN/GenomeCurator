@@ -76,6 +76,8 @@ def capabilities(beast: str | None) -> dict:
     mem = sysinfo.memory()
     if mem:
         caps["mem_total"] = mem[0]
+    from . import netdata
+    caps["netdata"] = netdata.probe()
     if beast:
         caps["kinds"].append("beast")
         try:
@@ -341,9 +343,11 @@ class Worker:
                 if time.time() - env_at > ENV_EVERY:
                     env_at = time.time()
                     env = env_check(self.beast, self.work)
-                    if env["ok"] != caps.get("env", {}).get("ok"):
+                    from . import netdata
+                    nd = netdata.probe()
+                    if env["ok"] != caps.get("env", {}).get("ok") or nd.get("ok") != caps.get("netdata", {}).get("ok"):
                         known = False                   # tell the main server about the change
-                    caps["env"] = env
+                    caps["env"], caps["netdata"] = env, nd
                 if not known:
                     self.main.json("POST", "/api/cluster/w/hello", {**caps, "metrics": self.metrics()})
                     known = True
