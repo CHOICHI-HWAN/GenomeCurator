@@ -13,6 +13,7 @@ from collections import Counter
 import math
 import random
 import re
+import shutil
 import subprocess
 import time
 from datetime import date, datetime, timedelta
@@ -511,8 +512,8 @@ def summarize(clock_run: dict, tag: str = "") -> dict:
     lg = d / "beast.log"
     if not lg.exists():
         return {}
-    r = read_log(lg)
     s = json.loads((d / "settings.json").read_text(encoding="utf-8")) if (d / "settings.json").exists() else {}
+    r = read_log(lg, float(s.get("burnin", 0.1)))           # a folder of combined runs has its burn-in removed already (burnin 0)
     P = r["params"]
     rate_key = "ucld.mean" if "ucld.mean" in P else "clock.rate"
     ages = {k[4:-1]: v for k, v in P.items() if k.startswith("age(") and k != "age(root)"}
@@ -540,6 +541,9 @@ def mcc_tree(clock_run: dict, tag: str = "", kind: str = "hipstr", burnin: float
         for line in fh:
             if line.lstrip().lower().startswith("tree "):
                 n += 1
+    st = d / "settings.json"
+    if st.exists():                                        # combined runs: the burn-in was removed when they were combined
+        burnin = float(json.loads(st.read_text(encoding="utf-8")).get("burnin", burnin))
     skip = int(n * burnin)
     if force or not out.exists() or out.stat().st_mtime < src.stat().st_mtime:
         tmp = d / f".mcc-{kind}.tmp"
@@ -562,6 +566,46 @@ def mcc_tree(clock_run: dict, tag: str = "", kind: str = "hipstr", burnin: float
         except (ValueError, IndexError):
             newest = None
     return {"tree": out.name, "tips": tips.name if tips.exists() else None, "trees": n, "burnin_trees": skip, "newest_tip": newest, "kind": kind}
+
+
+def combine_runs(clock_run: dict, tags: list[str], out_tag: str, burnin: float = 0.1) -> dict:
+    """Join independent runs of the same analysis (different seeds) with LogCombiner, removing `burnin` of each run first, into a new folder `out_tag`
+    that is summarized like any other (its settings say `burnin: 0` and name the runs). -> the summary of the combined runs."""
+    pre = env_prefix()
+    if not pre:
+        raise RuntimeError(f"BEAST 환경이 없습니다: {status()['how']}")
+    if len(tags) < 2:
+        raise ValueError("두 개 이상의 실행이 필요합니다.")
+    src = [folder(clock_run, t) for t in tags]
+    sets = [json.loads((d / "settings.json").read_text(encoding="utf-8")) for d in src]
+    same = {k for k in sets[0] if k not in ("seed", "tag", "threads")}
+    for k in same:
+        if any(x.get(k) != sets[0][k] for x in sets[1:]):
+            raise ValueError(f"실행들의 설정이 다릅니다 ({k}); 같은 분석의 다른 시드만 합칠 수 있습니다.")
+    for d in src:
+        if not (d / "beast.log").exists() or not (d / "beast.trees").exists():
+            raise ValueError(f"{d.name}에 beast.log / beast.trees가 없습니다.")
+    states = [int(read_log(d / "beast.log", 0).get("last_state") or 0) for d in src]
+    if any(x < sets[0].get("chain_length", 0) for x in states):
+        raise ValueError("끝나지 않은 실행은 합칠 수 없습니다.")
+    cut = int(sets[0]["chain_length"] * burnin)
+    out = folder(clock_run, out_tag)
+    out.mkdir(parents=True, exist_ok=True)
+    lc = str(pre / "bin" / "logcombiner")
+    for args, name in ((["-burnin", str(cut)], "beast.log"), (["-trees", "-burnin", str(cut)], "beast.trees")):
+        r = subprocess.run([lc, *args, *[str(d / name) for d in src], str(out / name)], capture_output=True, text=True, timeout=3600)
+        if r.returncode != 0 or not (out / name).exists():
+            raise RuntimeError("LogCombiner가 실패했습니다: " + (r.stderr or r.stdout)[-400:])
+    for f in ("dates.tsv", "alignment.fasta", "subsample.tsv", "beast.xml"):          # the same XML for every run (only the seed differs)
+        if (src[0] / f).exists():
+            shutil.copyfile(src[0] / f, out / f)
+    st = dict(sets[0], tag=out_tag, burnin=0, combined_from=tags, combined_burnin=burnin, seeds=[x.get("seed") for x in sets],
+              chain_length=sets[0]["chain_length"])
+    (out / "settings.json").write_text(json.dumps(st, ensure_ascii=False, indent=1), encoding="utf-8")
+    res = summarize(clock_run, out_tag)
+    res["complete"] = True
+    (out / "summary.json").write_text(json.dumps(res, ensure_ascii=False), encoding="utf-8")
+    return res
 
 
 def _short_country(c: str) -> str:

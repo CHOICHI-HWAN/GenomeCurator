@@ -4027,3 +4027,57 @@ def test_source_overlap_counts_every_venn_region(tmp_path, monkeypatch):
             f.write_text(js, encoding="utf-8")
             r = subprocess.run(["node", "--check", str(f)], capture_output=True, text=True)
             assert r.returncode == 0, f"{path}: {r.stderr[:300]}"
+
+
+def test_combining_runs_removes_burnin_once_and_refuses_different_analyses(tmp_path, monkeypatch):
+    """combine_runs: each run loses its burn-in before joining; the combined folder is summarized without cutting again."""
+    import json
+    import stat
+    from genomecurator import beastprep
+    pre = tmp_path / "env"
+    (pre / "bin").mkdir(parents=True)
+    lc = pre / "bin" / "logcombiner"                    # stand-in: drop states < burnin from each input, renumber, concatenate
+    lc.write_text("""#!/usr/bin/env python3
+import sys
+a = sys.argv[1:]
+trees = "-trees" in a
+a = [x for x in a if x != "-trees"]
+b = 0
+if "-burnin" in a:
+    i = a.index("-burnin"); b = int(a[i + 1]); del a[i:i + 2]
+*ins, out = a
+o = open(out, "w"); hdr = False; n = 0
+for f in ins:
+    for line in open(f):
+        if trees:
+            if line.startswith("tree "):
+                if int(line.split()[1].split("_")[1]) >= b:
+                    o.write("tree STATE_%d = x;\\n" % n); n += 1
+            continue
+        if line.startswith("state"):
+            if not hdr: o.write(line); hdr = True
+            continue
+        if int(line.split("\\t")[0]) >= b:
+            o.write("%d\\t%s" % (n, line.split("\\t", 1)[1])); n += 1
+""")
+    lc.chmod(lc.stat().st_mode | stat.S_IEXEC)
+    monkeypatch.setattr(beastprep, "env_prefix", lambda: pre)
+    monkeypatch.setattr(beastprep, "folder", lambda cr, tag="": tmp_path / "beast" / tag)
+    def run(tag, seed, offset, chain=1000, **extra):
+        d = tmp_path / "beast" / tag
+        d.mkdir(parents=True)
+        (d / "settings.json").write_text(json.dumps({"seed": seed, "tag": tag, "chain_length": chain, "clock": "strict", **extra}))
+        rows = ["state\tposterior\tage(g)\tclock.rate"] + [f"{s}\t-1\t{2026.0 + (100 if s < 100 else offset)}\t0.001" for s in range(0, chain + 1, 10)]
+        (d / "beast.log").write_text("\n".join(rows) + "\n")
+        (d / "beast.trees").write_text("#NEXUS\n" + "".join(f"tree STATE_{s} = x;\n" for s in range(0, chain + 1, 10)))
+    run("s1", 1, 0.25)
+    run("s2", 2, 0.35)
+    r = beastprep.combine_runs({}, ["s1", "s2"], "both")
+    st = json.loads((tmp_path / "beast" / "both" / "settings.json").read_text())
+    assert st["burnin"] == 0 and st["combined_from"] == ["s1", "s2"] and st["seeds"] == [1, 2]
+    assert r["states"] == 182                                    # 91 samples kept from each run (states 100..1000)
+    assert 2026.25 <= r["groups"]["g"]["median"] <= 2026.35 and r["groups"]["g"]["lo"] >= 2026.25   # the burn-in values (2126) are gone
+    assert (tmp_path / "beast" / "both" / "beast.trees").read_text().count("tree ") == 182
+    run("s3", 3, 0.3, chain=2000)
+    with _pytest.raises(ValueError):
+        beastprep.combine_runs({}, ["s1", "s3"], "bad")              # a different analysis
