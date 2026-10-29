@@ -24,7 +24,8 @@ from . import config, log
 from .db import audit_now, connect
 
 _log = log.get("cluster")
-LEASE = int(os.environ.get("GC_CLUSTER_LEASE", "300"))          # seconds without a heartbeat before a running job goes back to the queue
+LEASE = int(os.environ.get("GC_CLUSTER_LEASE", "600"))          # grace: seconds without a heartbeat before a running job is taken as failed there and handed out again
+STALE = int(os.environ.get("GC_CLUSTER_STALE", "90"))           # seconds without a heartbeat before a running job is shown as "not answering" (grace starts)
 LOG_MAX = 300
 # the only commands a worker runs; {x} are filled from the job's spec by the worker, never from free text
 KINDS = {"beast": {"label": "BEAST", "inputs": ["beast.xml"], "outputs": ["beast.log", "beast.trees", "beast.ops", "beast.screen.log"], "required": ["beast.log", "beast.trees"]}}
@@ -124,7 +125,7 @@ def hello(node: dict, caps: dict) -> dict:
 
 def _online(last_seen: str | None) -> bool:
     try:
-        return bool(last_seen) and datetime.now() - datetime.fromisoformat(last_seen) < timedelta(seconds=LEASE)
+        return bool(last_seen) and datetime.now() - datetime.fromisoformat(last_seen) < timedelta(seconds=STALE)
     except ValueError:
         return False
 
@@ -133,16 +134,117 @@ def list_nodes() -> list[dict]:
     con = connect()
     try:
         rows = [dict(r) for r in con.execute("SELECT * FROM cluster_node WHERE revoked=0 ORDER BY name")]
-        busy = {r["node_id"]: r["label"] for r in con.execute("SELECT node_id,label FROM cluster_job WHERE state='running'")}
+        busy = {r["node_id"]: _public(dict(r)) for r in con.execute("SELECT * FROM cluster_job WHERE state='running'")}
     finally:
         con.close()
     for r in rows:
         r.pop("key_sha", None)
         r["caps"] = json.loads(r.pop("caps_json") or "{}")
         r["metrics"] = json.loads(r.pop("metrics_json", None) or "{}")
+        r["paused"] = bool(r["metrics"].get("paused"))
         r["online"] = _online(r["last_seen"])
         r["running"] = busy.get(r["id"])
+        env = r["caps"].get("env") or {}
+        r["env_ok"] = env.get("ok")
     return rows
+
+
+# ---------------------------------------------------------------- join requests: a sub-server asks, the main server approves, the key is handed over once
+REQUEST_TTL = 24 * 3600
+MAX_PENDING = 20
+
+
+def _expire(con) -> None:
+    cut = (datetime.now() - timedelta(seconds=REQUEST_TTL)).isoformat(timespec="seconds")
+    con.execute("DELETE FROM cluster_request WHERE state IN ('pending','rejected','approved') AND updated < ?", (cut,))
+    con.execute("DELETE FROM cluster_request WHERE state='delivered' AND updated < ?", (cut,))
+
+
+def request_join(name: str, ip: str, secret: str, info: dict | None = None) -> str:
+    """A server asks to become a worker. It proves later that it is the same server with `secret` (only its hash is kept).
+    A server whose environment check failed is refused here as well as on its own page."""
+    name = (name or "").strip()[:60]
+    if not name or not secret or len(secret) < 20:
+        raise ValueError("a name and a secret are needed")
+    info = info or {}
+    if not (info.get("env") or {}).get("ok"):
+        raise ValueError("the environment check of this server has not passed; install what is missing first")
+    con = connect()
+    try:
+        _expire(con)
+        if con.execute("SELECT COUNT(*) FROM cluster_request WHERE state='pending'").fetchone()[0] >= MAX_PENDING:
+            raise ValueError("too many requests are waiting; ask the administrator of the main server")
+        rid = uuid.uuid4().hex[:10]
+        con.execute("INSERT INTO cluster_request(id,secret_sha,name,ip,created,updated,state,info_json) VALUES(?,?,?,?,?,?,?,?)",
+                    (rid, hashlib.sha256(secret.encode()).hexdigest(), name, ip, _now(), _now(), "pending", json.dumps(info)))
+        con.commit()
+    finally:
+        con.close()
+    audit_now("cluster_request", f"{name} ({ip}) asked to join as a worker")
+    return rid
+
+
+def list_requests() -> list[dict]:
+    con = connect()
+    try:
+        _expire(con)
+        con.commit()
+        rows = [dict(r) for r in con.execute("SELECT * FROM cluster_request WHERE state IN ('pending','approved') ORDER BY created")]
+    finally:
+        con.close()
+    for r in rows:
+        r.pop("secret_sha", None)
+        r["info"] = json.loads(r.pop("info_json") or "{}")
+    return rows
+
+
+def decide_request(rid: str, approve: bool, allow_private: bool = False) -> bool:
+    con = connect()
+    try:
+        r = con.execute("SELECT name, ip FROM cluster_request WHERE id=? AND state='pending'", (rid,)).fetchone()
+        if not r:
+            return False
+        con.execute("UPDATE cluster_request SET state=?, allow_private=?, updated=? WHERE id=?", ("approved" if approve else "rejected", int(bool(allow_private)), _now(), rid))
+        con.commit()
+    finally:
+        con.close()
+    audit_now("cluster_request", f"{r['name']} ({r['ip']}) {'approved' if approve else 'rejected'}" + (" (private genomes allowed)" if approve and allow_private else ""))
+    return True
+
+
+def collect_request(rid: str, secret: str) -> dict:
+    """The asking server checks its request. Once approved, the worker key is made now and returned this one time."""
+    con = connect()
+    try:
+        r = con.execute("SELECT * FROM cluster_request WHERE id=?", (rid,)).fetchone()
+        if not r or not hmac.compare_digest(r["secret_sha"] or "", hashlib.sha256((secret or "").encode()).hexdigest()):
+            raise PermissionError("unknown request")
+        state = r["state"]
+        con.execute("UPDATE cluster_request SET updated=? WHERE id=? AND state='pending'", (_now(), rid))
+        con.commit()
+    finally:
+        con.close()
+    if state != "approved":
+        return {"state": state}
+    name = r["name"]
+    con = connect()
+    try:
+        taken = con.execute("SELECT 1 FROM cluster_node WHERE name=? AND revoked=0", (name,)).fetchone()
+    finally:
+        con.close()
+    if taken:
+        name = f"{name}-{rid[:4]}"
+    node = create_node(name, bool(r["allow_private"]), note=f"joined from {r['ip']} (request {rid})")
+    con = connect()
+    try:
+        n = con.execute("UPDATE cluster_request SET state='delivered', node_id=?, updated=? WHERE id=? AND state='approved'", (node["id"], _now(), rid)).rowcount
+        con.commit()
+    finally:
+        con.close()
+    if not n:                                   # collected twice at the same moment: keep only the first key
+        revoke_node(node["id"])
+        return {"state": "delivered"}
+    return {"state": "approved", "key": node["key"], "name": node["name"], "allow_private": bool(r["allow_private"])}
 
 
 # ---------------------------------------------------------------- jobs
@@ -201,6 +303,14 @@ def _job(con, jid: str) -> dict | None:
 
 def _public(j: dict, with_log: bool = False) -> dict:
     out = {k: j.get(k) for k in ("id", "kind", "label", "state", "node_id", "created", "claimed", "finished", "heartbeat", "attempts", "max_attempts", "pct", "msg", "error", "private")}
+    if j.get("state") == "running":
+        try:
+            silent = (datetime.now() - datetime.fromisoformat(j.get("heartbeat") or j.get("claimed"))).total_seconds()
+        except (TypeError, ValueError):
+            silent = 0
+        out["silent"] = round(silent)
+        out["stale"] = silent >= STALE
+        out["requeue_in"] = max(0, round(LEASE - silent)) if silent >= STALE else None
     out["inputs"] = json.loads(j.get("inputs_json") or "[]")
     out["outputs"] = json.loads(j.get("outputs_json") or "[]")
     if with_log:
@@ -249,9 +359,14 @@ def reap() -> int:
     return n
 
 
-def _release(con, jid: str, why: str) -> None:
+def _release(con, jid: str, why: str, count: bool = True) -> None:
+    """Take a running job back. `count=False` when the worker gave it back on purpose (stopped by a person): that attempt is not counted."""
     j = _job(con, jid)
     if not j or j["state"] != "running":
+        return
+    if not count:
+        con.execute("UPDATE cluster_job SET state='queued', node_id=NULL, claimed=NULL, pct=0, msg=NULL, attempts=MAX(attempts-1,0) WHERE id=?", (jid,))
+        _addlog(con, jid, f"back in the queue: {why} (not counted as an attempt)")
         return
     if j["attempts"] >= j["max_attempts"]:
         con.execute("UPDATE cluster_job SET state='error', finished=?, error=?, node_id=NULL WHERE id=?", (_now(), f"{why}; no attempts left", jid))
@@ -274,12 +389,13 @@ def _requeue_node(nid: str, why: str) -> None:
 def claim(node: dict, kinds: list[str] | None = None, metrics: dict | None = None) -> dict | None:
     """Give the worker the oldest queued job it may run (its kind is known to the worker; a private job only to a worker that accepts private genomes)."""
     reap()
-    kinds = [k for k in (kinds or list(KINDS)) if k in KINDS]
-    if not kinds:
-        return None
+    kinds = [k for k in (list(KINDS) if kinds is None else kinds) if k in KINDS]      # an empty list (stopped, or environment broken) takes nothing
     con = connect()
     try:
         _touch(con, node["id"], metrics=metrics)
+        if not kinds:
+            con.commit()
+            return None
         busy = con.execute("SELECT 1 FROM cluster_job WHERE state='running' AND node_id=?", (node["id"],)).fetchone()
         if busy:
             con.commit()
@@ -293,12 +409,33 @@ def claim(node: dict, kinds: list[str] | None = None, metrics: dict | None = Non
             if n:
                 _addlog(con, j["id"], f"assigned to {node['name']}")
                 con.commit()
-                return {"id": j["id"], "kind": j["kind"], "spec": json.loads(j["spec_json"] or "{}"), "inputs": json.loads(j["inputs_json"] or "[]"),
+                return {"id": j["id"], "kind": j["kind"], "label": j["label"], "spec": json.loads(j["spec_json"] or "{}"), "inputs": json.loads(j["inputs_json"] or "[]"),
                         "outputs": KINDS[j["kind"]]["outputs"], "required": KINDS[j["kind"]]["required"], "lease": LEASE}
         con.commit()
         return None
     finally:
         con.close()
+
+
+def ask_recheck(nid: str) -> bool:
+    """Ask a worker to check its environment again (it answers at its next contact; the result appears in the worker list)."""
+    con = connect()
+    try:
+        n = con.execute("UPDATE cluster_node SET recheck=1 WHERE id=? AND revoked=0", (nid,)).rowcount
+        con.commit()
+    finally:
+        con.close()
+    return bool(n)
+
+
+def pop_recheck(node: dict) -> bool:
+    con = connect()
+    try:
+        n = con.execute("UPDATE cluster_node SET recheck=0 WHERE id=? AND recheck=1", (node["id"],)).rowcount
+        con.commit()
+    finally:
+        con.close()
+    return bool(n)
 
 
 def heartbeat(node: dict, jid: str, pct: float | None = None, msg: str | None = None, metrics: dict | None = None) -> dict:
@@ -420,6 +557,19 @@ def fail(node: dict, jid: str, error: str) -> dict:
         con.close()
 
 
+def give_back(node: dict, jid: str, why: str = "stopped on the sub-server") -> dict:
+    """The worker stopped the job (its Stop button): hand it out again at once."""
+    con = connect()
+    try:
+        j = _job(con, jid)
+        if j and j["node_id"] == node["id"] and j["state"] == "running":
+            _release(con, jid, f"{why} ({node['name']})", count=False)
+            con.commit()
+    finally:
+        con.close()
+    return {"ack": True}
+
+
 def cancel(jid: str) -> bool:
     con = connect()
     try:
@@ -436,4 +586,4 @@ def cancel(jid: str) -> bool:
 
 def state() -> dict:
     reap()
-    return {"nodes": list_nodes(), "jobs": list_jobs(100), "lease": LEASE, "now": _now()}
+    return {"nodes": list_nodes(), "requests": list_requests(), "jobs": list_jobs(100), "lease": LEASE, "stale": STALE, "now": _now()}

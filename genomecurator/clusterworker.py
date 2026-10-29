@@ -70,7 +70,12 @@ class Main:
 
 
 def capabilities(beast: str | None) -> dict:
-    caps = {"kinds": [], "cpus": os.cpu_count(), "platform": platform.platform(), "tools": {}}
+    import sys
+    from . import __version__
+    caps = {"kinds": [], "cpus": os.cpu_count(), "platform": platform.platform(), "host": platform.node(), "python": sys.version.split()[0], "app_version": __version__, "tools": {}}
+    mem = sysinfo.memory()
+    if mem:
+        caps["mem_total"] = mem[0]
     if beast:
         caps["kinds"].append("beast")
         try:
@@ -96,19 +101,82 @@ def find_beast(explicit: str | None = None) -> str | None:
     return shutil.which("beast")
 
 
+MIN_FREE_GB = float(os.environ.get("GC_WORKER_MIN_FREE_GB", "10"))
+ENV_EVERY = 600                                  # seconds between environment checks while the worker runs
+
+
+def env_check(beast: str | None, workdir: str | Path) -> dict:
+    """Can this machine run the jobs? BEAST starts, the BEAGLE library is next to it, and the work folder has room. -> {"ok", "checks": [...]}"""
+    checks = []
+    ver = None
+    if beast:
+        try:
+            r = subprocess.run([beast, "-version"], capture_output=True, text=True, timeout=120)
+            import re
+            m = re.search(r"v([0-9][0-9.]*)", r.stdout + r.stderr)
+            ver = m[1] if m else None
+        except Exception:
+            ver = None
+    checks.append({"name": "BEAST", "ok": bool(ver), "detail": f"BEAST {ver}" if ver else ("found but does not start" if beast else "not installed")})
+    libs = []
+    if beast:
+        pre = Path(beast).resolve().parent.parent
+        libs = list((pre / "lib").glob("libhmsbeagle*")) if (pre / "lib").is_dir() else []
+        if not libs:
+            try:
+                from . import beastprep
+                ep = beastprep.env_prefix()
+                libs = list((ep / "lib").glob("libhmsbeagle*")) if ep else []
+            except Exception:
+                libs = []
+    checks.append({"name": "BEAGLE", "ok": bool(libs), "detail": "library found" if libs else "the BEAGLE library BEAST 10 needs is missing"})
+    try:
+        p = Path(workdir)
+        while not p.exists() and p != p.parent:
+            p = p.parent
+        free = shutil.disk_usage(p).free / 2**30
+        checks.append({"name": "disk", "ok": free >= MIN_FREE_GB, "detail": f"{free:.0f} GB free (at least {MIN_FREE_GB:.0f} GB needed)"})
+    except OSError as e:
+        checks.append({"name": "disk", "ok": False, "detail": str(e)})
+    return {"ok": all(c["ok"] for c in checks), "checks": checks, "beast_version": ver}
+
+
+def _end(proc: subprocess.Popen, grace: float = 30) -> None:
+    """Stop a job's process and everything it started (SIGTERM to the group, SIGKILL after `grace` seconds)."""
+    import signal
+    def group(sig):
+        try:
+            if os.name == "posix":
+                os.killpg(proc.pid, sig)
+            else:
+                proc.terminate() if sig != getattr(signal, "SIGKILL", None) else proc.kill()
+        except (ProcessLookupError, PermissionError):
+            pass
+    group(signal.SIGTERM)
+    try:
+        proc.wait(grace)
+    except subprocess.TimeoutExpired:
+        group(getattr(signal, "SIGKILL", signal.SIGTERM))
+        proc.wait(10)
+
+
 class Worker:
     def __init__(self, base: str, key: str, workdir: str | Path, beast: str | None = None, poll: float = 10.0, beat: float = 20.0, retry: float = 15.0):
         self.main, self.work = Main(base, key), Path(workdir)
         self.beast, self.poll, self.beat, self.retry = find_beast(beast), poll, beat, retry
         self.stop = threading.Event()
         self.status = {"state": "starting", "job": None, "error": None, "since": time.strftime("%Y-%m-%dT%H:%M:%S")}
+        self.history: list[dict] = []
+        self.paused = threading.Event()          # Stop button of the sub-server page: give the running job back, take no new work           # the last jobs this worker ran (shown on its page)
         self.work.mkdir(parents=True, exist_ok=True)
 
     def metrics(self) -> dict:
         try:
-            return sysinfo.snapshot(self.work)
+            m = sysinfo.snapshot(self.work)
         except Exception:
-            return {}
+            m = {}
+        m["paused"] = self.paused.is_set()
+        return m
 
     def _set(self, state: str, job: str | None = None, error: str | None = None) -> None:
         self.status = {"state": state, "job": job, "error": error, "since": time.strftime("%Y-%m-%dT%H:%M:%S")}
@@ -137,7 +205,10 @@ class Worker:
         (jd / "in").mkdir(parents=True)
         (jd / "run").mkdir()
         self._state(jd, phase="running", job=job)
+        self._outcome = None
         self._set("running", jid)
+        self.status["label"] = job.get("label") or jid
+        self._t0 = time.time()
         try:
             for i in job["inputs"]:
                 dest = jd / "in" / i["name"]
@@ -164,10 +235,13 @@ class Worker:
         t0 = time.time()
         gone = threading.Event()
         with open(jd / "run" / "beast.screen.log", "w", encoding="utf-8") as lf:
-            proc = subprocess.Popen(cmd, cwd=str(jd / "run"), env=env, stdout=lf, stderr=subprocess.STDOUT, text=True)
+            # its own process group: `beast` is a shell script that starts Java, and stopping must end both
+            proc = subprocess.Popen(cmd, cwd=str(jd / "run"), env=env, stdout=lf, stderr=subprocess.STDOUT, text=True, **({"start_new_session": True} if os.name == "posix" else {}))
             last_beat = 0.0
             while proc.poll() is None and not self.stop.is_set():
                 time.sleep(1)
+                if self.paused.is_set():
+                    break
                 if time.time() - last_beat < self.beat:
                     continue
                 last_beat = time.time()
@@ -183,12 +257,15 @@ class Worker:
                 if gone.is_set():
                     break
             if proc.poll() is None:
-                proc.terminate()
-                try:
-                    proc.wait(30)
-                except subprocess.TimeoutExpired:
-                    proc.kill()
+                _end(proc)
         if gone.is_set():
+            return self._discard(jd)
+        if self.paused.is_set():
+            self._outcome = "stopped"
+            try:
+                self.main.json("POST", f"/api/cluster/w/jobs/{jid}/release", {})
+            except Exception:
+                pass                                # the main server hands it out again after the grace period anyway
             return self._discard(jd)
         if self.stop.is_set():
             return                                  # stopped on request: the job is left to the lease of the main server
@@ -197,9 +274,11 @@ class Worker:
             return self._fail(jd, jid, f"BEAST exited with code {proc.returncode}: {tail.strip()}")
         outs = [{"name": n, "sha256": sha256(jd / "run" / n), "bytes": (jd / "run" / n).stat().st_size} for n in KINDS["beast"]["outputs"] if (jd / "run" / n).is_file()]
         self._state(jd, phase="finished", outputs=outs, seconds=round(time.time() - t0))
+        self._outcome = "done"
         self.deliver(jd)
 
     def _fail(self, jd: Path, jid: str, why: str) -> None:
+        self._outcome = "failed"
         _log.warning("job %s failed: %s", jid, why)
         try:
             self.main.json("POST", f"/api/cluster/w/jobs/{jid}/fail", {"error": why})
@@ -211,6 +290,8 @@ class Worker:
         shutil.rmtree(jd, ignore_errors=True)
 
     def _discard(self, jd: Path) -> None:
+        if getattr(self, "_outcome", None) not in ("failed", "done"):
+            self._outcome = "stopped"
         shutil.rmtree(jd, ignore_errors=True)
 
     def deliver(self, jd: Path) -> bool:
@@ -253,23 +334,50 @@ class Worker:
     def serve(self) -> None:
         caps = capabilities(self.beast)
         _log.info("worker ready: %s", caps)
-        known = False
+        known, env_at = False, 0.0
         while not self.stop.is_set():
             try:
+                if time.time() - env_at > ENV_EVERY:
+                    env_at = time.time()
+                    env = env_check(self.beast, self.work)
+                    if env["ok"] != caps.get("env", {}).get("ok"):
+                        known = False                   # tell the main server about the change
+                    caps["env"] = env
                 if not known:
                     self.main.json("POST", "/api/cluster/w/hello", {**caps, "metrics": self.metrics()})
                     known = True
                 self.resume()
-                job = self.main.json("POST", "/api/cluster/w/claim", {"kinds": caps["kinds"], "metrics": self.metrics()}).get("job")
+                if self.paused.is_set():
+                    if self.status["state"] != "paused":
+                        self._set("paused")
+                    self.main.json("POST", "/api/cluster/w/claim", {"kinds": [], "metrics": self.metrics()})
+                    self.stop.wait(self.poll)
+                    continue
+                if not caps["env"]["ok"]:
+                    # the environment broke after approval: take no work, keep reporting
+                    bad = ", ".join(f"{c['name']}: {c['detail']}" for c in caps["env"]["checks"] if not c["ok"])
+                    if self.status["state"] != "env_broken":
+                        self._set("env_broken", error=bad)
+                    if self.main.json("POST", "/api/cluster/w/claim", {"kinds": [], "metrics": self.metrics()}).get("recheck"):
+                        env_at = 0.0
+                    self.stop.wait(self.poll)
+                    continue
+                got = self.main.json("POST", "/api/cluster/w/claim", {"kinds": caps["kinds"], "metrics": self.metrics()})
+                if got.get("recheck"):
+                    env_at = 0.0                        # the main server asked for a fresh environment check
+                    continue
+                job = got.get("job")
                 if job:
                     self.run_job(job)
+                    self.history = ([{"id": job["id"], "label": job.get("label") or job["id"], "seconds": round(time.time() - getattr(self, "_t0", time.time())),
+                                      "result": getattr(self, "_outcome", "?"), "ended": time.strftime("%Y-%m-%dT%H:%M:%S")}] + self.history)[:10]
                     self._set("idle")
                     continue
                 if self.status["state"] != "idle":
                     self._set("idle")
             except Gone as e:
                 _log.error("the main server refused this worker (%s); check the key", e)
-                self._set("refused", error="the main server did not accept the key or the address")
+                self._set("refused", error="the main server did not accept this worker (revoked or unknown key)")
                 self.stop.wait(60)
                 continue
             except Exception as e:
@@ -305,61 +413,176 @@ def save_config(cfg: dict) -> None:
         pass
 
 
-_sub: dict = {"worker": None, "thread": None}
+_sub: dict = {"worker": None, "thread": None, "join": None}
+
+
+def _workdir() -> Path:
+    from . import config
+    return config.DATA_DIR / "cluster" / "worker"
+
+
+_env_cache: dict = {"at": 0.0, "env": None}
+
+
+def local_env(beast: str | None = None, fresh: bool = False) -> dict:
+    """The environment check of this server (kept for a minute: the page asks every few seconds and starting BEAST takes a moment)."""
+    if fresh or not _env_cache["env"] or time.time() - _env_cache["at"] > 60:
+        _env_cache["env"], _env_cache["at"] = env_check(find_beast(beast or load_config().get("beast")), _workdir()), time.time()
+    return _env_cache["env"]
 
 
 def sub_status() -> dict:
     cfg, w = load_config(), _sub["worker"]
     running = bool(w and _sub["thread"] and _sub["thread"].is_alive())
-    return {"enabled": bool(cfg.get("enabled")), "running": running, "main": cfg.get("main", ""), "has_key": bool(cfg.get("key")),
-            **({"status": w.status, "beast": w.beast} if running else {})}
+    jt = _sub["join"]
+    return {"enabled": bool(cfg.get("enabled")), "running": running, "paused": bool(cfg.get("paused")), "main": cfg.get("main", ""), "has_key": bool(cfg.get("key")),
+            "join": {"state": cfg.get("join_state"), "id": cfg.get("join_id"), "error": cfg.get("join_error"), "waiting": bool(jt and jt.is_alive())},
+            **({"status": w.status, "beast": w.beast, "history": w.history} if running else {})}
 
 
-def sub_start(main: str | None = None, key: str | None = None, beast: str | None = None) -> dict:
-    """Activate: remember the address and key (for the next start of the program) and start the worker thread."""
-    cfg = load_config()
-    if main:
-        cfg["main"] = main.strip()
-    if key:
-        cfg["key"] = key.strip()
-    if not cfg.get("main", "").startswith(("http://", "https://")) or not cfg.get("key"):
-        raise ValueError("the address of the main server (http://host:port) and the worker key are needed")
-    sub_stop(wait=True)
-    cfg["enabled"] = True
-    save_config(cfg)
-    from . import config
-    w = Worker(cfg["main"], cfg["key"], config.DATA_DIR / "cluster" / "worker", beast or cfg.get("beast"))
+def _start_worker(cfg: dict) -> None:
+    w = Worker(cfg["main"], cfg["key"], _workdir(), cfg.get("beast"))
+    if cfg.get("paused"):
+        w.paused.set()
     t = threading.Thread(target=w.serve, daemon=True, name="cluster-worker")
     _sub["worker"], _sub["thread"] = w, t
     t.start()
+
+
+def sub_request(main: str, name: str | None = None) -> dict:
+    """Ask the main server to take this server on as a worker. Only a server whose environment check passes may ask; the worker starts by itself
+    once the main server has approved (the key is handed over then, nobody copies it)."""
+    import secrets as _secrets
+    main = (main or "").strip().rstrip("/")
+    if not main.startswith(("http://", "https://")):
+        raise ValueError("the address of the main server, e.g. http://10.0.0.1:8000")
+    env = local_env(fresh=True)
+    if not env["ok"]:
+        raise ValueError("the environment check failed: " + "; ".join(f"{c['name']} ({c['detail']})" for c in env["checks"] if not c["ok"]))
+    sub_stop(wait=True)
+    secret = _secrets.token_urlsafe(32)
+    caps = capabilities(find_beast(load_config().get("beast")))
+    info = {**caps, "env": env, "metrics": sysinfo.snapshot(_workdir())}
+    host = name or platform.node() or "worker"
+    try:
+        r = Main(main, "").json("POST", "/api/cluster/w/join", {"name": host, "secret": secret, "info": info})
+    except Gone as e:
+        raise ValueError(f"the main server refused the request ({e})")
+    except Exception as e:
+        raise ValueError(f"the main server cannot be reached at {main} ({e})")
+    cfg = load_config()
+    cfg.update({"main": main, "join_id": r["id"], "join_secret": secret, "join_state": "pending", "join_error": None, "enabled": False})
+    cfg.pop("key", None)
+    save_config(cfg)
+    _wait_for_approval()
+    return sub_status()
+
+
+def _wait_for_approval(every: float = 5.0) -> None:
+    if _sub["join"] and _sub["join"].is_alive():
+        return
+    stop = threading.Event()
+    _sub["join_stop"] = stop
+
+    def loop():
+        while not stop.is_set():
+            cfg = load_config()
+            if not cfg.get("join_id") or cfg.get("join_state") != "pending":
+                return
+            try:
+                r = Main(cfg["main"], "").json("POST", f"/api/cluster/w/join/{cfg['join_id']}", {"secret": cfg["join_secret"]})
+            except Gone:
+                r = {"state": "unknown"}
+            except Exception as e:
+                cfg["join_error"] = f"main server not reachable ({str(e)[:120]})"
+                save_config(cfg)
+                stop.wait(every * 3)
+                continue
+            if r.get("state") == "approved" and r.get("key"):
+                cfg.update({"key": r["key"], "join_state": "approved", "join_error": None, "enabled": True, "name": r.get("name")})
+                cfg.pop("join_secret", None)
+                save_config(cfg)
+                _log.info("approved by the main server as %s; starting the worker", r.get("name"))
+                _start_worker(cfg)
+                return
+            if r.get("state") in ("rejected", "unknown", "delivered"):
+                cfg.update({"join_state": r["state"], "join_error": None})
+                cfg.pop("join_secret", None)
+                save_config(cfg)
+                return
+            cfg["join_error"] = None
+            save_config(cfg)
+            stop.wait(every)
+    t = threading.Thread(target=loop, daemon=True, name="cluster-join")
+    _sub["join"] = t
+    t.start()
+
+
+def sub_start(main: str | None = None, key: str | None = None, beast: str | None = None) -> dict:
+    """Start with a key that is already known (handed over at approval, or typed for a worker added by hand on the main server)."""
+    cfg = load_config()
+    if main:
+        cfg["main"] = main.strip().rstrip("/")
+    if key:
+        cfg["key"] = key.strip()
+    if beast:
+        cfg["beast"] = beast
+    if not cfg.get("main", "").startswith(("http://", "https://")) or not cfg.get("key"):
+        raise ValueError("this server has not been approved by a main server yet")
+    env = env_check(find_beast(cfg.get("beast")), _workdir())
+    if not env["ok"]:
+        raise ValueError("the environment check failed: " + "; ".join(f"{c['name']} ({c['detail']})" for c in env["checks"] if not c["ok"]))
+    sub_stop(wait=True)
+    cfg["enabled"] = True
+    save_config(cfg)
+    _start_worker(cfg)
+    return sub_status()
+
+
+def sub_pause(on: bool) -> dict:
+    """Stop (on=True): the running job is stopped and given back to the main server at once, and no new work is taken until Resume. Kept across restarts."""
+    cfg = load_config()
+    cfg["paused"] = bool(on)
+    save_config(cfg)
+    w = _sub["worker"]
+    if w:
+        (w.paused.set if on else w.paused.clear)()
     return sub_status()
 
 
 def sub_stop(wait: bool = False, forget: bool = False) -> dict:
-    """Deactivate. A job in progress is left to the main server (it goes back to the queue after the lease)."""
+    """Deactivate (a pending request is withdrawn too). A job in progress is left to the main server (it goes back to the queue after the lease)."""
     w, t = _sub["worker"], _sub["thread"]
     if w:
         w.stop.set()
         if wait and t:
             t.join(15)
+    if _sub.get("join_stop"):
+        _sub["join_stop"].set()
     _sub["worker"] = _sub["thread"] = None
     cfg = load_config()
     if cfg:
         cfg["enabled"] = False
+        if cfg.get("join_state") == "pending":
+            cfg["join_state"] = "withdrawn"
+            cfg.pop("join_secret", None)
         if forget:
-            cfg.pop("key", None)
+            for k in ("key", "join_id", "join_secret", "join_state"):
+                cfg.pop(k, None)
         save_config(cfg)
     return sub_status()
 
 
 def sub_autostart() -> None:
-    """At the start of the program: a server that was activated stays a sub-server."""
+    """At the start of the program: an approved server stays a worker, and a request still waiting goes on waiting."""
     cfg = load_config()
-    if cfg.get("enabled") and cfg.get("main") and cfg.get("key"):
-        try:
+    try:
+        if cfg.get("enabled") and cfg.get("main") and cfg.get("key"):
             sub_start()
-        except Exception:
-            _log.warning("could not restart the sub-server worker", exc_info=True)
+        elif cfg.get("join_state") == "pending" and cfg.get("join_secret"):
+            _wait_for_approval()
+    except Exception:
+        _log.warning("could not restart the sub-server worker", exc_info=True)
 
 
 # ---- "install": make the environment a sub-server needs (BEAST 10 and its BEAGLE library) with one button
@@ -404,6 +627,7 @@ def install_beast() -> str:
         st = beastprep.status()
         if not st["ok"]:
             raise RuntimeError("the environment was created but BEAST was not found in it")
+        local_env(fresh=True)
         progress(100, f"BEAST {st['version']} installed")
         return "/cluster/sub"
     jid = jobs.start(work, "BEAST environment install", "install")

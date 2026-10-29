@@ -64,12 +64,16 @@ CREATE TABLE IF NOT EXISTS job(
 CREATE INDEX IF NOT EXISTS ix_job_started ON job(started);
 -- the cluster (cluster.py): worker servers that fetch jobs from this one. The main server is the only source of truth; a worker holds a job's files only until the main server has verified and taken over the results.
 CREATE TABLE IF NOT EXISTS cluster_node(
-  id TEXT PRIMARY KEY, name TEXT UNIQUE, key_sha TEXT, created TEXT, last_seen TEXT, caps_json TEXT, allow_private INTEGER DEFAULT 0, revoked INTEGER DEFAULT 0, note TEXT, metrics_json TEXT);
+  id TEXT PRIMARY KEY, name TEXT UNIQUE, key_sha TEXT, created TEXT, last_seen TEXT, caps_json TEXT, allow_private INTEGER DEFAULT 0, revoked INTEGER DEFAULT 0, note TEXT, metrics_json TEXT, recheck INTEGER DEFAULT 0);
 CREATE TABLE IF NOT EXISTS cluster_job(
   id TEXT PRIMARY KEY, kind TEXT, label TEXT, state TEXT,  -- queued|running|received|done|error|cancelled
   node_id TEXT, created TEXT, claimed TEXT, finished TEXT, heartbeat TEXT, attempts INTEGER DEFAULT 0, max_attempts INTEGER DEFAULT 3,
   pct REAL DEFAULT 0, msg TEXT, error TEXT, private INTEGER DEFAULT 0, spec_json TEXT, inputs_json TEXT, outputs_json TEXT, target_dir TEXT, log_json TEXT);
 CREATE INDEX IF NOT EXISTS ix_cluster_job_state ON cluster_job(state, created);
+-- a server asking to join as a worker; the key is made only when an approved request is collected (so no key is ever stored in plain text)
+CREATE TABLE IF NOT EXISTS cluster_request(
+  id TEXT PRIMARY KEY, secret_sha TEXT, name TEXT, ip TEXT, created TEXT, updated TEXT, state TEXT,  -- pending|approved|rejected|delivered
+  allow_private INTEGER DEFAULT 0, node_id TEXT, info_json TEXT);
 -- the private store (private.py): local, unpublished genomes of a virus; never part of `genome` (public page, Superset, backups, checks)
 CREATE TABLE IF NOT EXISTS private_genome(
   watch_id INTEGER, id TEXT, metadata_json TEXT, file_path TEXT, seq_md5 TEXT, length INTEGER, source_file TEXT, imported TEXT, updated TEXT, version INTEGER DEFAULT 1,
@@ -185,6 +189,8 @@ def migrate(con: sqlite3.Connection) -> None:
     ncols = {r[1] for r in con.execute("PRAGMA table_info(cluster_node)")}
     if ncols and "metrics_json" not in ncols:
         con.execute("ALTER TABLE cluster_node ADD COLUMN metrics_json TEXT")
+    if ncols and "recheck" not in ncols:
+        con.execute("ALTER TABLE cluster_node ADD COLUMN recheck INTEGER DEFAULT 0")
     wcols = {r[1] for r in con.execute("PRAGMA table_info(watchlist)")}
     if "pathoplexus_organism" not in wcols:
         con.execute("ALTER TABLE watchlist ADD COLUMN pathoplexus_organism TEXT")

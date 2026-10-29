@@ -21,8 +21,12 @@ pre{margin:8px 0 0;max-height:210px;overflow:auto;background:var(--bg);border:1p
 <h1>서브서버 <span id="hn" class="mut"></span></h1>
 <div class="mut">이 서버를 메인 서버의 작업을 나누어 처리하는 서브서버로 쓸 수 있습니다. 메인 서버의 클러스터 화면에서 이 서버를 워커로 추가하면 받는 <b>키</b>와 메인 주소가 필요합니다.</div>
 
-<div class="card"><div class="row"><h2 style="margin:0">상태</h2><span id="st" class="pill off">확인 중</span><span id="stx" class="mut"></span></div>
- <div id="job" style="display:none;margin-top:12px"><div class="row"><b id="jl"></b><span id="jm" class="mut"></span></div><div class="bar"><i class="job" id="jb" style="width:0"></i></div></div></div>
+<div class="card"><div class="row"><h2 style="margin:0">상태</h2><span id="st" class="pill off">확인 중</span><span id="stx" class="mut"></span>
+ <span style="flex:1"></span><button class="g" id="pz" onclick="pause()" style="display:none">정지</button><button id="rs" onclick="resume()" style="display:none">재개</button></div>
+ <div class="mut" style="font-size:12.5px;margin-top:4px">정지: 실행 중인 작업을 멈추고 메인에 바로 돌려줍니다(메인이 다른 서브서버에 다시 나눠 줌). 재개할 때까지 새 작업을 받지 않습니다.</div>
+ <div id="job" style="display:none;margin-top:12px"><div class="row" style="justify-content:space-between"><b id="jl"></b><b id="jp"></b></div><div class="bar"><i class="job" id="jb" style="width:0"></i></div>
+  <div class="row mut" style="gap:18px"><span>수행 <b id="je">-</b></span><span>남은 시간 <b id="jr">-</b></span><span>완료 예상 <b id="jf">-</b></span></div><div class="mut" id="jm"></div></div>
+ <div id="hist" style="display:none;margin-top:12px"><div class="mut" style="margin-bottom:4px">최근 작업</div><div id="hl"></div></div></div>
 
 <div class="card"><h2>자원 사용</h2><div class="meters">
  <div class="m"><div class="row" style="justify-content:space-between"><span>CPU</span><b id="cpu">-</b></div><div class="bar"><i id="cpub" style="width:0"></i></div><div class="mut" id="cpux"></div></div>
@@ -30,10 +34,16 @@ pre{margin:8px 0 0;max-height:210px;overflow:auto;background:var(--bg);border:1p
  <div class="m"><div class="row" style="justify-content:space-between"><span>디스크 (데이터 폴더)</span><b id="dsk">-</b></div><div class="bar"><i id="dskb" style="width:0"></i></div><div class="mut" id="dskx"></div></div>
 </div></div>
 
-<div class="card"><h2>서브서버로 활성화</h2>
- <div class="row"><input id="sm" placeholder="메인 주소 (예: http://10.0.0.1:8000)"><input id="sk" type="password" placeholder="워커 키" autocomplete="off"></div>
- <div class="row" style="margin-top:10px"><button id="on" onclick="activate()">활성화</button><button class="g" id="off" onclick="deactivate()">비활성화</button><span id="se" class="err"></span></div>
- <div class="mut" style="margin-top:8px">활성화하면 이 서버가 메인에 접속해 작업을 가져가 처리하고, 프로그램을 다시 켜도 유지됩니다. 키는 이 서버의 데이터 폴더에 소유자만 읽도록 저장됩니다. 같은 사설 네트워크의 누구나 이 화면에서 활성화·설치를 할 수 있으니 신뢰하는 네트워크에서만 쓰세요.</div></div>
+<div class="card"><h2>분석 환경 점검</h2>
+ <div id="envl" class="mut">확인 중…</div>
+ <div class="mut" style="margin-top:6px">세 항목이 모두 통과해야 서브서버로 참여를 요청할 수 있습니다. 빠진 것은 아래 <b>환경 설치</b>로 채우세요.</div></div>
+
+<div class="card"><h2>서브서버로 참여</h2>
+ <div class="row"><input id="sm" placeholder="메인 주소 (예: http://10.0.0.1:8000)"><button id="on" onclick="requestJoin()">참여 요청</button><button class="g" id="off" onclick="deactivate()">비활성화</button></div>
+ <div id="jst" style="margin-top:10px"></div><div id="se" class="err" style="margin-top:6px"></div>
+ <div class="mut" style="margin-top:8px">참여 요청을 보내면 메인 서버의 클러스터 화면에 승인 대기로 나타납니다. 메인에서 <b>승인</b>하면 이 서버가 스스로 키를 받아 작업을 시작합니다(키를 옮겨 적을 필요 없음). 프로그램을 다시 켜도 유지됩니다.</div>
+ <details style="margin-top:8px"><summary class="mut">메인에서 직접 받은 워커 키로 시작</summary>
+  <div class="row" style="margin-top:8px"><input id="sk" type="password" placeholder="워커 키" autocomplete="off"><button class="g" onclick="activateKey()">키로 시작</button></div></details></div>
 
 <div class="card"><h2>환경 설치</h2>
  <div class="row"><span id="bs" class="pill off">확인 중</span><span id="bx" class="mut"></span><button id="inst" onclick="install()" style="display:none">BEAST 설치하기</button></div>
@@ -44,20 +54,34 @@ pre{margin:8px 0 0;max-height:210px;overflow:auto;background:var(--bg);border:1p
 <script>
 const $=id=>document.getElementById(id);
 const esc=s=>String(s==null?"":s).replace(/[&<>"]/g,c=>({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;"}[c]));
+const dur=s=>{s=Math.max(0,Math.round(s||0));const h=Math.floor(s/3600),m=Math.floor(s%3600/60),x=s%60;return h?h+"시간 "+m+"분":m?m+"분 "+x+"초":x+"초"};
 const gb=b=>b==null?"-":(b/2**30).toFixed(b>=2**40?0:1)+" GB";
-const SS={starting:"시작 중",idle:"메인에 연결됨, 작업 대기 중",running:"작업 실행 중",unreachable:"메인에 연결할 수 없습니다",refused:"메인이 이 키나 주소를 받아들이지 않았습니다"};
+const SS={starting:"시작 중",idle:"메인에 연결됨, 작업 대기 중",running:"작업 실행 중",unreachable:"메인에 연결할 수 없습니다",refused:"메인이 이 서버를 받아들이지 않습니다(폐기되었거나 키가 다름)",env_broken:"분석 환경에 문제가 있어 작업을 받지 않습니다",paused:"정지됨 — 새 작업을 받지 않습니다"};
 function meter(id,pct,txt){const e=$(id+"b");e.style.width=Math.min(100,pct||0)+"%";e.className=pct>=90?"crit":pct>=75?"hi":"";$(id).textContent=pct==null?"-":Math.round(pct)+"%";$(id+"x").textContent=txt||""}
 async function post(u,b){const r=await fetch(u,{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify(b||{})});return [r.ok,await r.json()]}
-async function activate(){const [ok,j]=await post("/api/cluster/sub/activate",{main:$("sm").value,key:$("sk").value});$("se").textContent=ok?"":j.error;if(ok)$("sk").value="";load()}
+async function requestJoin(){$("se").textContent="";$("on").disabled=true;const [ok,j]=await post("/api/cluster/sub/request",{main:$("sm").value});$("se").textContent=ok?"":j.error;$("on").disabled=false;load()}
+async function activateKey(){const [ok,j]=await post("/api/cluster/sub/activate",{main:$("sm").value,key:$("sk").value});$("se").textContent=ok?"":j.error;if(ok)$("sk").value="";load()}
+const JS={pending:["warn","승인 대기 중 — 메인 서버의 클러스터 화면에서 승인해 주세요"],approved:["on","승인됨"],rejected:["err","메인 서버가 요청을 거절했습니다"],unknown:["err","메인 서버에 이 요청이 없습니다(만료되었을 수 있음). 다시 요청하세요"],withdrawn:["off","요청을 취소했습니다"],delivered:["err","이 요청의 키는 이미 전달되었습니다. 다시 요청하세요"]};
+async function pause(){if(!confirm("정지합니다. 실행 중인 작업은 멈추고 메인으로 돌려보내며, 재개할 때까지 새 작업을 받지 않습니다."))return;await post("/api/cluster/sub/pause");load()}
+async function resume(){await post("/api/cluster/sub/resume");load()}
 async function deactivate(){await post("/api/cluster/sub/deactivate",{});load()}
 async function install(){if(!confirm("이 서버에 BEAST 환경(conda 환경 gc-beast)을 설치합니다. 몇 분 걸리며 인터넷 접속이 필요합니다. 진행할까요?"))return;
  const [ok,j]=await post("/api/cluster/sub/install");if(!ok)alert(j.error);load()}
 async function load(){let j;try{j=await (await fetch("/api/cluster/sub")).json()}catch(e){$("st").className="pill err";$("st").textContent="응답 없음";return}
  const run=j.running,s=j.status||{};
  $("st").className="pill "+(run?(s.state==="unreachable"||s.state==="refused"?"err":"on"):"off");$("st").textContent=run?"활성화됨":"꺼짐";
- $("stx").textContent=run?(SS[s.state]||s.state)+(s.error?" — "+s.error:""):(j.enabled?"곧 다시 시작됩니다":"메인 서버에 연결되어 있지 않습니다.");
- if(run&&s.state==="running"){$("job").style.display="block";$("jl").textContent="작업 "+(s.job||"");$("jm").textContent=s.msg||"";$("jb").style.width=(s.pct||0)+"%"}else $("job").style.display="none";
- if(!$("sm").value&&j.main)$("sm").value=j.main;$("on").disabled=false;$("off").disabled=!run&&!j.enabled;
+ const jn=j.join||{};
+ $("stx").textContent=run?(SS[s.state]||s.state)+(s.error?" — "+s.error:""):jn.state==="pending"?"참여 승인 대기 중":(j.enabled?"곧 다시 시작됩니다":"메인 서버에 연결되어 있지 않습니다.");
+ if(run&&j.paused){$("st").className="pill warn";$("st").textContent="정지됨"}
+ $("pz").style.display=run&&!j.paused?"":"none";$("rs").style.display=run&&j.paused?"":"none";
+ if(!run&&jn.state==="pending"){$("st").className="pill warn";$("st").textContent="승인 대기"}
+ const jj=JS[jn.state];$("jst").innerHTML=run?'<span class="pill on">활성화됨</span>':jj?'<span class="pill '+jj[0]+'">'+esc(jj[1])+'</span>'+(jn.error?' <span class="err">'+esc(jn.error)+'</span>':""):"";
+ const env=j.env||{};$("envl").innerHTML=(env.checks||[]).map(c=>'<div class="row" style="gap:8px"><span class="pill '+(c.ok?"on":"err")+'" style="min-width:64px;text-align:center">'+(c.ok?"통과":"실패")+'</span><b>'+esc(c.name)+'</b><span class="mut">'+esc(c.detail)+'</span></div>').join("")||"확인 중…";
+ if(run&&s.state==="running"){const el=(Date.now()-new Date(s.since))/1000,p=s.pct,eta=p>0.5?el*(100-p)/p:null;
+  $("job").style.display="block";$("jl").textContent=s.label||("작업 "+(s.job||""));$("jp").textContent=p!=null?(+p).toFixed(1)+"%":"시작 중";$("jb").style.width=(p||0)+"%";
+  $("je").textContent=dur(el);$("jr").textContent=eta?"약 "+dur(eta):"계산 중";$("jf").textContent=eta?new Date(Date.now()+eta*1000).toLocaleString("ko-KR",{month:"numeric",day:"numeric",hour:"2-digit",minute:"2-digit"}):"-";$("jm").textContent=s.msg||""}else $("job").style.display="none";
+ const H=j.history||[];$("hist").style.display=H.length?"block":"none";$("hl").innerHTML=H.map(h=>'<div class="row" style="gap:10px"><span class="pill '+(h.result==="done"?"on":h.result==="failed"?"err":"off")+'">'+({done:"완료",failed:"실패",stopped:"중단"}[h.result]||h.result)+'</span><span>'+esc(h.label)+'</span><span class="mut">'+dur(h.seconds)+' · '+esc((h.ended||"").replace("T"," "))+'</span></div>').join("");
+ if(!$("sm").value&&j.main)$("sm").value=j.main;$("on").disabled=!env.ok||run||jn.state==="pending";$("off").disabled=!run&&!j.enabled&&jn.state!=="pending";
  const m=j.metrics||{};
  meter("cpu",m.cpu_pct,(m.cpus?m.cpus+"코어":"")+(m.load1!=null?" · 부하 "+m.load1:""));
  meter("mem",m.mem_total?100*m.mem_used/m.mem_total:null,gb(m.mem_used)+" / "+gb(m.mem_total));

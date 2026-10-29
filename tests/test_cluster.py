@@ -7,6 +7,21 @@ import time
 
 import pytest
 
+from genomecurator import clusterworker as _cw
+
+_REAL_ENV_CHECK = _cw.env_check
+OK_ENV = {"ok": True, "checks": [{"name": "BEAST", "ok": True, "detail": "BEAST 10.5.0"}, {"name": "BEAGLE", "ok": True, "detail": "library found"},
+                                 {"name": "disk", "ok": True, "detail": "100 GB free"}], "beast_version": "10.5.0"}
+
+
+@pytest.fixture(autouse=True)
+def _environment_passes(monkeypatch):
+    """The stand-in BEAST has no BEAGLE library next to it; the environment check itself is tested on its own below."""
+    monkeypatch.setattr(_cw, "env_check", lambda beast, workdir: OK_ENV)
+    _cw._env_cache.update({"at": 0.0, "env": None})
+    yield
+    _cw.sub_stop(wait=True)
+
 
 def _env(tmp_path, monkeypatch):
     from genomecurator import config
@@ -131,10 +146,10 @@ def _serve(app):
     return srv, port
 
 
-def _fake_beast(tmp_path, fail=False):
+def _fake_beast(tmp_path, fail=False, seconds=1):
     f = tmp_path / "fakebeast"
     f.write_text("#!/bin/sh\nif [ \"$1\" = \"-version\" ]; then echo 'BEAST v10.5.0'; exit 0; fi\n" + ("echo boom >&2; exit 3\n" if fail else
-                 "printf 'state\\tposterior\\n0\\t-1\\n500\\t-1\\n1000\\t-1\\n' > beast.log\necho tree > beast.trees\necho ops > beast.ops\nsleep 1\n"))
+                 "printf 'state\\tposterior\\n0\\t-1\\n500\\t-1\\n' > beast.log\nsleep " + str(seconds) + "\nprintf '1000\\t-1\\n' >> beast.log\necho tree > beast.trees\necho ops > beast.ops\n"))
     f.chmod(f.stat().st_mode | stat.S_IEXEC)
     return str(f)
 
@@ -303,3 +318,135 @@ def test_metrics_reach_the_main_server(tmp_path, monkeypatch):
     assert c.list_nodes()[0]["metrics"]["cpu_pct"] == 12.5
     c.claim(n, ["beast"], {"cpu_pct": 55.0, "ts": "x"})
     assert c.list_nodes()[0]["metrics"]["cpu_pct"] == 55.0
+
+
+
+def test_environment_check_names_what_is_missing(tmp_path, monkeypatch):
+    from genomecurator import beastprep
+    monkeypatch.setattr(beastprep, "env_prefix", lambda: None)                      # do not find the BEAST of this machine
+    monkeypatch.setattr(_cw, "MIN_FREE_GB", 0.0)
+    e = _REAL_ENV_CHECK(None, tmp_path)
+    assert not e["ok"] and {c["name"]: c["ok"] for c in e["checks"]} == {"BEAST": False, "BEAGLE": False, "disk": True}
+    import shutil
+    (tmp_path / "env" / "bin").mkdir(parents=True)
+    fake = shutil.copy(_fake_beast(tmp_path), tmp_path / "env" / "bin" / "beast")       # a conda-like layout: <env>/bin/beast, <env>/lib
+    (tmp_path / "env" / "lib").mkdir()
+    e = _REAL_ENV_CHECK(fake, tmp_path)
+    assert e["checks"][0]["ok"] and e["beast_version"] == "10.5.0" and not e["checks"][1]["ok"]      # BEAST starts, BEAGLE missing
+    (tmp_path / "env" / "lib" / "libhmsbeagle-cpu.so").write_text("")
+    assert _REAL_ENV_CHECK(fake, tmp_path)["ok"]
+    monkeypatch.setattr(_cw, "MIN_FREE_GB", 1e9)
+    assert not _REAL_ENV_CHECK(fake, tmp_path)["ok"]
+
+
+def test_join_request_needs_approval_and_the_key_is_handed_over_once(tmp_path, monkeypatch):
+    c = _env(tmp_path, monkeypatch)
+    with pytest.raises(ValueError):
+        c.request_join("s1", "10.0.0.5", "x" * 30, {"env": {"ok": False}})          # a server whose environment failed may not ask
+    rid = c.request_join("s1", "10.0.0.5", "s" * 30, {"env": OK_ENV, "cpus": 8})
+    assert [r["name"] for r in c.list_requests()] == ["s1"] and "secret_sha" not in c.list_requests()[0]
+    with pytest.raises(PermissionError):
+        c.collect_request(rid, "wrong" * 6)
+    assert c.collect_request(rid, "s" * 30) == {"state": "pending"} and c.list_nodes() == []
+    assert c.decide_request(rid, True, allow_private=True)
+    got = c.collect_request(rid, "s" * 30)
+    assert got["state"] == "approved" and c.authenticate(got["key"])["allow_private"] == 1
+    assert "key" not in c.collect_request(rid, "s" * 30)                            # only once
+    rid2 = c.request_join("s2", "10.0.0.6", "t" * 30, {"env": OK_ENV})
+    assert c.decide_request(rid2, False) and c.collect_request(rid2, "t" * 30)["state"] == "rejected"
+    assert not c.decide_request(rid2, True)                                          # decided already
+
+
+def test_a_sub_server_asks_waits_for_approval_and_starts_working(tmp_path, monkeypatch):
+    c = _env(tmp_path, monkeypatch)
+    from fastapi.testclient import TestClient
+    from genomecurator import web
+    monkeypatch.setattr(_cw, "find_beast", lambda explicit=None: _fake_beast(tmp_path))
+    srv, port = _serve(web.create_app(scheduler=False))
+    try:
+        jid = c.submit_beast(_pkg(tmp_path))
+        st = _cw.sub_request(f"http://127.0.0.1:{port}", name="sub-a")
+        assert st["join"]["state"] == "pending" and not st["running"]
+        time.sleep(0.5)
+        assert c.get_job(jid)["state"] == "queued"                                  # nothing runs before approval
+        main = TestClient(web.create_app(scheduler=False))
+        req = main.get("/api/cluster/state").json()["requests"]
+        assert req[0]["name"] == "sub-a" and req[0]["info"]["env"]["ok"]
+        assert main.post(f"/api/cluster/requests/{req[0]['id']}/approve", json={}).json()["ok"]
+        for _ in range(300):
+            if c.get_job(jid)["state"] == "done":
+                break
+            time.sleep(0.1)
+        assert c.get_job(jid)["state"] == "done"
+        node = c.list_nodes()[0]
+        assert node["name"] == "sub-a" and node["caps"]["env"]["ok"] and node["caps"]["app_version"]
+        s = _cw.sub_status()
+        assert s["running"] and s["join"]["state"] == "approved" and s["history"][0]["result"] == "done"
+        assert main.post(f"/api/cluster/nodes/{node['id']}/recheck").json()["ok"]
+    finally:
+        _cw.sub_stop(wait=True)
+        srv.should_exit = True
+
+
+def test_a_sub_server_with_a_broken_environment_cannot_ask_or_start(tmp_path, monkeypatch):
+    _env(tmp_path, monkeypatch)
+    bad = {"ok": False, "checks": [{"name": "BEAGLE", "ok": False, "detail": "missing"}]}
+    monkeypatch.setattr(_cw, "env_check", lambda beast, workdir: bad)
+    with pytest.raises(ValueError, match="BEAGLE"):
+        _cw.sub_request("http://127.0.0.1:9")
+    with pytest.raises(ValueError, match="BEAGLE"):
+        _cw.sub_start("http://127.0.0.1:9", "k" * 30)
+
+
+
+def test_a_silent_job_shows_its_grace_period_before_it_is_handed_out_again(tmp_path, monkeypatch):
+    c = _env(tmp_path, monkeypatch)
+    from datetime import datetime, timedelta
+    from genomecurator.db import connect
+    jid = c.submit_beast(_pkg(tmp_path))
+    n = c.authenticate(c.create_node("w")["key"])
+    c.claim(n)
+    assert c.get_job(jid)["stale"] is False
+    t = (datetime.now() - timedelta(seconds=c.STALE + 5)).isoformat(timespec="seconds")
+    con = connect()
+    con.execute("UPDATE cluster_job SET heartbeat=? WHERE id=?", (t, jid))
+    con.commit()
+    j = c.get_job(jid)
+    assert j["stale"] and 0 < j["requeue_in"] <= c.LEASE - c.STALE and c.reap() == 0        # in its grace period: still running
+    assert c.list_nodes()[0]["running"]["stale"]
+
+
+def test_stop_on_the_sub_server_gives_the_job_back_at_once_without_using_an_attempt(tmp_path, monkeypatch):
+    c = _env(tmp_path, monkeypatch)
+    from genomecurator import web
+    monkeypatch.setattr(_cw, "find_beast", lambda explicit=None: _fake_beast(tmp_path, seconds=30))
+    srv, port = _serve(web.create_app(scheduler=False))
+    try:
+        key = c.create_node("s")["key"]
+        jid = c.submit_beast(_pkg(tmp_path))
+        _cw.sub_start(f"http://127.0.0.1:{port}", key)
+        for _ in range(100):
+            if c.get_job(jid)["state"] == "running":
+                break
+            time.sleep(0.1)
+        assert c.get_job(jid)["state"] == "running"
+        _cw.sub_pause(True)
+        for _ in range(100):
+            if c.get_job(jid)["state"] == "queued":
+                break
+            time.sleep(0.1)
+        j = c.get_job(jid)
+        assert j["state"] == "queued" and j["attempts"] == 0 and "not counted" in j["log"][-1]["msg"]
+        time.sleep(1)
+        assert c.get_job(jid)["state"] == "queued"                                # a stopped sub-server takes no new work
+        assert _cw.sub_status()["paused"] and c.list_nodes()[0]["paused"]
+        assert _cw.load_config()["paused"] is True                                 # kept across restarts
+        _cw.sub_pause(False)
+        for _ in range(100):
+            if c.get_job(jid)["state"] == "running":
+                break
+            time.sleep(0.1)
+        assert c.get_job(jid)["state"] == "running"
+    finally:
+        _cw.sub_stop(wait=True)
+        srv.should_exit = True

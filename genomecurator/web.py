@@ -1886,7 +1886,7 @@ def create_app(scheduler: bool = True) -> FastAPI:
 
     @app.get("/cluster")
     def cluster_page(request: Request):
-        return render(request, "cluster.html", nav="cluster", lease=cluster.LEASE)
+        return render(request, "cluster.html", nav="cluster", lease=cluster.LEASE, stale=cluster.STALE)
 
     @app.get("/api/cluster/state")
     def cluster_state():
@@ -1937,7 +1937,7 @@ def create_app(scheduler: bool = True) -> FastAPI:
     @app.get("/api/cluster/sub")
     def cluster_sub_status():
         from . import clusterworker, sysinfo
-        return {**clusterworker.sub_status(), "metrics": sysinfo.snapshot(config.DATA_DIR), "install": clusterworker.install_state(), "version": __version__}
+        return {**clusterworker.sub_status(), "metrics": sysinfo.snapshot(config.DATA_DIR), "install": clusterworker.install_state(), "env": clusterworker.local_env(), "version": __version__}
 
     @app.post("/api/cluster/sub/install")
     async def cluster_sub_install(request: Request):
@@ -1956,7 +1956,8 @@ def create_app(scheduler: bool = True) -> FastAPI:
         from . import clusterworker
         b = await request.json()
         try:
-            return clusterworker.sub_start(str(b.get("main", "")), str(b.get("key", "")))
+            from starlette.concurrency import run_in_threadpool
+            return await run_in_threadpool(clusterworker.sub_start, str(b.get("main", "")), str(b.get("key", "")))
         except ValueError as ex:
             return JSONResponse({"error": str(ex)}, 400)
 
@@ -1965,7 +1966,54 @@ def create_app(scheduler: bool = True) -> FastAPI:
         if (e := _sub_admin(request)):
             return e
         from . import clusterworker
-        return clusterworker.sub_stop(forget=bool((await request.json()).get("forget")))
+        from starlette.concurrency import run_in_threadpool
+        forget = bool((await request.json()).get("forget"))
+        return await run_in_threadpool(lambda: clusterworker.sub_stop(wait=True, forget=forget))
+
+    @app.post("/api/cluster/w/join")
+    async def cluster_w_join(request: Request):
+        b = await request.json()
+        try:
+            return {"id": cluster.request_join(str(b.get("name", "")), request.client.host if request.client else "", str(b.get("secret", "")), b.get("info") or {})}
+        except ValueError as ex:
+            return JSONResponse({"error": str(ex)}, 400)
+
+    @app.post("/api/cluster/w/join/{rid}")
+    async def cluster_w_join_check(request: Request, rid: str):
+        try:
+            return cluster.collect_request(rid, str((await request.json()).get("secret", "")))
+        except PermissionError as ex:
+            return JSONResponse({"error": str(ex)}, 404)
+
+    @app.post("/api/cluster/requests/{rid}/approve")
+    async def cluster_request_approve(request: Request, rid: str):
+        if (e := _cluster_admin(request)):
+            return e
+        return {"ok": cluster.decide_request(rid, True, bool((await request.json()).get("allow_private")))}
+
+    @app.post("/api/cluster/requests/{rid}/reject")
+    def cluster_request_reject(request: Request, rid: str):
+        if (e := _cluster_admin(request)):
+            return e
+        return {"ok": cluster.decide_request(rid, False)}
+
+    @app.post("/api/cluster/nodes/{nid}/recheck")
+    def cluster_node_recheck(request: Request, nid: str):
+        if (e := _cluster_admin(request)):
+            return e
+        return {"ok": cluster.ask_recheck(nid)}
+
+    @app.post("/api/cluster/sub/request")
+    async def cluster_sub_request(request: Request):
+        if (e := _sub_admin(request)):
+            return e
+        from . import clusterworker
+        b = await request.json()
+        try:
+            from starlette.concurrency import run_in_threadpool
+            return await run_in_threadpool(clusterworker.sub_request, str(b.get("main", "")))
+        except ValueError as ex:
+            return JSONResponse({"error": str(ex)}, 400)
 
     @app.post("/api/cluster/w/hello")
     async def cluster_w_hello(request: Request):
@@ -1980,6 +2028,9 @@ def create_app(scheduler: bool = True) -> FastAPI:
         if not n:
             return JSONResponse({"error": "unknown worker key"}, 403)
         b = await request.json()
+        if cluster.pop_recheck(n):
+            cluster.claim(n, [], b.get("metrics"))          # record the contact and the metrics only
+            return {"job": None, "recheck": True}
         return {"job": cluster.claim(n, b.get("kinds"), b.get("metrics"))}
 
     @app.post("/api/cluster/w/jobs/{jid}/heartbeat")
@@ -2029,6 +2080,27 @@ def create_app(scheduler: bool = True) -> FastAPI:
             return JSONResponse({"error": str(ex)}, 409)
         except ValueError as ex:
             return JSONResponse({"error": str(ex)}, 400)
+
+    @app.post("/api/cluster/w/jobs/{jid}/release")
+    async def cluster_w_release(request: Request, jid: str):
+        n = _worker(request)
+        if not n:
+            return JSONResponse({"error": "unknown worker key"}, 403)
+        return cluster.give_back(n, jid)
+
+    @app.post("/api/cluster/sub/pause")
+    def cluster_sub_pause(request: Request):
+        if (e := _sub_admin(request)):
+            return e
+        from . import clusterworker
+        return clusterworker.sub_pause(True)
+
+    @app.post("/api/cluster/sub/resume")
+    def cluster_sub_resume(request: Request):
+        if (e := _sub_admin(request)):
+            return e
+        from . import clusterworker
+        return clusterworker.sub_pause(False)
 
     @app.post("/api/cluster/w/jobs/{jid}/fail")
     async def cluster_w_fail(request: Request, jid: str):
