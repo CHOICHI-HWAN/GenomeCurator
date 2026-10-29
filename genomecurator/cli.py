@@ -1,3 +1,4 @@
+import os
 import argparse
 import json
 import sys
@@ -143,6 +144,14 @@ def _main(argv=None):
     rs = sub.add_parser("restore", help="restore a backup .zip into the data folder")
     rs.add_argument("path")
     rs.add_argument("--force", action="store_true", help="replace an existing database")
+    wk = sub.add_parser("worker", help="run a cluster worker: fetch jobs from the main server (--main), run them here and send the results back")
+    wk.add_argument("--main", required=True, help="address of the main server, e.g. http://192.168.0.10:8000")
+    wk.add_argument("--key", default=os.environ.get("GC_WORKER_KEY", ""), help="the worker key shown once when the worker was added on the Cluster page (or GC_WORKER_KEY)")
+    wk.add_argument("--workdir", default="gc-worker", help="where the job copies are kept while a job runs")
+    wk.add_argument("--beast", default=None, help="path of the beast program (default: the BEAST environment of this program, else PATH)")
+    cs = sub.add_parser("cluster-submit", help="queue a prepared BEAST package folder (inside the data folder) on the cluster")
+    cs.add_argument("folder")
+    cs.add_argument("--label", default="")
     s = sub.add_parser("serve", help="run the web UI")
     s.add_argument("--host", default="127.0.0.1")
     s.add_argument("--port", type=int, default=8000)
@@ -407,6 +416,18 @@ def _main(argv=None):
         except (FileExistsError, ValueError, RuntimeError) as e:
             raise SystemExit(str(e))
         print(f"restored backup from {r['created']}: tables {r['tables']}, FASTA files {r['fasta_files']} -> {config.DATA_DIR}")
+    elif args.cmd == "worker":
+        from .clusterworker import Worker
+        if not args.key:
+            raise SystemExit("a worker key is needed (--key or GC_WORKER_KEY); add the worker on the Cluster page of the main server")
+        w = Worker(args.main, args.key, args.workdir, args.beast)
+        try:
+            w.serve()
+        except KeyboardInterrupt:
+            w.stop.set()
+    elif args.cmd == "cluster-submit":
+        from . import cluster
+        print("queued", cluster.submit_beast(args.folder, args.label))
     elif args.cmd == "serve":
         import uvicorn
         from .web import create_app

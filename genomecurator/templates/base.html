@@ -92,7 +92,7 @@ function gcMutMenu(ev,rid,o,here){gcMenu(ev,gcMutItems(rid,o,here),(o.ref||'')+o
  ('set', '데이터셋', [('ds', '/datasets', '데이터셋'), ('exp', '/export', '내보내기')]),
  ('ana', '분석', [('hub', '/hub', '분석 허브'), ('ns', '/nextstrain', '실행·이력')]),
  ('share', '제출·공유', [('pp', '/pathoplexus', 'Pathoplexus 제출'), ('sup', '/analysis', 'Superset')]),
- ('sys', '시스템', [('job', '/jobs', '작업')])] %}
+ ('sys', '시스템', [('job', '/jobs', '작업'), ('cluster', '/cluster', '클러스터')])] %}
 {% set cur_nav = 'hub' if nav == 'res' else nav %}
 {% set ns_g = namespace(active='') %}{% for g in GROUPS %}{% for t in g[2] %}{% if t[0] == cur_nav %}{% set ns_g.active = g[0] %}{% endif %}{% endfor %}{% endfor %}
 {% macro href(u) %}{{ u }}{% if watch and u in ('/dashboard', '/genomes', '/integrity', '/vocab') %}?watch={{ watch }}{% endif %}{% endmacro %}

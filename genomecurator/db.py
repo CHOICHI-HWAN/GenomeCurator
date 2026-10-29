@@ -62,6 +62,14 @@ CREATE TABLE IF NOT EXISTS job(
   id TEXT PRIMARY KEY, kind TEXT, label TEXT, status TEXT,  -- running|done|error|interrupted
   pct REAL DEFAULT 0, msg TEXT, started TEXT, finished TEXT, error TEXT, redirect TEXT, log_json TEXT, result_json TEXT);
 CREATE INDEX IF NOT EXISTS ix_job_started ON job(started);
+-- the cluster (cluster.py): worker servers that fetch jobs from this one. The main server is the only source of truth; a worker holds a job's files only until the main server has verified and taken over the results.
+CREATE TABLE IF NOT EXISTS cluster_node(
+  id TEXT PRIMARY KEY, name TEXT UNIQUE, key_sha TEXT, created TEXT, last_seen TEXT, caps_json TEXT, allow_private INTEGER DEFAULT 0, revoked INTEGER DEFAULT 0, note TEXT);
+CREATE TABLE IF NOT EXISTS cluster_job(
+  id TEXT PRIMARY KEY, kind TEXT, label TEXT, state TEXT,  -- queued|running|received|done|error|cancelled
+  node_id TEXT, created TEXT, claimed TEXT, finished TEXT, heartbeat TEXT, attempts INTEGER DEFAULT 0, max_attempts INTEGER DEFAULT 3,
+  pct REAL DEFAULT 0, msg TEXT, error TEXT, private INTEGER DEFAULT 0, spec_json TEXT, inputs_json TEXT, outputs_json TEXT, target_dir TEXT, log_json TEXT);
+CREATE INDEX IF NOT EXISTS ix_cluster_job_state ON cluster_job(state, created);
 -- the private store (private.py): local, unpublished genomes of a virus; never part of `genome` (public page, Superset, backups, checks)
 CREATE TABLE IF NOT EXISTS private_genome(
   watch_id INTEGER, id TEXT, metadata_json TEXT, file_path TEXT, seq_md5 TEXT, length INTEGER, source_file TEXT, imported TEXT, updated TEXT, version INTEGER DEFAULT 1,

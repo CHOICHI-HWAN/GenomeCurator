@@ -1,4 +1,5 @@
 import json
+import os
 import time
 from pathlib import Path
 
@@ -6,7 +7,7 @@ from fastapi import FastAPI, Form, Request
 from fastapi.responses import FileResponse, HTMLResponse, JSONResponse, RedirectResponse, Response, StreamingResponse
 from fastapi.templating import Jinja2Templates
 
-from . import peartree, beastprep, cladedefs, clock, clockclass, continents, focus, hyphyexport, intake, lineagetree, mutgantt, nextcladecall, pipeline, support, variantcall, variantflow, __version__, analysis, completeness, datasets, exclusions, export, cooccur, geo, heatmap, vocab, insight, lineages, mutprofile, nextstrain, novel, outbreak, pathoplexus, private, qc, squirrel, config, curate, jobs, log
+from . import cluster, peartree, beastprep, cladedefs, clock, clockclass, continents, focus, hyphyexport, intake, lineagetree, mutgantt, nextcladecall, pipeline, support, variantcall, variantflow, __version__, analysis, completeness, datasets, exclusions, export, cooccur, geo, heatmap, vocab, insight, lineages, mutprofile, nextstrain, novel, outbreak, pathoplexus, private, qc, squirrel, config, curate, jobs, log
 from .db import audit_now, connect
 
 _log = log.get("web")
@@ -1833,6 +1834,135 @@ def create_app(scheduler: bool = True) -> FastAPI:
     @app.get("/jobs")
     def jobs_page(request: Request):
         return render(request, "jobs.html", nav="job", sched=_sched_info(request), kinds=jobs.KINDS, scheduler_on=getattr(request.app.state, "sched", None) is not None)
+
+    # ---- cluster: the page and its administration (only from this machine unless GC_CLUSTER_ADMIN_REMOTE=1), and the API the workers use (a key per worker)
+    def _cluster_admin(request: Request):
+        """-> an error response, or None. Creating keys and queueing work is the owner's business: refused from other machines by default."""
+        if not _same_origin(request):
+            return JSONResponse({"error": "cross-site request refused"}, 403)
+        host = request.client.host if request.client else ""
+        if host not in ("127.0.0.1", "::1", "localhost", "testclient") and os.environ.get("GC_CLUSTER_ADMIN_REMOTE") != "1":
+            return JSONResponse({"error": "the cluster can be administered from the main server only"}, 403)
+        return None
+
+    def _worker(request: Request):
+        h = request.headers.get("authorization", "")
+        return cluster.authenticate(h[7:] if h.lower().startswith("bearer ") else None)
+
+    @app.get("/cluster")
+    def cluster_page(request: Request):
+        return render(request, "cluster.html", nav="cluster", lease=cluster.LEASE)
+
+    @app.get("/api/cluster/state")
+    def cluster_state():
+        return cluster.state()
+
+    @app.get("/api/cluster/job/{jid}")
+    def cluster_job_get(jid: str):
+        j = cluster.get_job(jid)
+        return j or JSONResponse({"error": "no such job"}, 404)
+
+    @app.post("/api/cluster/nodes")
+    async def cluster_node_create(request: Request):
+        if (e := _cluster_admin(request)):
+            return e
+        b = await request.json()
+        try:
+            return cluster.create_node(str(b.get("name", "")), bool(b.get("allow_private")), str(b.get("note", "")))
+        except ValueError as ex:
+            return JSONResponse({"error": str(ex)}, 400)
+
+    @app.post("/api/cluster/nodes/{nid}/revoke")
+    def cluster_node_revoke(request: Request, nid: str):
+        if (e := _cluster_admin(request)):
+            return e
+        return {"revoked": cluster.revoke_node(nid)}
+
+    @app.post("/api/cluster/jobs")
+    async def cluster_job_submit(request: Request):
+        if (e := _cluster_admin(request)):
+            return e
+        b = await request.json()
+        try:
+            return {"id": cluster.submit_beast(config.DATA_DIR / str(b["folder"]) if not Path(str(b["folder"])).is_absolute() else b["folder"], str(b.get("label", "")),
+                                               int(b.get("max_attempts", 3)))}
+        except (ValueError, KeyError) as ex:
+            return JSONResponse({"error": str(ex)}, 400)
+
+    @app.post("/api/cluster/jobs/{jid}/cancel")
+    def cluster_job_cancel(request: Request, jid: str):
+        if (e := _cluster_admin(request)):
+            return e
+        return {"cancelled": cluster.cancel(jid)}
+
+    @app.post("/api/cluster/w/hello")
+    async def cluster_w_hello(request: Request):
+        n = _worker(request)
+        if not n:
+            return JSONResponse({"error": "unknown worker key"}, 403)
+        return cluster.hello(n, await request.json())
+
+    @app.post("/api/cluster/w/claim")
+    async def cluster_w_claim(request: Request):
+        n = _worker(request)
+        if not n:
+            return JSONResponse({"error": "unknown worker key"}, 403)
+        return {"job": cluster.claim(n, (await request.json()).get("kinds"))}
+
+    @app.post("/api/cluster/w/jobs/{jid}/heartbeat")
+    async def cluster_w_beat(request: Request, jid: str):
+        n = _worker(request)
+        if not n:
+            return JSONResponse({"error": "unknown worker key"}, 403)
+        b = await request.json()
+        return cluster.heartbeat(n, jid, b.get("pct"), b.get("msg"))
+
+    @app.get("/api/cluster/w/jobs/{jid}/in/{name}")
+    def cluster_w_input(request: Request, jid: str, name: str):
+        n = _worker(request)
+        if not n:
+            return JSONResponse({"error": "unknown worker key"}, 403)
+        try:
+            return FileResponse(cluster.input_path(n, jid, name))
+        except (PermissionError, FileNotFoundError, ValueError) as ex:
+            return JSONResponse({"error": str(ex)}, 409)
+
+    @app.put("/api/cluster/w/jobs/{jid}/out/{name}")
+    async def cluster_w_output(request: Request, jid: str, name: str, sha: str = ""):
+        n = _worker(request)
+        if not n:
+            return JSONResponse({"error": "unknown worker key"}, 403)
+        tmp = cluster.root() / "tmp" / f"{jid}-{os.getpid()}-{time.time_ns()}"
+        tmp.parent.mkdir(parents=True, exist_ok=True)
+        with open(tmp, "wb") as f:
+            async for chunk in request.stream():
+                f.write(chunk)
+        try:
+            return cluster.store_output(n, jid, name, tmp, sha)
+        except PermissionError as ex:
+            return JSONResponse({"error": str(ex)}, 409)
+        except ValueError as ex:
+            return JSONResponse({"error": str(ex)}, 400)
+
+    @app.post("/api/cluster/w/jobs/{jid}/done")
+    async def cluster_w_done(request: Request, jid: str):
+        n = _worker(request)
+        if not n:
+            return JSONResponse({"error": "unknown worker key"}, 403)
+        b = await request.json()
+        try:
+            return cluster.complete(n, jid, b.get("outputs", []), b.get("seconds"))
+        except PermissionError as ex:
+            return JSONResponse({"error": str(ex)}, 409)
+        except ValueError as ex:
+            return JSONResponse({"error": str(ex)}, 400)
+
+    @app.post("/api/cluster/w/jobs/{jid}/fail")
+    async def cluster_w_fail(request: Request, jid: str):
+        n = _worker(request)
+        if not n:
+            return JSONResponse({"error": "unknown worker key"}, 403)
+        return cluster.fail(n, jid, str((await request.json()).get("error", "")))
 
     @app.get("/api/changeset/{cid}/impact")
     def changeset_impact_api(cid: int):
