@@ -450,3 +450,56 @@ def test_stop_on_the_sub_server_gives_the_job_back_at_once_without_using_an_atte
     finally:
         _cw.sub_stop(wait=True)
         srv.should_exit = True
+
+
+def test_terminal_tokens_are_signed_short_lived_and_single_use(tmp_path, monkeypatch):
+    import hashlib
+    from genomecurator import clustershell as sh
+    key = "k" * 43
+    tok = sh.make_token(hashlib.sha256(key.encode()).hexdigest(), "n1")
+    assert sh.check_token(tok, key)["n"] == "n1"
+    with pytest.raises(ValueError, match="used"):
+        sh.check_token(tok, key)
+    with pytest.raises(ValueError, match="not valid"):
+        sh.check_token(sh.make_token(hashlib.sha256(b"other").hexdigest(), "n1"), key)
+    with pytest.raises(ValueError):
+        sh.check_token(tok, None)
+    monkeypatch.setattr(sh, "TOKEN_SECONDS", -1)
+    with pytest.raises(ValueError, match="expired"):
+        sh.check_token(sh.make_token(hashlib.sha256(key.encode()).hexdigest(), "n1"), key)
+
+
+@pytest.mark.skipif(__import__("os").name != "posix", reason="pseudo-terminals")
+def test_the_main_server_opens_a_terminal_on_a_sub_server_that_allows_it(tmp_path, monkeypatch):
+    c = _env(tmp_path, monkeypatch)
+    from fastapi.testclient import TestClient
+    from genomecurator import web
+    node = c.create_node("sub1")
+    n = c.authenticate(node["key"])
+    c.hello(n, {"kinds": ["beast"], "ip": "127.0.0.1", "port": "8011", "metrics": {"shell": False, "ts": "x"}})
+    main = TestClient(web.create_app(scheduler=False))
+    assert main.post(f"/api/cluster/nodes/{node['id']}/shell").status_code == 409            # not allowed by the sub-server
+    c.claim(n, [], {"shell": True, "ts": "y"})
+    r = main.post(f"/api/cluster/nodes/{node['id']}/shell").json()
+    assert r["url"] == "ws://127.0.0.1:8011/api/cluster/shell" and r["token"]
+    assert TestClient(web.create_app(scheduler=False), client=("192.168.0.9", 1)).post(f"/api/cluster/nodes/{node['id']}/shell").status_code == 403
+    sub = TestClient(web.create_app(scheduler=False))                                    # the same program on the sub-server
+    _cw.save_config({"main": "http://x", "key": node["key"], "shell": False})
+    with sub.websocket_connect("/api/cluster/shell") as ws:
+        ws.send_text(json.dumps({"token": r["token"]}))
+        assert "switched off" in ws.receive_text()
+    _cw.sub_shell(True)
+    tok = main.post(f"/api/cluster/nodes/{node['id']}/shell").json()["token"]
+    with sub.websocket_connect("/api/cluster/shell") as ws:
+        ws.send_text(json.dumps({"token": tok, "cols": 80, "rows": 24}))
+        ws.send_text(json.dumps({"t": "i", "d": "echo gc-$((40+2))\n"}))
+        seen = ""
+        for _ in range(200):
+            seen += ws.receive_text()
+            if "gc-42" in seen:
+                break
+        assert "gc-42" in seen
+        ws.send_text(json.dumps({"t": "i", "d": "exit\n"}))
+    with sub.websocket_connect("/api/cluster/shell") as ws:                              # the same token cannot be used twice
+        ws.send_text(json.dumps({"token": tok}))
+        assert "used already" in ws.receive_text()

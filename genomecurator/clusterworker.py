@@ -72,7 +72,7 @@ class Main:
 def capabilities(beast: str | None) -> dict:
     import sys
     from . import __version__
-    caps = {"kinds": [], "cpus": os.cpu_count(), "platform": platform.platform(), "host": platform.node(), "python": sys.version.split()[0], "app_version": __version__, "tools": {}}
+    caps = {"kinds": [], "port": os.environ.get("GC_SERVE_PORT"), "cpus": os.cpu_count(), "platform": platform.platform(), "host": platform.node(), "python": sys.version.split()[0], "app_version": __version__, "tools": {}}
     mem = sysinfo.memory()
     if mem:
         caps["mem_total"] = mem[0]
@@ -176,6 +176,7 @@ class Worker:
         except Exception:
             m = {}
         m["paused"] = self.paused.is_set()
+        m["shell"] = bool(load_config().get("shell"))
         return m
 
     def _set(self, state: str, job: str | None = None, error: str | None = None) -> None:
@@ -435,7 +436,9 @@ def sub_status() -> dict:
     cfg, w = load_config(), _sub["worker"]
     running = bool(w and _sub["thread"] and _sub["thread"].is_alive())
     jt = _sub["join"]
-    return {"enabled": bool(cfg.get("enabled")), "running": running, "paused": bool(cfg.get("paused")), "main": cfg.get("main", ""), "has_key": bool(cfg.get("key")),
+    from . import clustershell
+    return {"enabled": bool(cfg.get("enabled")), "running": running, "paused": bool(cfg.get("paused")), "shell": bool(cfg.get("shell")),
+            "shell_supported": clustershell.supported(), "shell_sessions": list(clustershell.sessions.values()), "main": cfg.get("main", ""), "has_key": bool(cfg.get("key")),
             "join": {"state": cfg.get("join_state"), "id": cfg.get("join_id"), "error": cfg.get("join_error"), "waiting": bool(jt and jt.is_alive())},
             **({"status": w.status, "beast": w.beast, "history": w.history} if running else {})}
 
@@ -536,6 +539,16 @@ def sub_start(main: str | None = None, key: str | None = None, beast: str | None
     cfg["enabled"] = True
     save_config(cfg)
     _start_worker(cfg)
+    return sub_status()
+
+
+def sub_shell(on: bool) -> dict:
+    """Allow (or stop allowing) the main server to open a terminal on this server. Off by default; open sessions are not cut by switching off."""
+    cfg = load_config()
+    cfg["shell"] = bool(on)
+    save_config(cfg)
+    from .db import audit_now
+    audit_now("cluster_shell", f"web terminal for the main server {'allowed' if on else 'not allowed'} on this server")
     return sub_status()
 
 

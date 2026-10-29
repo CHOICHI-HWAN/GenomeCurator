@@ -20,6 +20,7 @@ Versions are the ones **this project was tested with**; the allowed ranges live 
 | `openpyxl` | 3.1.5 | MIT | 비공개 유전체 스프레드시트(.xlsx) 업로드·템플릿 / Spreadsheet (.xlsx) upload and template for private genomes |
 | `numpy` | 2.5.3 | BSD-3-Clause AND 0BSD AND MIT AND Zlib AND CC0-1.0 | 변이 묶음(Jaccard 군집)과 유전체 주성분 분석 / Mutation groups (Jaccard clustering) and principal components of the genomes |
 | `matplotlib` (선택 / optional: `genomecurator[figures]`) | 3.11.2 | PSF-based Matplotlib licence (BSD-compatible) | BEAST 요약 트리 그림과 매니페스트 / Figures of BEAST summary trees (`treefigure.py`) |
+| `websockets` (선택 / optional: `genomecurator[cluster]`) | 17.3 | BSD-3-Clause | 클러스터 웹 터미널의 웹소켓 / Websocket for the cluster web terminal |
 
 ## 개발·테스트 / Development (`.[dev]`)
 

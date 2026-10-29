@@ -22,6 +22,8 @@ Reviewed 2026-10-19 from the installed packages, the projects' LICENSE files and
 | **Nextclade CLI** | **MIT** (저장소 LICENSE 확인) | `environment.yml`에 포함(bioconda). 별도 프로그램을 실행(subprocess)하는 방식이라 결합되지 않으며, 없으면 서열 통계만 동작합니다. |
 | conda 기본 라이브러리 | GPL-3.0(+GCC 예외)·LGPL: `readline`, `libgcc`, `libgomp`, `ld_impl` 등 | 시스템 런타임입니다. 코드에 링크하지 않습니다. |
 | 브라우저의 Chart.js 4.4.1 (jsDelivr CDN) | MIT | 공개 페이지는 CDN에서 불러옵니다(저장소에 포함 안 됨). |
+| **xterm.js 5.5.0, @xterm/addon-fit 0.10.0** (`genomecurator/static/xterm/`) | MIT | 클러스터 웹 터미널 화면. 인터넷 없이 동작하도록 저장소에 포함했고 라이선스 원문을 같은 폴더에 두었습니다(`LICENSE-xterm.txt`, `LICENSE-addon-fit.txt`). |
+| `websockets` (선택: `genomecurator[cluster]`) | BSD-3-Clause | 웹 터미널의 웹소켓. 없으면 터미널만 동작하지 않습니다. |
 
 ### Nextstrain 분석 (별도 환경, 저장소에 포함하지 않음)
 | 구성요소 | 라이선스 | 비고 |

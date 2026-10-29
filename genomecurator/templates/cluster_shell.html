@@ -1,0 +1,35 @@
+<!doctype html>
+<html lang="ko"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<title>터미널 · {{ node.name }}</title>
+<link rel="stylesheet" href="/static/xterm/xterm.css">
+<style>
+html,body{margin:0;height:100%;background:#111418;color:#d7dce4;font:14px system-ui,-apple-system,"Segoe UI","Noto Sans KR",sans-serif}
+header{display:flex;align-items:center;gap:12px;padding:8px 14px;background:#1b1f26;border-bottom:1px solid #2c323c}
+header b{font-size:15px}.mut{color:#8b94a3;font-size:13px}
+.pill{border-radius:10px;padding:1px 10px;font-size:12px;font-weight:600;border:1px solid currentColor}
+.on{color:#68d391}.off{color:#8b94a3}.err{color:#fc8181}
+button{background:transparent;color:#63a4ff;border:1px solid #63a4ff;border-radius:6px;padding:4px 12px;font:inherit;cursor:pointer}
+#term{position:absolute;top:47px;left:0;right:0;bottom:0;padding:6px 8px;box-sizing:border-box}
+</style></head><body>
+<header><b>{{ node.name }}</b><span class="mut">{{ (node.caps or {}).get('host', '') }} · {{ (node.caps or {}).get('ip', '') }}</span><span id="st" class="pill off">연결 중</span>
+<span style="flex:1"></span><span class="mut">이 서브서버를 띄운 사용자 권한의 셸입니다. 접속 기록이 양쪽 서버에 남습니다.</span><button onclick="connect()">다시 연결</button></header>
+<div id="term"></div>
+<script src="/static/xterm/xterm.js"></script><script src="/static/xterm/addon-fit.js"></script>
+<script>
+const term=new Terminal({cursorBlink:true,fontFamily:'Menlo,Consolas,"DejaVu Sans Mono",monospace',fontSize:14,scrollback:5000,theme:{background:"#111418"}});
+const fit=new FitAddon.FitAddon();term.loadAddon(fit);term.open(document.getElementById("term"));fit.fit();
+let ws=null;const st=document.getElementById("st");
+function state(c,t){st.className="pill "+c;st.textContent=t}
+async function connect(){if(ws){try{ws.close()}catch(e){}}state("off","연결 중");
+ let r;try{r=await fetch("/api/cluster/nodes/{{ node.id }}/shell",{method:"POST",headers:{"Content-Type":"application/json"},body:"{}"})}catch(e){state("err","메인 오류");return}
+ const j=await r.json();if(!r.ok){state("err","열 수 없음");term.writeln("\r\n"+j.error);return}
+ ws=new WebSocket(j.url);
+ ws.onopen=()=>{ws.send(JSON.stringify({token:j.token,cols:term.cols,rows:term.rows}));state("on","연결됨");term.focus()};
+ ws.onmessage=e=>term.write(e.data);
+ ws.onclose=e=>{state(e.code===4403?"err":"off",e.code===4403?"거부됨":"끊김")};
+ ws.onerror=()=>{state("err","연결 실패");term.writeln("\r\n서브서버("+j.url.replace(/\/api.*/,"")+")에 연결할 수 없습니다. 서브서버가 그 주소로 떠 있는지 확인하세요.")}}
+term.onData(d=>{if(ws&&ws.readyState===1)ws.send(JSON.stringify({t:"i",d}))});
+term.onResize(({cols,rows})=>{if(ws&&ws.readyState===1)ws.send(JSON.stringify({t:"r",c:cols,r:rows}))});
+window.addEventListener("resize",()=>fit.fit());
+connect();
+</script></body></html>

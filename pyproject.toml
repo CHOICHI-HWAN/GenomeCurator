@@ -19,6 +19,8 @@ dependencies = [
 
 [project.optional-dependencies]
 dev = ["pytest>=8"]
+# cluster web terminal (the server needs a websocket library)
+cluster = ["websockets>=12"]
 # figures from a BEAST summary tree (genomecurator.treefigure)
 figures = ["matplotlib>=3.8"]
 # only for scripts/demo (recording the README GIFs): drives a headless Chrome and assembles the GIFs
@@ -38,4 +40,4 @@ version = {attr = "genomecurator.__version__"}
 include = ["genomecurator*"]
 
 [tool.setuptools.package-data]
-genomecurator = ["templates/*.html", "resources/*.tsv", "resources/*.json"]
+genomecurator = ["templates/*.html", "resources/*.tsv", "resources/*.json", "static/xterm/*"]

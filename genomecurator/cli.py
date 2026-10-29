@@ -436,6 +436,7 @@ def _main(argv=None):
         if args.superset:
             from . import analysis
             threading.Thread(target=lambda: _start_superset(analysis), daemon=True).start()
+        os.environ["GC_SERVE_PORT"] = str(args.port)          # a sub-server tells the main server where its terminal listens
         uvicorn.run(create_app(scheduler=not args.no_scheduler), host=args.host, port=args.port)
 
 

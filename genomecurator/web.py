@@ -3,7 +3,7 @@ import os
 import time
 from pathlib import Path
 
-from fastapi import FastAPI, Form, Request
+from fastapi import FastAPI, Form, Request, WebSocket, WebSocketDisconnect
 from fastapi.responses import FileResponse, HTMLResponse, JSONResponse, RedirectResponse, Response, StreamingResponse
 from fastapi.templating import Jinja2Templates
 
@@ -2015,12 +2015,126 @@ def create_app(scheduler: bool = True) -> FastAPI:
         except ValueError as ex:
             return JSONResponse({"error": str(ex)}, 400)
 
+    # ---- web terminal: the main server makes a one-time token, the browser connects to the sub-server with it
+    XTERM = {"xterm.js": "application/javascript", "addon-fit.js": "application/javascript", "xterm.css": "text/css"}
+
+    @app.get("/static/xterm/{name}")
+    def xterm_file(name: str):
+        if name not in XTERM:
+            return JSONResponse({"error": "not found"}, 404)
+        return FileResponse(Path(__file__).parent / "static" / "xterm" / name, media_type=XTERM[name], headers={"Cache-Control": "max-age=86400"})
+
+    @app.get("/cluster/shell/{nid}")
+    def cluster_shell_page(request: Request, nid: str):
+        n = next((x for x in cluster.list_nodes() if x["id"] == nid), None)
+        if not n:
+            return JSONResponse({"error": "no such sub-server"}, 404)
+        return T.TemplateResponse(request, "cluster_shell.html", {"node": n})
+
+    @app.post("/api/cluster/nodes/{nid}/shell")
+    def cluster_shell_token(request: Request, nid: str):
+        if (e := _cluster_admin(request)):
+            return e
+        from . import clustershell
+        con = connect()
+        try:
+            r = con.execute("SELECT * FROM cluster_node WHERE id=? AND revoked=0", (nid,)).fetchone()
+        finally:
+            con.close()
+        if not r:
+            return JSONResponse({"error": "no such sub-server"}, 404)
+        caps, met = json.loads(r["caps_json"] or "{}"), json.loads(r["metrics_json"] or "{}")
+        if not met.get("shell"):
+            return JSONResponse({"error": "this sub-server does not allow the web terminal (switch it on on its own page)"}, 409)
+        if not caps.get("ip") or not caps.get("port"):
+            return JSONResponse({"error": "the address of this sub-server is not known yet (it reports it when it connects)"}, 409)
+        host = caps["ip"] if ":" not in caps["ip"] else f"[{caps['ip']}]"
+        audit_now("cluster_shell", f"web terminal opened to {r['name']} ({caps['ip']})")
+        return {"url": f"ws://{host}:{caps['port']}/api/cluster/shell", "token": clustershell.make_token(r["key_sha"], nid), "name": r["name"]}
+
+    @app.websocket("/api/cluster/shell")
+    async def cluster_shell(ws: WebSocket):
+        """On the sub-server. The first message carries the token: {"token": ..., "cols": .., "rows": ..}."""
+        import asyncio
+        import codecs
+        from . import clustershell, clusterworker
+        await ws.accept()
+        try:
+            hello = json.loads(await asyncio.wait_for(ws.receive_text(), 15))
+            cfg = clusterworker.load_config()
+            if not clustershell.supported():
+                raise ValueError("the web terminal needs a Linux or macOS sub-server")
+            if not cfg.get("shell"):
+                raise ValueError("the web terminal is switched off on this sub-server")
+            clustershell.check_token(str(hello.get("token", "")), cfg.get("key"))
+        except Exception as ex:
+            await ws.send_text("\r\n[refused] " + (str(ex) or type(ex).__name__) + "\r\n")
+            await ws.close(4403)
+            return
+        peer = ws.client.host if ws.client else "?"
+        sid = os.urandom(4).hex()
+        clustershell.sessions[sid] = {"from": peer, "since": time.strftime("%Y-%m-%dT%H:%M:%S")}
+        audit_now("cluster_shell", f"web terminal session {sid} from the main server ({peer}) started")
+        proc, fd = clustershell.spawn(int(hello.get("cols") or 100), int(hello.get("rows") or 30))
+        loop = asyncio.get_running_loop()
+        out: asyncio.Queue = asyncio.Queue()
+        dec = codecs.getincrementaldecoder("utf-8")("replace")
+
+        def readable():
+            try:
+                data = os.read(fd, 65536)
+            except OSError:
+                data = b""
+            if not data:
+                loop.remove_reader(fd)
+            out.put_nowait(data)
+        loop.add_reader(fd, readable)
+
+        async def pump():
+            while True:
+                data = await out.get()
+                if not data:
+                    await ws.send_text("\r\n[session ended]\r\n")
+                    await ws.close()
+                    return
+                await ws.send_text(dec.decode(data))
+        t0 = time.time()
+        task = asyncio.create_task(pump())
+        try:
+            while not task.done():
+                msg = json.loads(await ws.receive_text())
+                if msg.get("t") == "i":
+                    os.write(fd, str(msg.get("d", "")).encode())
+                elif msg.get("t") == "r":
+                    clustershell.resize(fd, int(msg.get("c") or 80), int(msg.get("r") or 24))
+        except (WebSocketDisconnect, RuntimeError, OSError, ValueError):
+            pass
+        finally:
+            task.cancel()
+            try:
+                loop.remove_reader(fd)
+            except Exception:
+                pass
+            clustershell.end(proc, fd)
+            clustershell.sessions.pop(sid, None)
+            audit_now("cluster_shell", f"web terminal session {sid} ended after {round(time.time() - t0)} s")
+
+    @app.post("/api/cluster/sub/shell")
+    async def cluster_sub_shell(request: Request):
+        if (e := _sub_admin(request)):
+            return e
+        from . import clusterworker
+        return clusterworker.sub_shell(bool((await request.json()).get("on")))
+
     @app.post("/api/cluster/w/hello")
     async def cluster_w_hello(request: Request):
         n = _worker(request)
         if not n:
             return JSONResponse({"error": "unknown worker key"}, 403)
-        return cluster.hello(n, await request.json())
+        caps = await request.json()
+        if isinstance(caps, dict) and request.client:
+            caps["ip"] = request.client.host                 # where the main server reaches this sub-server (its terminal)
+        return cluster.hello(n, caps)
 
     @app.post("/api/cluster/w/claim")
     async def cluster_w_claim(request: Request):
