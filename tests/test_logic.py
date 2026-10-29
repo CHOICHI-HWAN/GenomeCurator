@@ -3981,3 +3981,35 @@ def test_treefigure_render_is_reproducible_and_writes_a_manifest(tmp_path):
     assert repro.verify(tmp_path / "a" / "fig.manifest.json", base=".") == []
     tree.write_text(_TOY_TREE.replace("0.99", "0.98"), encoding="utf-8")
     assert any("content differs" in x for x in repro.verify(tmp_path / "a" / "fig.manifest.json", base="."))
+
+
+def test_source_overlap_counts_every_venn_region(tmp_path, monkeypatch):
+    from genomecurator import config, curate
+    from genomecurator.db import connect
+    monkeypatch.setattr(config, "DATA_DIR", tmp_path)
+    monkeypatch.setattr(config, "DB_PATH", tmp_path / "t.db")
+    o = curate.overlap_from_sets({"ncbi": {"A", "B", "C"}, "bvbrc": {"B", "C", "D"}, "pathoplexus": {"C", "E"}})
+    reg = {r["key"]: r["n"] for r in o["regions"]}
+    assert reg == {"ncbi": 1, "bvbrc": 1, "pathoplexus": 1, "ncbi+bvbrc": 1, "ncbi+pathoplexus": 0, "bvbrc+pathoplexus": 0, "ncbi+bvbrc+pathoplexus": 1}
+    assert o["union"] == 5 and o["in_all"] == 1 and o["sizes"] == {"ncbi": 3, "bvbrc": 3, "pathoplexus": 2} and sum(reg.values()) == o["union"]
+    assert [r["key"] for r in curate.overlap_from_sets({"ncbi": {"A"}, "bvbrc": {"A", "B"}})["regions"]] == ["ncbi", "bvbrc", "ncbi+bvbrc"]
+    # only the records of the last check count; an earlier record that the sources no longer return is left out
+    con = connect()
+    con.execute("INSERT INTO watchlist(id,name,taxon,taxon_id,last_checked) VALUES(1,'V','V',1,'2026-01-02T00:00:00')")
+    rows = [("ncbi", "A", "2026-01-02T00:00:00"), ("bvbrc", "A", "2026-01-02T00:00:00"), ("bvbrc", "B", "2026-01-02T00:00:00"),
+            ("ncbi", "OLD", "2026-01-01T00:00:00"), ("nextclade", "A", "2026-01-02T00:00:00")]
+    con.executemany("INSERT INTO source_record(source,accession,watch_id,payload_json,fetched_at) VALUES(?,?,1,'{}',?)", rows)
+    con.execute("INSERT INTO changeset(id,watch_id) VALUES(7,1)")
+    con.execute("INSERT INTO changeset_item(changeset_id,accession,kind) VALUES(7,'B','new')")
+    con.commit()
+    o = curate.source_overlap(1, 7)
+    assert o["sizes"] == {"ncbi": 1, "bvbrc": 1 + 1} and o["only"] == {"ncbi": 0, "bvbrc": 1} and o["checked"] == "2026-01-02T00:00:00"
+    assert o["new"]["union"] == 1 and o["new"]["only"]["bvbrc"] == 1
+    assert curate.overlap_accessions(1, "bvbrc") == ["B"] and curate.overlap_accessions(1, "ncbi+bvbrc") == ["A"] and curate.overlap_accessions(1, "pathoplexus") == []
+    from fastapi.testclient import TestClient
+    from genomecurator import web
+    cl = TestClient(web.create_app(scheduler=False))
+    assert cl.get("/api/sources/overlap?watch=1&changeset=7").json()["union"] == 2
+    r = cl.get("/api/sources/overlap/accessions?watch=1&region=ncbi%2Bbvbrc&format=csv")
+    assert r.text == "accession\nA\n" and "attachment" in r.headers["content-disposition"]
+    assert cl.get("/static/gc/venn.js").status_code == 200 and cl.get("/static/gc/x.js").status_code == 404

@@ -81,6 +81,7 @@ try{const x=JSON.parse(localStorage.getItem('gcLookup')||'null');if(x){document.
 <style>
 .cs{background:var(--card);border:1px solid var(--bd);border-left:4px solid var(--warn);border-radius:4px;padding:12px 16px;margin-bottom:12px}
 .cs.bad{border-left-color:var(--bad)}.cs.ok{border-left-color:var(--ok)}
+.vbox{display:flex;gap:16px;align-items:center;flex-wrap:wrap;margin:8px 0 4px;padding:8px 10px;background:var(--stripe);border-radius:4px}.vbox .venn{flex:0 0 230px}.vbox .vtxt{flex:1;min-width:220px;font-size:12.5px;line-height:1.6}
 .cs .top{display:flex;gap:10px;align-items:baseline;flex-wrap:wrap}.cs .top b{font-size:16px}
 .cs .st{border-radius:10px;padding:1px 10px;font-size:12px;font-weight:600;border:1px solid currentColor}.st.warn{color:var(--warn)}.st.bad{color:var(--bad)}.st.ok{color:var(--ok)}
 .cs .nums{display:flex;gap:22px;flex-wrap:wrap;margin:10px 0 6px}.cs .nums div{min-width:120px}.cs .nums b{font-size:22px;display:block;line-height:1.1;font-variant-numeric:tabular-nums}.cs .nums span{font-size:12.5px;color:var(--mut)}
@@ -105,6 +106,8 @@ try{const x=JSON.parse(localStorage.getItem('gcLookup')||'null');if(x){document.
   <div><b style="color:var(--bad)">{{ '{:,}'.format(c.removed) }}</b><span>NCBI에서 사라진 유전체</span></div></div>
  {% if c.total %}<div class="seg" title="결정 현황"><i class="sg-a" style="width:{{ 100 * (c.approved + c.applied) / c.total }}%"></i><i class="sg-r" style="width:{{ 100 * c.rejected / c.total }}%"></i><i class="sg-h" style="width:{{ 100 * c.hold / c.total }}%"></i><i class="sg-p" style="width:{{ 100 * c.pending / c.total }}%"></i></div>
  <div class="leg"><span style="color:var(--ok)">■ 승인 {{ '{:,}'.format(c.approved + c.applied) }}</span><span style="color:var(--bad)">■ 거절 {{ '{:,}'.format(c.rejected) }}</span><span style="color:var(--warn)">■ 보류 {{ '{:,}'.format(c.hold) }}</span><span>■ 미결정 {{ '{:,}'.format(c.pending) }}</span></div>{% endif %}
+ <div class="vbox"><div class="venn" data-watch="{{ c.watch_id }}" data-cs="{{ c.id }}"><span class="mut">소스별 유전체 불러오는 중…</span></div>
+  <div class="vtxt mut" id="vt-{{ c.id }}"></div></div>
  {% if c.n_conf %}<div class="warnb">⚠ {{ '{:,}'.format(c.n_conf) }}건은 소스끼리 값이 서로 다릅니다. 승인 전에 <a href="/integrity?watch={{ watches[0].id if watches else '' }}">정합성</a>을 확인하세요.</div>{% endif %}
  <div class="go"><span class="next">{{ c.next }}</span>
   <a href="/changeset/{{ c.id }}"><button class="p">검토하기</button></a>
@@ -128,4 +131,16 @@ async function delChangeset(id){
 document.querySelectorAll('.dcs').forEach(b=>b.onclick=()=>delChangeset(b.dataset.id));
 </script>
 {% include "_intake.html" %}<script>ihMini(WATCHES)</script>
+<script src="/static/gc/venn.js"></script>
+<script>
+(function(){const N={ncbi:"NCBI",bvbrc:"BV-BRC",pathoplexus:"Pathoplexus"},f=n=>(n||0).toLocaleString("ko-KR");
+ document.querySelectorAll(".venn[data-watch]").forEach(async el=>{
+  let o;try{o=await (await fetch("/api/sources/overlap?watch="+el.dataset.watch+"&changeset="+el.dataset.cs)).json()}catch(e){el.textContent="";return}
+  drawVenn(el,o,{small:true});const t=document.getElementById("vt-"+el.dataset.cs);if(!t||!o.sources)return;
+  const only=o.sources.filter(s=>o.only[s]).map(s=>N[s]+" "+f(o.only[s])).join(", ");
+  let h='<b>소스별 유전체</b> (마지막 확인'+(o.checked?" "+o.checked.replace("T"," ").slice(0,16):"")+')<br>'+o.sources.map(s=>N[s]+" <b>"+f(o.sizes[s])+"</b>").join(" · ")+' → 합치면 <b>'+f(o.union)+'</b>개<br>'
+   +(o.sources.length>1?'모든 소스에 있음 <b>'+f(o.in_all)+'</b>'+(only?' · 한 소스에만: '+only:''):'');
+  if(o.new)h+='<br>새로 발견 <b>'+f(o.new.union)+'</b>개 중 '+o.new.sources.filter(s=>o.new.sizes[s]).map(s=>N[s]+" "+f(o.new.sizes[s])).join(" · ")+(o.new.sources.length>1?' (모두에 있음 '+f(o.new.in_all)+')':'');
+  t.innerHTML=h+'<br><a href="/changeset/'+el.dataset.cs+'#sources">겹침 자세히 보기</a>'})})();
+</script>
 {% endblock %}

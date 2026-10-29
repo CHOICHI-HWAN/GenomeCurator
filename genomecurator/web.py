@@ -287,7 +287,7 @@ def create_app(scheduler: bool = True) -> FastAPI:
                 nxt = f"승인된 {appr:,}건을 적용하면 내 데이터에 반영됩니다."
             else:
                 nxt = "남은 작업이 없습니다."
-            out.append({"id": c["id"], "wname": c["wname"], "created": (c["created"] or "")[:16], "status": c["status"], "label": label,
+            out.append({"id": c["id"], "watch_id": c["watch_id"], "wname": c["wname"], "created": (c["created"] or "")[:16], "status": c["status"], "label": label,
                         "tone": tone, "new": sm.get("new", 0), "changed": sm.get("changed", 0), "removed": sm.get("removed", 0),
                         "pending": pend, "approved": appr, "rejected": dec.get("rejected", 0), "hold": dec.get("hold", 0),
                         "applied": dec.get("applied", 0), "total": sum(dec.values()), "n_conf": n_conf, "next": nxt})
@@ -2092,9 +2092,11 @@ def create_app(scheduler: bool = True) -> FastAPI:
     # ---- web terminal: the main server makes a one-time token, the browser connects to the sub-server with it
     XTERM = {"xterm.js": "application/javascript", "addon-fit.js": "application/javascript", "xterm.css": "text/css"}
 
-    @app.get("/static/gc/minichart.js")
-    def minichart_js():
-        return FileResponse(Path(__file__).parent / "static" / "gc" / "minichart.js", media_type="application/javascript", headers={"Cache-Control": "max-age=3600"})
+    @app.get("/static/gc/{name}")
+    def gc_static(name: str):
+        if name not in ("minichart.js", "venn.js"):
+            return JSONResponse({"error": "not found"}, 404)
+        return FileResponse(Path(__file__).parent / "static" / "gc" / name, media_type="application/javascript", headers={"Cache-Control": "max-age=3600"})
 
     @app.get("/static/xterm/{name}")
     def xterm_file(name: str):
@@ -2301,6 +2303,19 @@ def create_app(scheduler: bool = True) -> FastAPI:
             return JSONResponse({"error": "unknown worker key"}, 403)
         return cluster.fail(n, jid, str((await request.json()).get("error", "")))
 
+    @app.get("/api/sources/overlap")
+    def sources_overlap(watch: int, changeset: int = 0):
+        """Venn regions of NCBI, BV-BRC and Pathoplexus for a virus (records of its last check; the new genomes of a changeset too)."""
+        return curate.source_overlap(watch, changeset or None)
+
+    @app.get("/api/sources/overlap/accessions")
+    def sources_overlap_accessions(watch: int, region: str, format: str = "json", limit: int = 500):
+        accs = curate.overlap_accessions(watch, region)
+        if format == "csv":
+            return Response("accession\n" + "\n".join(accs) + "\n", media_type="text/csv",
+                            headers={"Content-Disposition": f'attachment; filename="sources_{region.replace("+", "_")}_{watch}.csv"'})
+        return {"region": region, "n": len(accs), "accessions": accs[:max(1, min(limit, 5000))]}
+
     @app.get("/api/changeset/{cid}/impact")
     def changeset_impact_api(cid: int):
         try:
@@ -2348,7 +2363,8 @@ def create_app(scheduler: bool = True) -> FastAPI:
         data = {"rows": rows, "selectable": True, "name": f"changeset_{cid}",
                 "cols": _cols(CS_COLS, rows), "facets": _facets(CS_FACETS, rows)}
         n_conf = sum(1 for r in rows if r["integrity"] == "불일치")
-        return render(request, "changeset.html", cs=cs, data=data, nav="cur", watch=cs["watch_id"], n_conf=n_conf,
+        new_accessions = [r["accession"] for r in _rows("SELECT accession FROM changeset_item WHERE changeset_id=? AND kind='new'", cid)]
+        return render(request, "changeset.html", cs=cs, data=data, nav="cur", watch=cs["watch_id"], n_conf=n_conf, new_accessions=new_accessions,
                       summary=json.loads(cs["summary_json"] or "{}"),
                       dry=json.loads(cs["dryrun_json"] or "{}"))
 

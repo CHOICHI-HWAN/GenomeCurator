@@ -6,6 +6,23 @@
   · 출처 {% for s, n in summary.sources.items() %}{{ {'ncbi': 'NCBI', 'bvbrc': 'BV-BRC', 'pathoplexus': 'Pathoplexus'}.get(s, s) }} {{ n }}{{ ', ' if not loop.last }}{% endfor %}</em></div></div></div>
 <div class="help" style="margin:6px 0 0;font-size:12.5px"><b>이렇게 쓰세요</b> ① 표에서 항목을 골라(체크박스 또는 <b>Select all</b>) ② <b>Approve</b>(승인)·<b>Reject</b>(거절)·<b>Hold</b>(보류) 중 하나를 누르고 ③ 승인한 것을 <b>Apply</b>로 내 데이터에 반영합니다.
  <span class="mut">용어 — 종류: <b>new</b> 새로 발견 · <b>changed</b> 정보 바뀜 · <b>removed</b> NCBI에서 사라짐 / 결정: <b>pending</b> 미결정 · <b>approved</b> 승인 · <b>rejected</b> 거절(같은 내용은 다시 안 올라옴) · <b>hold</b> 보류 · <b>applied</b> 반영됨</span></div>
+<details class="card" id="sources" open style="margin:8px 0 0"><summary><b>소스별 유전체</b> <span class="mut">— NCBI·BV-BRC·Pathoplexus가 각각 몇 개를 갖고 있고 어떻게 겹치는지 (마지막 확인 기준). 영역을 누르면 그 유전체 목록이 나옵니다.</span></summary>
+ <div style="display:flex;gap:28px;flex-wrap:wrap;align-items:flex-start;margin-top:8px">
+  <div style="flex:1;min-width:280px;max-width:380px"><div style="font-weight:600;font-size:13px">이번 확인에서 받은 전체</div><div id="v-all" class="mut">불러오는 중…</div></div>
+  <div style="flex:1;min-width:280px;max-width:380px" id="v-new-box"><div style="font-weight:600;font-size:13px">새로 발견된 유전체</div><div id="v-new" class="mut">불러오는 중…</div></div>
+  <div style="flex:1;min-width:260px" id="v-list"></div></div></details>
+<script src="/static/gc/venn.js"></script>
+<script>
+(async function(){const W={{ cs.watch_id }},esc=s=>String(s==null?"":s).replace(/[&<>"]/g,c=>({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;"}[c]));
+ const o=await (await fetch("/api/sources/overlap?watch="+W+"&changeset={{ cs.id }}")).json();
+ async function show(r,n){const j=await (await fetch("/api/sources/overlap/accessions?watch="+W+"&region="+encodeURIComponent(r.key)+"&limit=300")).json();
+  const nw=new Set(NEW);document.getElementById("v-list").innerHTML='<div style="font-weight:600;font-size:13px">'+esc(vennRegionName(r,n))+' — '+j.n.toLocaleString("ko-KR")+'개</div>'
+   +'<div style="max-height:220px;overflow:auto;font:12px/1.6 Consolas,Menlo,monospace;margin-top:4px">'+j.accessions.map(a=>esc(a)+(nw.has(a)?' <span style="color:var(--ok)">새로 발견</span>':'')).join("<br>")+(j.n>j.accessions.length?'<br>…':'')+'</div>'
+   +'<a href="/api/sources/overlap/accessions?watch='+W+'&region='+encodeURIComponent(r.key)+'&format=csv">CSV로 받기</a>'}
+ const NEW={{ new_accessions | tojson }};
+ drawVenn(document.getElementById("v-all"),o,{onRegion:r=>show(r,o.sources.length)});
+ if(o.new)drawVenn(document.getElementById("v-new"),o.new,{});else document.getElementById("v-new").textContent="이번 변경 사항에는 새로 발견된 유전체가 없습니다."})();
+</script>
 <div class="tabs"><a href="/dashboard?watch={{ watch }}">Overview</a><a href="/genomes?watch={{ watch }}">Genomes</a><a class="on">Changes</a><a href="/history">History</a></div>
 {% if n_conf %}<div class="msg" style="border-left-color:var(--warn);margin:0">⚠ 이 changeset의 <b>{{ n_conf }}건</b>은 소스(NCBI·BV-BRC·Pathoplexus) 사이에 값이 서로 다릅니다. 표의 <b>정합성</b> 열이 "불일치"인 항목은 <a href="/integrity?watch={{ watch }}">정합성 탭</a>에서 두 값을 확인한 뒤 승인하세요. 정합성 필터로 불일치 항목만 골라 보류/거절할 수도 있습니다.</div>{% endif %}
 <details class="card" style="margin:0;border-top:0;border-radius:0" {% if cs.status == 'BLOCKED' %}open{% endif %}>

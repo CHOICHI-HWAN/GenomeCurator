@@ -74,6 +74,70 @@ def watch_impact(watch_id: int) -> dict:
         con.close()
 
 
+OVERLAP_SOURCES = ("ncbi", "bvbrc", "pathoplexus")
+
+
+def overlap_from_sets(sets: dict[str, set]) -> dict:
+    """Venn regions of the sources: for every non-empty combination, how many accessions are in exactly those sources."""
+    from itertools import combinations
+    srcs = [s for s in OVERLAP_SOURCES if s in sets]
+    member: dict[str, frozenset] = {}
+    for s in srcs:
+        for a in sets[s]:
+            member[a] = member.get(a, frozenset()) | {s}
+    counts: dict[frozenset, int] = {}
+    for m in member.values():
+        counts[m] = counts.get(m, 0) + 1
+    regions = []
+    for k in range(1, len(srcs) + 1):
+        for combo in combinations(srcs, k):
+            regions.append({"key": "+".join(combo), "sources": list(combo), "n": counts.get(frozenset(combo), 0)})
+    return {"sources": srcs, "sizes": {s: len(sets[s]) for s in srcs}, "union": len(member), "regions": regions,
+            "in_all": counts.get(frozenset(srcs), 0) if srcs else 0, "only": {s: counts.get(frozenset({s}), 0) for s in srcs}}
+
+
+def source_sets(watch_id: int, latest: bool = True) -> tuple[dict[str, set], str | None]:
+    """Accessions each source returned for a virus, from the records of the last check (records of earlier checks are kept but left out)."""
+    con = connect()
+    try:
+        last = (con.execute("SELECT last_checked FROM watchlist WHERE id=?", (watch_id,)).fetchone() or [None])[0]
+        q, a = "SELECT source, accession FROM source_record WHERE watch_id=? AND source IN (%s)" % ",".join("?" * len(OVERLAP_SOURCES)), [watch_id, *OVERLAP_SOURCES]
+        rows = con.execute(q + " AND fetched_at=?", a + [last]).fetchall() if latest and last else []
+        if not rows:                       # an older database: all records ever seen
+            rows, last = con.execute(q, a).fetchall(), None
+    finally:
+        con.close()
+    sets: dict[str, set] = {}
+    for src, acc in rows:
+        sets.setdefault(src, set()).add(acc)
+    return sets, last
+
+
+def source_overlap(watch_id: int, changeset_id: int | None = None) -> dict:
+    """How many genomes each source has and how they overlap (all genomes of the last check, and the new ones of a changeset)."""
+    sets, last = source_sets(watch_id)
+    out = overlap_from_sets(sets)
+    out["checked"] = last
+    if changeset_id:
+        con = connect()
+        try:
+            new = {r[0] for r in con.execute("SELECT accession FROM changeset_item WHERE changeset_id=? AND kind='new'", (changeset_id,))}
+        finally:
+            con.close()
+        out["new"] = overlap_from_sets({s: v & new for s, v in sets.items()}) if new else None
+    return out
+
+
+def overlap_accessions(watch_id: int, region: str, limit: int = 100000) -> list[str]:
+    """The accessions in exactly the sources of `region` ("ncbi+bvbrc")."""
+    sets, _ = source_sets(watch_id)
+    want = set(region.split("+"))
+    if not want <= set(sets):
+        return []
+    out = [a for a in set().union(*sets.values()) if {s for s, v in sets.items() if a in v} == want]
+    return sorted(out)[:limit]
+
+
 def source_agreement(watch_id: int) -> dict[str, dict]:
     """{accession: {'conflict': {fields}, 'cosmetic': {fields}}} from the last check's cross-source comparison."""
     con = connect()
@@ -413,7 +477,8 @@ def _check(watch_name: str, progress=None) -> int | None:
                     (w["id"],))
         from . import __version__
         summary = {"new": 0, "changed": 0, "removed": 0, "below_coverage": len(below), "notes": notes, "app_version": __version__,
-                   "sources": {s: len(r) for s, r in per_source.items()}}
+                   "sources": {s: len(r) for s, r in per_source.items()},
+                   "overlap": overlap_from_sets({s: set(r) for s, r in per_source.items() if s in OVERLAP_SOURCES})}
         cur = con.execute("INSERT INTO changeset(watch_id, summary_json) VALUES(?,?)", (w["id"], "{}"))
         cs = cur.lastrowid
         for acc, kind, diff, rec, prov, fp in fresh:
