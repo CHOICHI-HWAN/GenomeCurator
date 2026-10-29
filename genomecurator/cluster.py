@@ -103,7 +103,9 @@ def authenticate(key: str | None) -> dict | None:
     return None
 
 
-def _touch(con, nid: str, caps: dict | None = None) -> None:
+def _touch(con, nid: str, caps: dict | None = None, metrics: dict | None = None) -> None:
+    if metrics:
+        con.execute("UPDATE cluster_node SET metrics_json=? WHERE id=?", (json.dumps(metrics), nid))
     if caps is not None:
         con.execute("UPDATE cluster_node SET last_seen=?, caps_json=? WHERE id=?", (_now(), json.dumps(caps), nid))
     else:
@@ -113,7 +115,7 @@ def _touch(con, nid: str, caps: dict | None = None) -> None:
 def hello(node: dict, caps: dict) -> dict:
     con = connect()
     try:
-        _touch(con, node["id"], caps)
+        _touch(con, node["id"], caps, caps.get("metrics") if isinstance(caps, dict) else None)
         con.commit()
     finally:
         con.close()
@@ -137,6 +139,7 @@ def list_nodes() -> list[dict]:
     for r in rows:
         r.pop("key_sha", None)
         r["caps"] = json.loads(r.pop("caps_json") or "{}")
+        r["metrics"] = json.loads(r.pop("metrics_json", None) or "{}")
         r["online"] = _online(r["last_seen"])
         r["running"] = busy.get(r["id"])
     return rows
@@ -268,7 +271,7 @@ def _requeue_node(nid: str, why: str) -> None:
         con.close()
 
 
-def claim(node: dict, kinds: list[str] | None = None) -> dict | None:
+def claim(node: dict, kinds: list[str] | None = None, metrics: dict | None = None) -> dict | None:
     """Give the worker the oldest queued job it may run (its kind is known to the worker; a private job only to a worker that accepts private genomes)."""
     reap()
     kinds = [k for k in (kinds or list(KINDS)) if k in KINDS]
@@ -276,7 +279,7 @@ def claim(node: dict, kinds: list[str] | None = None) -> dict | None:
         return None
     con = connect()
     try:
-        _touch(con, node["id"])
+        _touch(con, node["id"], metrics=metrics)
         busy = con.execute("SELECT 1 FROM cluster_job WHERE state='running' AND node_id=?", (node["id"],)).fetchone()
         if busy:
             con.commit()
@@ -298,11 +301,11 @@ def claim(node: dict, kinds: list[str] | None = None) -> dict | None:
         con.close()
 
 
-def heartbeat(node: dict, jid: str, pct: float | None = None, msg: str | None = None) -> dict:
+def heartbeat(node: dict, jid: str, pct: float | None = None, msg: str | None = None, metrics: dict | None = None) -> dict:
     """-> {"continue": False} when the job was cancelled or given to another worker (the worker stops and removes its copy)."""
     con = connect()
     try:
-        _touch(con, node["id"])
+        _touch(con, node["id"], metrics=metrics)
         j = _job(con, jid)
         ok = bool(j) and j["state"] == "running" and j["node_id"] == node["id"]
         if ok:

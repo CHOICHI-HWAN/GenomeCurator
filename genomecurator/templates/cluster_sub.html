@@ -1,0 +1,72 @@
+<!doctype html>
+<html lang="ko"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<title>서브서버</title>
+<style>
+:root{--bg:#f6f7f9;--fg:#1d2330;--mut:#6a7384;--card:#fff;--bd:#dde1e8;--acc:#2b6cb0;--ok:#2f855a;--bad:#c53030;--warn:#b7791f;--bar:#e6e9ef}
+@media (prefers-color-scheme:dark){:root{--bg:#14171d;--fg:#e4e7ee;--mut:#98a1b3;--card:#1c2028;--bd:#2d333f;--acc:#63a4ff;--ok:#68d391;--bad:#fc8181;--warn:#f6ad55;--bar:#2a303b}}
+*{box-sizing:border-box}body{margin:0;background:var(--bg);color:var(--fg);font:15px/1.55 system-ui,-apple-system,"Segoe UI","Noto Sans KR",sans-serif}
+main{max-width:860px;margin:0 auto;padding:22px 16px 60px}
+h1{font-size:21px;margin:0 0 2px}h2{font-size:15px;margin:0 0 10px}.mut{color:var(--mut);font-size:13.5px}
+.card{background:var(--card);border:1px solid var(--bd);border-radius:10px;padding:16px 18px;margin:14px 0}
+.pill{display:inline-block;border-radius:12px;padding:2px 12px;font-weight:600;font-size:13px;border:1px solid currentColor;white-space:nowrap}
+.on{color:var(--ok)}.off{color:var(--mut)}.err{color:var(--bad)}.warn{color:var(--warn)}
+.row{display:flex;gap:10px;align-items:center;flex-wrap:wrap}
+input{padding:8px 10px;border:1px solid var(--bd);border-radius:6px;background:var(--bg);color:var(--fg);font:inherit;min-width:230px;flex:1}
+button{padding:8px 16px;border:1px solid var(--acc);background:var(--acc);color:#fff;border-radius:6px;font:inherit;cursor:pointer}button.g{background:transparent;color:var(--acc)}button:disabled{opacity:.5;cursor:default}
+.meters{display:grid;grid-template-columns:repeat(auto-fit,minmax(230px,1fr));gap:14px}
+.m b{font-size:20px}.bar{height:9px;background:var(--bar);border-radius:5px;overflow:hidden;margin:5px 0 3px}.bar i{display:block;height:100%;background:var(--acc);transition:width .4s}
+.bar i.hi{background:var(--warn)}.bar i.crit{background:var(--bad)}.bar i.job{background:var(--ok)}
+pre{margin:8px 0 0;max-height:210px;overflow:auto;background:var(--bg);border:1px solid var(--bd);border-radius:6px;padding:8px 10px;font:12px/1.5 Consolas,Menlo,monospace;white-space:pre-wrap;overflow-wrap:anywhere}
+</style></head><body><main>
+<h1>서브서버 <span id="hn" class="mut"></span></h1>
+<div class="mut">이 서버를 메인 서버의 작업을 나누어 처리하는 서브서버로 쓸 수 있습니다. 메인 서버의 클러스터 화면에서 이 서버를 워커로 추가하면 받는 <b>키</b>와 메인 주소가 필요합니다.</div>
+
+<div class="card"><div class="row"><h2 style="margin:0">상태</h2><span id="st" class="pill off">확인 중</span><span id="stx" class="mut"></span></div>
+ <div id="job" style="display:none;margin-top:12px"><div class="row"><b id="jl"></b><span id="jm" class="mut"></span></div><div class="bar"><i class="job" id="jb" style="width:0"></i></div></div></div>
+
+<div class="card"><h2>자원 사용</h2><div class="meters">
+ <div class="m"><div class="row" style="justify-content:space-between"><span>CPU</span><b id="cpu">-</b></div><div class="bar"><i id="cpub" style="width:0"></i></div><div class="mut" id="cpux"></div></div>
+ <div class="m"><div class="row" style="justify-content:space-between"><span>메모리</span><b id="mem">-</b></div><div class="bar"><i id="memb" style="width:0"></i></div><div class="mut" id="memx"></div></div>
+ <div class="m"><div class="row" style="justify-content:space-between"><span>디스크 (데이터 폴더)</span><b id="dsk">-</b></div><div class="bar"><i id="dskb" style="width:0"></i></div><div class="mut" id="dskx"></div></div>
+</div></div>
+
+<div class="card"><h2>서브서버로 활성화</h2>
+ <div class="row"><input id="sm" placeholder="메인 주소 (예: http://10.0.0.1:8000)"><input id="sk" type="password" placeholder="워커 키" autocomplete="off"></div>
+ <div class="row" style="margin-top:10px"><button id="on" onclick="activate()">활성화</button><button class="g" id="off" onclick="deactivate()">비활성화</button><span id="se" class="err"></span></div>
+ <div class="mut" style="margin-top:8px">활성화하면 이 서버가 메인에 접속해 작업을 가져가 처리하고, 프로그램을 다시 켜도 유지됩니다. 키는 이 서버의 데이터 폴더에 소유자만 읽도록 저장됩니다. 같은 사설 네트워크의 누구나 이 화면에서 활성화·설치를 할 수 있으니 신뢰하는 네트워크에서만 쓰세요.</div></div>
+
+<div class="card"><h2>환경 설치</h2>
+ <div class="row"><span id="bs" class="pill off">확인 중</span><span id="bx" class="mut"></span><button id="inst" onclick="install()" style="display:none">BEAST 설치하기</button></div>
+ <div class="mut" style="margin-top:8px">BEAST 작업을 처리하려면 BEAST 10과 BEAGLE 라이브러리가 필요합니다. <b>설치하기</b>는 이 서버에 conda 환경 <code>gc-beast</code>를 만듭니다(mamba 또는 conda 필요, 몇 분 걸리며 인터넷 접속이 필요합니다).</div>
+ <pre id="il" style="display:none"></pre></div>
+<div class="mut" id="ver"></div>
+</main>
+<script>
+const $=id=>document.getElementById(id);
+const esc=s=>String(s==null?"":s).replace(/[&<>"]/g,c=>({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;"}[c]));
+const gb=b=>b==null?"-":(b/2**30).toFixed(b>=2**40?0:1)+" GB";
+const SS={starting:"시작 중",idle:"메인에 연결됨, 작업 대기 중",running:"작업 실행 중",unreachable:"메인에 연결할 수 없습니다",refused:"메인이 이 키나 주소를 받아들이지 않았습니다"};
+function meter(id,pct,txt){const e=$(id+"b");e.style.width=Math.min(100,pct||0)+"%";e.className=pct>=90?"crit":pct>=75?"hi":"";$(id).textContent=pct==null?"-":Math.round(pct)+"%";$(id+"x").textContent=txt||""}
+async function post(u,b){const r=await fetch(u,{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify(b||{})});return [r.ok,await r.json()]}
+async function activate(){const [ok,j]=await post("/api/cluster/sub/activate",{main:$("sm").value,key:$("sk").value});$("se").textContent=ok?"":j.error;if(ok)$("sk").value="";load()}
+async function deactivate(){await post("/api/cluster/sub/deactivate",{});load()}
+async function install(){if(!confirm("이 서버에 BEAST 환경(conda 환경 gc-beast)을 설치합니다. 몇 분 걸리며 인터넷 접속이 필요합니다. 진행할까요?"))return;
+ const [ok,j]=await post("/api/cluster/sub/install");if(!ok)alert(j.error);load()}
+async function load(){let j;try{j=await (await fetch("/api/cluster/sub")).json()}catch(e){$("st").className="pill err";$("st").textContent="응답 없음";return}
+ const run=j.running,s=j.status||{};
+ $("st").className="pill "+(run?(s.state==="unreachable"||s.state==="refused"?"err":"on"):"off");$("st").textContent=run?"활성화됨":"꺼짐";
+ $("stx").textContent=run?(SS[s.state]||s.state)+(s.error?" — "+s.error:""):(j.enabled?"곧 다시 시작됩니다":"메인 서버에 연결되어 있지 않습니다.");
+ if(run&&s.state==="running"){$("job").style.display="block";$("jl").textContent="작업 "+(s.job||"");$("jm").textContent=s.msg||"";$("jb").style.width=(s.pct||0)+"%"}else $("job").style.display="none";
+ if(!$("sm").value&&j.main)$("sm").value=j.main;$("on").disabled=false;$("off").disabled=!run&&!j.enabled;
+ const m=j.metrics||{};
+ meter("cpu",m.cpu_pct,(m.cpus?m.cpus+"코어":"")+(m.load1!=null?" · 부하 "+m.load1:""));
+ meter("mem",m.mem_total?100*m.mem_used/m.mem_total:null,gb(m.mem_used)+" / "+gb(m.mem_total));
+ meter("dsk",m.disk_total?100*m.disk_used/m.disk_total:null,"여유 "+gb(m.disk_free)+" / "+gb(m.disk_total));
+ const b=(j.install||{}).beast||{},ij=(j.install||{}).job,busy=ij&&ij.status==="running";
+ $("bs").className="pill "+(b.ok?"on":"warn");$("bs").textContent=b.ok?"BEAST "+(b.version||"")+" 설치됨":"BEAST 없음";
+ $("bx").textContent=b.ok?"":((j.install||{}).installer?"":"mamba/conda가 없어 이 화면에서 설치할 수 없습니다");
+ $("inst").style.display=!b.ok&&(j.install||{}).installer?"":"none";$("inst").disabled=!!busy;
+ if(ij){$("il").style.display="block";$("il").innerHTML=(ij.error?'<span class="err">'+esc(ij.error)+"</span>\n":"")+(ij.log||[]).slice(-40).map(x=>esc(x.t+"  "+x.msg)).join("\n");$("il").scrollTop=1e9}
+ $("ver").textContent="GenomeCurator "+(j.version||"")}
+$("hn").textContent=location.host;load();setInterval(load,3000);
+</script></body></html>

@@ -64,7 +64,7 @@ CREATE TABLE IF NOT EXISTS job(
 CREATE INDEX IF NOT EXISTS ix_job_started ON job(started);
 -- the cluster (cluster.py): worker servers that fetch jobs from this one. The main server is the only source of truth; a worker holds a job's files only until the main server has verified and taken over the results.
 CREATE TABLE IF NOT EXISTS cluster_node(
-  id TEXT PRIMARY KEY, name TEXT UNIQUE, key_sha TEXT, created TEXT, last_seen TEXT, caps_json TEXT, allow_private INTEGER DEFAULT 0, revoked INTEGER DEFAULT 0, note TEXT);
+  id TEXT PRIMARY KEY, name TEXT UNIQUE, key_sha TEXT, created TEXT, last_seen TEXT, caps_json TEXT, allow_private INTEGER DEFAULT 0, revoked INTEGER DEFAULT 0, note TEXT, metrics_json TEXT);
 CREATE TABLE IF NOT EXISTS cluster_job(
   id TEXT PRIMARY KEY, kind TEXT, label TEXT, state TEXT,  -- queued|running|received|done|error|cancelled
   node_id TEXT, created TEXT, claimed TEXT, finished TEXT, heartbeat TEXT, attempts INTEGER DEFAULT 0, max_attempts INTEGER DEFAULT 3,
@@ -182,6 +182,9 @@ def migrate(con: sqlite3.Connection) -> None:
     pcols = {r[1] for r in con.execute("PRAGMA table_info(private_genome)")}
     if pcols and "version" not in pcols:
         con.execute("ALTER TABLE private_genome ADD COLUMN version INTEGER DEFAULT 1")
+    ncols = {r[1] for r in con.execute("PRAGMA table_info(cluster_node)")}
+    if ncols and "metrics_json" not in ncols:
+        con.execute("ALTER TABLE cluster_node ADD COLUMN metrics_json TEXT")
     wcols = {r[1] for r in con.execute("PRAGMA table_info(watchlist)")}
     if "pathoplexus_organism" not in wcols:
         con.execute("ALTER TABLE watchlist ADD COLUMN pathoplexus_organism TEXT")

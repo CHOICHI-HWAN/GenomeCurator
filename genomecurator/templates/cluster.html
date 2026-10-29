@@ -10,7 +10,7 @@
  <input id="sm" placeholder="메인 주소 (예: http://10.0.0.1:8000)" style="width:260px"><input id="sk" placeholder="워커 키" type="password" style="width:260px" autocomplete="off">
  <button onclick="subOn()">활성화</button><button onclick="subOff()">비활성화</button><span id="ss" class="mut"></span><span id="se" style="color:var(--bad)"></span></div>
 
-<h3>워커</h3>
+<h3>워커</h3><div class="mut" style="margin-bottom:6px">서브서버로 쓸 서버는 주소(<code>http://그 서버:8000</code>)로 접속하면 활성화·설치·자원 확인 화면이 나옵니다. 아래 표에는 연결된 워커의 자원 사용이 표시됩니다.</div>
 <table id="nt"><thead><tr><th class="nw">상태</th><th>이름</th><th>능력</th><th class="nw">마지막 연락</th><th>실행 중</th><th class="nw">비공개</th><th></th></tr></thead><tbody></tbody></table>
 <div style="display:flex;gap:8px;align-items:center;margin:10px 0;flex-wrap:wrap">
  <input id="nn" placeholder="워커 이름 (예: node1)" maxlength="60" style="width:200px">
@@ -50,12 +50,14 @@ async function addJob(){const [ok,j]=await post("/api/cluster/jobs",{folder:docu
  document.getElementById("jmsg").textContent=ok?"대기열에 넣었습니다 ("+j.id+")":j.error;if(ok)load()}
 async function revoke(id){if(!confirm("이 워커의 키를 폐기합니다. 실행 중인 작업은 대기열로 돌아갑니다."))return;await post("/api/cluster/nodes/"+id+"/revoke");load()}
 async function cancel(id){await post("/api/cluster/jobs/"+id+"/cancel");load()}
+const gb=b=>b==null?"":(b/2**30).toFixed(b>=2**40?0:1)+"GB";
+const met=m=>m&&m.ts?'<br><span class="mut">CPU '+(m.cpu_pct==null?"-":Math.round(m.cpu_pct))+'% · 메모리 '+(m.mem_total?Math.round(100*m.mem_used/m.mem_total)+"%":"-")+' · 디스크 여유 '+gb(m.disk_free)+'</span>':"";
 const ago=t=>{if(!t)return"-";const s=Math.round((Date.now()-new Date(t))/1000);return s<90?s+"초 전":s<5400?Math.round(s/60)+"분 전":Math.round(s/3600)+"시간 전"};
 async function detail(id){const j=await (await fetch("/api/cluster/job/"+id)).json();
  return '<div class="jl2">'+(j.log||[]).map(x=>'<div>'+esc(x.t.slice(11))+'  '+esc(x.msg)+'</div>').join("")+'</div>'+(j.error?'<div style="color:var(--bad);margin-top:6px">'+esc(j.error)+'</div>':"")
  +(j.outputs&&j.outputs.length?'<div class="mut" style="margin-top:6px">결과 '+j.outputs.map(o=>esc(o.name)+" ("+o.sha256.slice(0,10)+"…)").join(", ")+'</div>':"")}
 async function load(){if(busy)return;busy=true;try{const s=await (await fetch("/api/cluster/state")).json();
- document.querySelector("#nt tbody").innerHTML=s.nodes.map(n=>'<tr><td><span class="cst '+(n.online?"on":"off")+'">'+(n.online?"연결":"끊김")+'</span></td><td><b>'+esc(n.name)+'</b></td><td class="mut">'+esc(((n.caps.kinds||[]).join(", ")||"-")+" · CPU "+(n.caps.cpus||"?")+(n.caps.tools&&n.caps.tools.beast?" · BEAST "+n.caps.tools.beast:""))+'</td><td class="nw">'+ago(n.last_seen)+'</td><td>'+esc(n.running||"")+'</td><td class="nw">'+(n.allow_private?"허용":"-")+'</td><td><button onclick="revoke(\''+n.id+'\')">폐기</button></td></tr>').join("")||'<tr><td colspan="7" class="mut">등록된 워커가 없습니다.</td></tr>';
+ document.querySelector("#nt tbody").innerHTML=s.nodes.map(n=>'<tr><td><span class="cst '+(n.online?"on":"off")+'">'+(n.online?"연결":"끊김")+'</span></td><td><b>'+esc(n.name)+'</b></td><td class="mut">'+esc(((n.caps.kinds||[]).join(", ")||"-")+" · CPU "+(n.caps.cpus||"?")+(n.caps.tools&&n.caps.tools.beast?" · BEAST "+n.caps.tools.beast:""))+met(n.metrics)+'</td><td class="nw">'+ago(n.last_seen)+'</td><td>'+esc(n.running||"")+'</td><td class="nw">'+(n.allow_private?"허용":"-")+'</td><td><button onclick="revoke(\''+n.id+'\')">폐기</button></td></tr>').join("")||'<tr><td colspan="7" class="mut">등록된 워커가 없습니다.</td></tr>';
  const rows=[];for(const j of s.jobs){rows.push('<tr class="jr" data-id="'+j.id+'" style="cursor:pointer"><td><span class="cst '+j.state+'">'+ST[j.state]+'</span></td><td>'+esc(j.label)+(j.private?' <span class="mut">(비공개)</span>':"")+'</td><td class="nw">'+esc(j.node||"-")+'</td><td class="nw">'+j.attempts+"/"+j.max_attempts+'</td><td class="nw">'+esc((j.created||"").replace("T"," "))+'</td><td>'+(j.state==="running"?'<div class="cbar"><i style="width:'+(j.pct||0)+'%"></i></div>':"")+'<span class="mut">'+esc(j.state==="error"?j.error:j.msg||"")+'</span></td><td>'+(j.state==="queued"||j.state==="running"?'<button onclick="event.stopPropagation();cancel(\''+j.id+'\')">취소</button>':"")+'</td></tr>');
   if(open_.has(j.id))rows.push('<tr class="dt" data-for="'+j.id+'"><td colspan="7" class="jdet">…</td></tr>')}
  document.querySelector("#jt tbody").innerHTML=rows.join("")||'<tr><td colspan="7" class="mut">작업이 없습니다.</td></tr>';

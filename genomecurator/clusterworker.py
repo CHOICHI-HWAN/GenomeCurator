@@ -20,7 +20,7 @@ import urllib.parse
 import urllib.request
 from pathlib import Path
 
-from . import log
+from . import log, sysinfo
 
 _log = log.get("worker")
 KINDS = {"beast": {"outputs": ["beast.log", "beast.trees", "beast.ops", "beast.screen.log"]}}   # what each kind produces (the main server checks the same list)
@@ -104,6 +104,12 @@ class Worker:
         self.status = {"state": "starting", "job": None, "error": None, "since": time.strftime("%Y-%m-%dT%H:%M:%S")}
         self.work.mkdir(parents=True, exist_ok=True)
 
+    def metrics(self) -> dict:
+        try:
+            return sysinfo.snapshot(self.work)
+        except Exception:
+            return {}
+
     def _set(self, state: str, job: str | None = None, error: str | None = None) -> None:
         self.status = {"state": state, "job": job, "error": error, "since": time.strftime("%Y-%m-%dT%H:%M:%S")}
 
@@ -166,8 +172,9 @@ class Worker:
                     continue
                 last_beat = time.time()
                 pct, msg = self._progress(jd, int(spec.get("chain_length") or 0))
+                self.status.update({"pct": pct, "msg": msg})
                 try:
-                    if not self.main.json("POST", f"/api/cluster/w/jobs/{jid}/heartbeat", {"pct": pct, "msg": msg}).get("continue", False):
+                    if not self.main.json("POST", f"/api/cluster/w/jobs/{jid}/heartbeat", {"pct": pct, "msg": msg, "metrics": self.metrics()}).get("continue", False):
                         gone.set()
                 except Gone:
                     gone.set()
@@ -250,10 +257,10 @@ class Worker:
         while not self.stop.is_set():
             try:
                 if not known:
-                    self.main.json("POST", "/api/cluster/w/hello", caps)
+                    self.main.json("POST", "/api/cluster/w/hello", {**caps, "metrics": self.metrics()})
                     known = True
                 self.resume()
-                job = self.main.json("POST", "/api/cluster/w/claim", {"kinds": caps["kinds"]}).get("job")
+                job = self.main.json("POST", "/api/cluster/w/claim", {"kinds": caps["kinds"], "metrics": self.metrics()}).get("job")
                 if job:
                     self.run_job(job)
                     self._set("idle")
@@ -353,3 +360,52 @@ def sub_autostart() -> None:
             sub_start()
         except Exception:
             _log.warning("could not restart the sub-server worker", exc_info=True)
+
+
+# ---- "install": make the environment a sub-server needs (BEAST 10 and its BEAGLE library) with one button
+BEAST_PACKAGES = ["beast", "beagle-lib"]
+_install: dict = {"job": None}
+
+
+def install_state() -> dict:
+    """What is installed on this machine for the job kinds, and the state of the install running now (if any)."""
+    from . import beastprep, jobs
+    st = beastprep.status()
+    pkgmgr = shutil.which("mamba") or shutil.which("micromamba") or shutil.which("conda")
+    job = jobs.get(_install["job"]) if _install["job"] else None
+    return {"beast": {"ok": st["ok"], "version": st["version"]}, "installer": pkgmgr, "job": job and {k: job[k] for k in ("id", "status", "pct", "msg", "error", "log")}}
+
+
+def install_beast() -> str:
+    """Create the conda environment `gc-beast` (the one the app looks for) in a background job; the progress is the job's log. Returns the job id."""
+    from . import beastprep, jobs
+    exe = shutil.which("mamba") or shutil.which("micromamba") or shutil.which("conda")
+    if not exe:
+        raise RuntimeError("mamba or conda is needed to install BEAST (install miniforge first)")
+    if beastprep.status()["ok"]:
+        raise ValueError("BEAST is already installed")
+    if _install["job"]:
+        cur = jobs.get(_install["job"])
+        if cur and not cur["done"]:
+            raise ValueError("an install is already running")
+
+    def work(progress):
+        progress(2, "creating the environment gc-beast (BEAST 10 and BEAGLE), this takes a few minutes")
+        cmd = [exe, "create", "-y", "-n", "gc-beast", "-c", "conda-forge", "-c", "bioconda"] + BEAST_PACKAGES
+        p = subprocess.Popen(cmd, stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True)
+        n = 0
+        for line in p.stdout:
+            line = line.rstrip()
+            if line:
+                n += 1
+                progress(min(95, 2 + n * 0.5), line[-160:])
+        if p.wait() != 0:
+            raise RuntimeError(f"{Path(exe).name} exited with code {p.returncode}; see the log")
+        st = beastprep.status()
+        if not st["ok"]:
+            raise RuntimeError("the environment was created but BEAST was not found in it")
+        progress(100, f"BEAST {st['version']} installed")
+        return "/cluster/sub"
+    jid = jobs.start(work, "BEAST environment install", "install")
+    _install["job"] = jid
+    return jid

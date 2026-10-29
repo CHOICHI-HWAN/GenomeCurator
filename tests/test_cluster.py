@@ -221,7 +221,7 @@ def test_other_machines_reach_the_worker_api_only(tmp_path, monkeypatch):
     _env(tmp_path, monkeypatch)
     from fastapi.testclient import TestClient
     from genomecurator import web
-    remote = TestClient(web.create_app(scheduler=False), client=("10.0.0.7", 5000))
+    remote = TestClient(web.create_app(scheduler=False), client=("8.8.8.8", 5000))
     assert remote.get("/").status_code == 403 and remote.get("/api/cluster/state").status_code == 403
     assert remote.post("/api/cluster/nodes", json={"name": "x"}).status_code == 403
     assert remote.post("/api/cluster/w/claim", json={}).status_code == 403          # reaches the API, which wants a key
@@ -262,3 +262,44 @@ def test_activating_a_server_as_a_sub_server_runs_jobs_and_survives_a_restart(tm
     finally:
         clusterworker.sub_stop(wait=True)
         srv.should_exit = True
+
+
+def test_same_network_machines_get_the_sub_server_page_only(tmp_path, monkeypatch):
+    _env(tmp_path, monkeypatch)
+    from fastapi.testclient import TestClient
+    from genomecurator import web
+    app = web.create_app(scheduler=False)
+    lan = TestClient(app, client=("192.168.0.20", 5000), follow_redirects=False)
+    assert lan.get("/").status_code in (302, 307) and lan.get("/").headers["location"] == "/cluster/sub"
+    assert lan.get("/cluster/sub").status_code == 200
+    s = lan.get("/api/cluster/sub").json()
+    assert {"enabled", "running", "metrics", "install"} <= set(s) and s["metrics"]["cpus"] and "disk_free" in s["metrics"]
+    for path in ("/genomes", "/private", "/api/cluster/state", "/cluster"):
+        assert lan.get(path).status_code == 403
+    assert lan.post("/api/cluster/nodes", json={"name": "x"}).status_code == 403              # keys are made on the main server
+    assert lan.post("/api/cluster/sub/activate", json={"main": "bad", "key": "k"}).status_code == 400    # reaches the handler, which checks the address
+    public = TestClient(app, client=("8.8.8.8", 5000), follow_redirects=False)
+    assert public.get("/").status_code == 403 and public.get("/cluster/sub").status_code == 403
+    monkeypatch.setenv("GC_SUB_PAGE_LAN", "0")
+    assert lan.get("/cluster/sub").status_code == 403
+
+
+def test_install_needs_a_package_manager_and_refuses_when_beast_exists(tmp_path, monkeypatch):
+    _env(tmp_path, monkeypatch)
+    from genomecurator import beastprep, clusterworker
+    monkeypatch.setattr(clusterworker.shutil, "which", lambda x: None)
+    with pytest.raises(RuntimeError):
+        clusterworker.install_beast()
+    monkeypatch.setattr(clusterworker.shutil, "which", lambda x: "/bin/true")
+    monkeypatch.setattr(beastprep, "status", lambda: {"ok": True, "version": "10.5.0", "how": ""})
+    with pytest.raises(ValueError):
+        clusterworker.install_beast()
+
+
+def test_metrics_reach_the_main_server(tmp_path, monkeypatch):
+    c = _env(tmp_path, monkeypatch)
+    n = c.authenticate(c.create_node("w")["key"])
+    c.hello(n, {"kinds": ["beast"], "metrics": {"cpu_pct": 12.5, "ts": "2026-01-01T00:00:00"}})
+    assert c.list_nodes()[0]["metrics"]["cpu_pct"] == 12.5
+    c.claim(n, ["beast"], {"cpu_pct": 55.0, "ts": "x"})
+    assert c.list_nodes()[0]["metrics"]["cpu_pct"] == 55.0

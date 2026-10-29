@@ -192,13 +192,21 @@ def create_app(scheduler: bool = True) -> FastAPI:
         clusterworker.sub_autostart()      # a server that was activated as a sub-server stays one after a restart
 
     @app.middleware("http")
-    async def other_machines_reach_the_cluster_api_only(request: Request, call_next):
-        """The app has no log-in: every page shows (and every route changes) the curated and private data. When it listens on the network for the cluster
-        (`serve --host 0.0.0.0`), another machine may therefore use only the worker API, which asks for a worker key; everything else answers 403.
-        GC_ALLOW_REMOTE_UI=1 lifts this (for a trusted network where the whole app is meant to be shared)."""
+    async def other_machines_reach_the_cluster_only(request: Request, call_next):
+        """The app has no log-in: every page shows (and every route changes) the curated and private data. So a request from another machine may use
+        only the cluster: the worker API (it asks for a worker key) from anywhere, and the sub-server page (`/cluster/sub`: activate, install, status) from
+        the same private network. Everything else answers 403 and `/` leads to the sub-server page. GC_ALLOW_REMOTE_UI=1 lifts this for a trusted
+        network where the whole app is meant to be shared; GC_SUB_PAGE_LAN=0 closes the sub-server page to other machines."""
         host = request.client.host if request.client else ""
-        if host not in ("127.0.0.1", "::1", "localhost", "testclient") and not request.url.path.startswith("/api/cluster/w/") and os.environ.get("GC_ALLOW_REMOTE_UI") != "1":
-            return JSONResponse({"error": "this machine may use the cluster worker API only; open the app on the main server itself"}, 403)
+        path = request.url.path
+        if host not in ("127.0.0.1", "::1", "localhost", "testclient") and os.environ.get("GC_ALLOW_REMOTE_UI") != "1" and not path.startswith("/api/cluster/w/"):
+            sub = path == "/cluster/sub" or path.startswith("/api/cluster/sub")
+            if sub and _is_lan(host) and os.environ.get("GC_SUB_PAGE_LAN") != "0":
+                pass
+            elif path == "/" and request.method == "GET" and _is_lan(host) and os.environ.get("GC_SUB_PAGE_LAN") != "0":
+                return RedirectResponse("/cluster/sub")
+            else:
+                return JSONResponse({"error": "this machine may use the cluster only; open the app on the main server itself"}, 403)
         return await call_next(request)
 
     @app.middleware("http")
@@ -1858,6 +1866,20 @@ def create_app(scheduler: bool = True) -> FastAPI:
             return JSONResponse({"error": "the cluster can be administered from the main server only"}, 403)
         return None
 
+    def _is_lan(host: str) -> bool:
+        import ipaddress
+        try:
+            ip = ipaddress.ip_address(host.split("%")[0])
+            return ip.is_private or ip.is_loopback or ip.is_link_local
+        except ValueError:
+            return False
+
+    def _sub_admin(request: Request):
+        """Activating, deactivating and installing on THIS machine: from this machine or from the same private network (asked to confirm on the page)."""
+        if not _same_origin(request):
+            return JSONResponse({"error": "cross-site request refused"}, 403)
+        return None
+
     def _worker(request: Request):
         h = request.headers.get("authorization", "")
         return cluster.authenticate(h[7:] if h.lower().startswith("bearer ") else None)
@@ -1908,14 +1930,28 @@ def create_app(scheduler: bool = True) -> FastAPI:
             return e
         return {"cancelled": cluster.cancel(jid)}
 
+    @app.get("/cluster/sub")
+    def cluster_sub_page(request: Request):
+        return T.TemplateResponse(request, "cluster_sub.html", {"app_version": __version__, "lease": cluster.LEASE})
+
     @app.get("/api/cluster/sub")
     def cluster_sub_status():
+        from . import clusterworker, sysinfo
+        return {**clusterworker.sub_status(), "metrics": sysinfo.snapshot(config.DATA_DIR), "install": clusterworker.install_state(), "version": __version__}
+
+    @app.post("/api/cluster/sub/install")
+    async def cluster_sub_install(request: Request):
+        if (e := _sub_admin(request)):
+            return e
         from . import clusterworker
-        return clusterworker.sub_status()
+        try:
+            return {"job": clusterworker.install_beast()}
+        except (ValueError, RuntimeError) as ex:
+            return JSONResponse({"error": str(ex)}, 400)
 
     @app.post("/api/cluster/sub/activate")
     async def cluster_sub_activate(request: Request):
-        if (e := _cluster_admin(request)):
+        if (e := _sub_admin(request)):
             return e
         from . import clusterworker
         b = await request.json()
@@ -1926,7 +1962,7 @@ def create_app(scheduler: bool = True) -> FastAPI:
 
     @app.post("/api/cluster/sub/deactivate")
     async def cluster_sub_deactivate(request: Request):
-        if (e := _cluster_admin(request)):
+        if (e := _sub_admin(request)):
             return e
         from . import clusterworker
         return clusterworker.sub_stop(forget=bool((await request.json()).get("forget")))
@@ -1943,7 +1979,8 @@ def create_app(scheduler: bool = True) -> FastAPI:
         n = _worker(request)
         if not n:
             return JSONResponse({"error": "unknown worker key"}, 403)
-        return {"job": cluster.claim(n, (await request.json()).get("kinds"))}
+        b = await request.json()
+        return {"job": cluster.claim(n, b.get("kinds"), b.get("metrics"))}
 
     @app.post("/api/cluster/w/jobs/{jid}/heartbeat")
     async def cluster_w_beat(request: Request, jid: str):
@@ -1951,7 +1988,7 @@ def create_app(scheduler: bool = True) -> FastAPI:
         if not n:
             return JSONResponse({"error": "unknown worker key"}, 403)
         b = await request.json()
-        return cluster.heartbeat(n, jid, b.get("pct"), b.get("msg"))
+        return cluster.heartbeat(n, jid, b.get("pct"), b.get("msg"), b.get("metrics"))
 
     @app.get("/api/cluster/w/jobs/{jid}/in/{name}")
     def cluster_w_input(request: Request, jid: str, name: str):
