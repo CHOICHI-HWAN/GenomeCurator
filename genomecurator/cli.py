@@ -145,7 +145,8 @@ def _main(argv=None):
     rs.add_argument("path")
     rs.add_argument("--force", action="store_true", help="replace an existing database")
     wk = sub.add_parser("worker", help="run a cluster worker: fetch jobs from the main server (--main), run them here and send the results back")
-    wk.add_argument("--main", required=True, help="address of the main server, e.g. http://192.168.0.10:8000")
+    wk.add_argument("--main", default="", help="address of the main server, e.g. http://192.168.0.10:8000")
+    wk.add_argument("--from-config", action="store_true", help="read the main server, key and BEAST path from the data folder (cluster/worker.json); how the app starts its worker process")
     wk.add_argument("--key", default=os.environ.get("GC_WORKER_KEY", ""), help="the worker key shown once when the worker was added on the Cluster page (or GC_WORKER_KEY)")
     wk.add_argument("--workdir", default="gc-worker", help="where the job copies are kept while a job runs")
     wk.add_argument("--beast", default=None, help="path of the beast program (default: the BEAST environment of this program, else PATH)")
@@ -417,7 +418,11 @@ def _main(argv=None):
             raise SystemExit(str(e))
         print(f"restored backup from {r['created']}: tables {r['tables']}, FASTA files {r['fasta_files']} -> {config.DATA_DIR}")
     elif args.cmd == "worker":
-        from .clusterworker import Worker
+        from .clusterworker import Worker, run_from_config
+        if args.from_config:
+            raise SystemExit(run_from_config())
+        if not args.main:
+            raise SystemExit("the address of the main server is needed (--main), or --from-config")
         if not args.key:
             raise SystemExit("a worker key is needed (--key or GC_WORKER_KEY); add the worker on the Cluster page of the main server")
         w = Worker(args.main, args.key, args.workdir, args.beast)

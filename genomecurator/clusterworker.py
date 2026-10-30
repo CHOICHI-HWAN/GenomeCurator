@@ -328,6 +328,26 @@ class Worker:
             _log.warning("job %s: results not delivered yet (%s); they stay here and are sent again", jid, e)
             return False
 
+    def _salvage(self, jd: Path, st: dict) -> bool:
+        """Did the run of an interrupted job finish on its own? -> True when every required output is there and the chain reached its length
+        (then `state.json` is marked finished, as the worker would have done)."""
+        job = st.get("job") or {}
+        spec, run = job.get("spec") or {}, jd / "run"
+        required = job.get("required") or KINDS.get(job.get("kind", ""), {}).get("outputs", [])
+        if not all((run / n).is_file() for n in required):
+            return False
+        want = int(spec.get("chain_length") or 0)
+        try:
+            last = int(float((run / "beast.log").read_text(encoding="utf-8").strip().splitlines()[-1].split("\t")[0]))
+        except (OSError, ValueError, IndexError):
+            return False
+        if want and last < want:
+            return False
+        outs = [{"name": n, "sha256": sha256(run / n), "bytes": (run / n).stat().st_size}
+                for n in (KINDS.get(job.get("kind", ""), {}).get("outputs") or []) if (run / n).is_file()]
+        self._state(jd, phase="finished", outputs=outs, seconds=st.get("seconds"))
+        return True
+
     def resume(self) -> None:
         """Finish what an earlier run of this worker left behind. Jobs running in this process right now are not touched."""
         for jd in sorted((self.work / "jobs").glob("*")):
@@ -340,8 +360,15 @@ class Worker:
                 continue
             if st.get("phase") in ("finished", "failed"):
                 self.deliver(jd)
+                continue
+            # interrupted while running (the worker was restarted): the run itself may have finished anyway, since it is its own
+            # process. Keep what is complete instead of throwing hours of computing away; otherwise let the main server hand it out again.
+            done = self._salvage(jd, st)
+            if done:
+                _log.info("job %s had finished while this worker was away; delivering it", jd.name)
+                self.deliver(jd)
             else:
-                shutil.rmtree(jd, ignore_errors=True)        # interrupted while running: the main server hands the job out again
+                shutil.rmtree(jd, ignore_errors=True)
 
     # ---- loop
     def _run_and_record(self, job: dict) -> None:
@@ -448,6 +475,108 @@ def save_config(cfg: dict) -> None:
 
 _sub: dict = {"worker": None, "thread": None, "join": None}
 
+# A worker started from the app runs as its own process, so that restarting the app (an update, a crash) does not stop the
+# computing it is doing; the app finds it again through a PID file and reads its state from a status file. Tests run it in-process.
+IN_PROCESS = os.environ.get("GC_WORKER_IN_PROCESS") == "1"
+
+
+def _pid_path() -> Path:
+    from . import config
+    return config.DATA_DIR / "cluster" / "worker.pid"
+
+
+def _status_path() -> Path:
+    from . import config
+    return config.DATA_DIR / "cluster" / "worker_status.json"
+
+
+def _worker_pid() -> int | None:
+    """The PID of the worker process of this data folder, when it is alive (a stale PID file, or a PID reused by another program, gives None)."""
+    try:
+        pid = int(_pid_path().read_text().strip())
+    except (OSError, ValueError):
+        return None
+    try:
+        os.kill(pid, 0)
+    except (ProcessLookupError, PermissionError, OSError):
+        return None
+    try:
+        cmd = subprocess.run(["ps", "-p", str(pid), "-o", "command="], capture_output=True, text=True, timeout=5).stdout
+    except Exception:
+        cmd = ""
+    return pid if ("genomecurator" in cmd and "worker" in cmd) else None
+
+
+def _spawn_worker() -> int:
+    """Start the worker as a separate process (its own session: it outlives the app). -> its PID."""
+    import sys
+    from . import config
+    log = config.DATA_DIR / "cluster" / "worker.log"
+    log.parent.mkdir(parents=True, exist_ok=True)
+    env = dict(os.environ, GC_DATA_DIR=str(config.DATA_DIR))
+    with open(log, "a") as lf:
+        p = subprocess.Popen([sys.executable, "-m", "genomecurator", "worker", "--from-config"], stdout=lf, stderr=subprocess.STDOUT, stdin=subprocess.DEVNULL,
+                             env=env, close_fds=True, **({"start_new_session": True} if os.name == "posix" else {}))
+    _pid_path().write_text(str(p.pid))
+    return p.pid
+
+
+def _apply_config(w: "Worker", cfg: dict, key: str) -> None:
+    """What the app changed in worker.json while this process runs: switched off (or another key) stops it, Stop/Resume pauses it."""
+    if not cfg.get("enabled") or cfg.get("key") != key:
+        w.stop.set()
+    (w.paused.set if cfg.get("paused") else w.paused.clear)()
+
+
+def _write_status(w: "Worker") -> None:
+    try:
+        jobs = [dict(v) for v in list(w.jobs.values())]
+        data = {"pid": os.getpid(), "at": time.strftime("%Y-%m-%dT%H:%M:%S"), "status": dict(w.status), "jobs": jobs, "history": list(w.history), "beast": w.beast}
+        _status_path().parent.mkdir(parents=True, exist_ok=True)
+        tmp = _status_path().with_suffix(".tmp")
+        tmp.write_text(json.dumps(data, default=str))
+        os.replace(tmp, _status_path())
+    except Exception:
+        _log.debug("could not write the worker status", exc_info=True)
+
+
+def run_from_config() -> int:
+    """`genomecurator worker --from-config`: the worker process the app starts. Reads the main server, key and BEAST path from worker.json,
+    follows changes to it (switched off, paused) and reports its state to the app through a status file."""
+    import signal
+    cfg = load_config()
+    if not (cfg.get("enabled") and cfg.get("key") and cfg.get("main")):
+        print("the worker is not switched on (worker.json)")
+        return 1
+    other = _worker_pid()
+    if other and other != os.getpid():
+        print(f"a worker for this data folder already runs (pid {other})")
+        return 0
+    _pid_path().parent.mkdir(parents=True, exist_ok=True)
+    _pid_path().write_text(str(os.getpid()))
+    key = cfg["key"]
+    w = Worker(cfg["main"], key, _workdir(), cfg.get("beast"))
+    if cfg.get("paused"):
+        w.paused.set()
+    signal.signal(signal.SIGTERM, lambda *a: w.stop.set())
+
+    def tick():
+        while not w.stop.is_set():
+            _apply_config(w, load_config(), key)
+            _write_status(w)
+            w.stop.wait(3)
+    threading.Thread(target=tick, daemon=True, name="worker-config").start()
+    try:
+        w.serve()
+    finally:
+        try:
+            if _pid_path().read_text().strip() == str(os.getpid()):
+                _pid_path().unlink()
+        except OSError:
+            pass
+        _status_path().unlink(missing_ok=True)
+    return 0
+
 
 def _workdir() -> Path:
     from . import config
@@ -466,16 +595,30 @@ def local_env(beast: str | None = None, fresh: bool = False) -> dict:
 
 def sub_status() -> dict:
     cfg, w = load_config(), _sub["worker"]
-    running = bool(w and _sub["thread"] and _sub["thread"].is_alive())
     jt = _sub["join"]
+    if IN_PROCESS or w:
+        running = bool(w and _sub["thread"] and _sub["thread"].is_alive())
+        live = {"status": w.status, "beast": w.beast, "history": w.history, "jobs": list(w.jobs.values())} if running else {}
+    else:
+        running = _worker_pid() is not None
+        try:
+            st = json.loads(_status_path().read_text()) if running else {}
+        except (OSError, ValueError):
+            st = {}
+        live = {"status": st.get("status") or {"state": "starting"}, "beast": st.get("beast"), "history": st.get("history") or [], "jobs": st.get("jobs") or [],
+                "pid": st.get("pid")} if running else {}
     from . import clustershell
     return {"enabled": bool(cfg.get("enabled")), "running": running, "paused": bool(cfg.get("paused")), "shell": bool(cfg.get("shell")),
             "shell_supported": clustershell.supported(), "shell_sessions": list(clustershell.sessions.values()), "main": cfg.get("main", ""), "has_key": bool(cfg.get("key")),
             "join": {"state": cfg.get("join_state"), "id": cfg.get("join_id"), "error": cfg.get("join_error"), "waiting": bool(jt and jt.is_alive())},
-            **({"status": w.status, "beast": w.beast, "history": w.history} if running else {})}
+            **live}
 
 
 def _start_worker(cfg: dict) -> None:
+    if not IN_PROCESS:
+        if _worker_pid() is None:              # one worker per data folder; a running one reads worker.json by itself
+            _spawn_worker()
+        return
     w = Worker(cfg["main"], cfg["key"], _workdir(), cfg.get("beast"))
     if cfg.get("paused"):
         w.paused.set()
@@ -602,6 +745,7 @@ def sub_stop(wait: bool = False, forget: bool = False) -> dict:
         w.stop.set()
         if wait and t:
             t.join(15)
+    pid = None if IN_PROCESS else _worker_pid()
     if _sub.get("join_stop"):
         _sub["join_stop"].set()
     _sub["worker"] = _sub["thread"] = None
@@ -615,6 +759,17 @@ def sub_stop(wait: bool = False, forget: bool = False) -> dict:
             for k in ("key", "join_id", "join_secret", "join_state"):
                 cfg.pop(k, None)
         save_config(cfg)
+    if pid:                                    # the process sees `enabled: false` within a few seconds; make sure it goes
+        import signal
+        for _ in range(40 if wait else 0):
+            if _worker_pid() is None:
+                break
+            time.sleep(0.5)
+        if _worker_pid():
+            try:
+                os.kill(pid, signal.SIGTERM)
+            except OSError:
+                pass
     return sub_status()
 
 

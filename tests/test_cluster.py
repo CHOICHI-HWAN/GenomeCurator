@@ -15,9 +15,14 @@ OK_ENV = {"ok": True, "checks": [{"name": "BEAST", "ok": True, "detail": "BEAST 
 
 
 @pytest.fixture(autouse=True)
-def _environment_passes(monkeypatch):
-    """The stand-in BEAST has no BEAGLE library next to it; the environment check itself is tested on its own below."""
+def _environment_passes(tmp_path, monkeypatch):
+    """The stand-in BEAST has no BEAGLE library next to it; the environment check itself is tested on its own below.
+    Every test works in its own data folder: the clean-up below writes the worker settings, and must never reach the real ones."""
+    from genomecurator import config
+    monkeypatch.setattr(config, "DATA_DIR", tmp_path)
+    monkeypatch.setattr(config, "DB_PATH", tmp_path / "t.db")
     monkeypatch.setattr(_cw, "env_check", lambda beast, workdir: OK_ENV)
+    monkeypatch.setattr(_cw, "IN_PROCESS", True)           # the worker as a thread of the test (the separate process is tested on its own)
     _cw._env_cache.update({"at": 0.0, "env": None})
     yield
     _cw.sub_stop(wait=True)
@@ -722,3 +727,81 @@ def test_a_worker_fills_its_cores_with_several_jobs(tmp_path, monkeypatch):
     c.hello(small, {"kinds": ["beast"], "cpus": 8})
     assert c.claim(small)["id"] == ids[3]                     # the last one goes to the other worker
     assert c.claim(small) is None
+
+
+def test_a_run_that_finished_while_the_worker_was_away_is_delivered_not_repeated(tmp_path, monkeypatch):
+    """The run is its own process: restarting the worker must not throw away a chain that completed meanwhile."""
+    c = _env(tmp_path, monkeypatch)
+    from genomecurator import web
+    srv, port = _serve(web.create_app(scheduler=False))
+    try:
+        key = c.create_node("w")["key"]
+        d = _pkg(tmp_path)
+        jid = c.submit_beast(d)
+        n = c.authenticate(key)
+        job = c.claim(n)                                       # the job is out with the worker
+        w = _cw.Worker(f"http://127.0.0.1:{port}", key, tmp_path / "wk", None)
+        jd = tmp_path / "wk" / "jobs" / jid
+        (jd / "run").mkdir(parents=True)
+        (jd / "run" / "beast.log").write_text("state\tposterior\n0\t-1\n1000\t-1\n")      # chain_length of _pkg is 1000
+        for f in ("beast.trees", "beast.ops", "beast.screen.log"):
+            (jd / "run" / f).write_text(f)
+        (jd / "state.json").write_text(json.dumps({"phase": "running", "job": job}))
+        w.resume()
+        assert c.get_job(jid)["state"] == "done" and not jd.exists()
+        assert (d / "beast.trees").read_text() == "beast.trees"
+        # a chain that did not reach its length is not salvaged
+        jid2 = c.submit_beast(_pkg(tmp_path, "half"))
+        job2 = c.claim(n)
+        jd2 = tmp_path / "wk" / "jobs" / jid2
+        (jd2 / "run").mkdir(parents=True)
+        (jd2 / "run" / "beast.log").write_text("state\tposterior\n0\t-1\n400\t-1\n")
+        for f in ("beast.trees", "beast.ops", "beast.screen.log"):
+            (jd2 / "run" / f).write_text(f)
+        (jd2 / "state.json").write_text(json.dumps({"phase": "running", "job": job2}))
+        w.resume()
+        assert not jd2.exists() and c.get_job(jid2)["state"] == "running"     # left to the main server's grace period
+    finally:
+        srv.should_exit = True
+
+
+
+def test_a_worker_started_from_the_app_is_a_separate_process_found_again_after_a_restart(tmp_path, monkeypatch):
+    """Restarting the app must not stop the computing: the worker runs as its own process, once per data folder."""
+    _env(tmp_path, monkeypatch)
+    monkeypatch.setattr(_cw, "IN_PROCESS", False)
+    started = []
+
+    class P:
+        pid = 424242
+    monkeypatch.setattr(_cw.subprocess, "Popen", lambda cmd, **kw: started.append((cmd, kw)) or P())
+    alive = {"pid": None}
+    monkeypatch.setattr(_cw, "_worker_pid", lambda: alive["pid"])
+    cfg = {"main": "http://127.0.0.1:8001", "key": "k" * 30, "enabled": True}
+    _cw.save_config(cfg)
+    _cw._start_worker(cfg)
+    assert len(started) == 1 and started[0][0][-2:] == ["worker", "--from-config"]
+    assert started[0][1].get("start_new_session") is True                     # its own session: it outlives the app
+    assert _cw._pid_path().read_text() == "424242"
+    alive["pid"] = 424242                                                      # the app restarts; the worker is still there
+    _cw._start_worker(cfg)
+    assert len(started) == 1                                                   # found again, not started twice
+    _cw._status_path().write_text(json.dumps({"pid": 424242, "status": {"state": "running"}, "jobs": [{"id": "j1", "pct": 40.0}], "history": [], "beast": "b"}))
+    st = _cw.sub_status()
+    assert st["running"] and st["jobs"][0]["pct"] == 40.0 and st["status"]["state"] == "running"
+
+
+def test_the_worker_process_follows_switch_off_and_pause_from_the_app(tmp_path, monkeypatch):
+    _env(tmp_path, monkeypatch)
+    w = _cw.Worker("http://127.0.0.1:9", "key1", tmp_path / "wk", None)
+    _cw._apply_config(w, {"enabled": True, "key": "key1", "paused": True}, "key1")
+    assert w.paused.is_set() and not w.stop.is_set()
+    _cw._apply_config(w, {"enabled": True, "key": "key1", "paused": False}, "key1")
+    assert not w.paused.is_set()
+    _cw._apply_config(w, {"enabled": True, "key": "another", "paused": False}, "key1")
+    assert w.stop.is_set()                                                     # a new key means a new worker
+    w2 = _cw.Worker("http://127.0.0.1:9", "key1", tmp_path / "wk2", None)
+    _cw._apply_config(w2, {"enabled": False, "key": "key1"}, "key1")
+    assert w2.stop.is_set()
+    _cw._write_status(w2)
+    assert json.loads(_cw._status_path().read_text())["status"]["state"] == "starting"
