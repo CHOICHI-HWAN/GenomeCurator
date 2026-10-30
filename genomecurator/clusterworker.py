@@ -168,8 +168,9 @@ class Worker:
         self.beast, self.poll, self.beat, self.retry = find_beast(beast), poll, beat, retry
         self.stop = threading.Event()
         self.status = {"state": "starting", "job": None, "error": None, "since": time.strftime("%Y-%m-%dT%H:%M:%S")}
-        self.history: list[dict] = []
-        self.paused = threading.Event()          # Stop button of the sub-server page: give the running job back, take no new work           # the last jobs this worker ran (shown on its page)
+        self.jobs: dict[str, dict] = {}          # jobs running here right now: id -> {label, pct, msg, since}
+        self.history: list[dict] = []            # the last jobs this worker ran (shown on its page)
+        self.paused = threading.Event()          # Stop button of the sub-server page: give running jobs back, take no new work
         self.work.mkdir(parents=True, exist_ok=True)
 
     def metrics(self) -> dict:
@@ -182,7 +183,13 @@ class Worker:
         return m
 
     def _set(self, state: str, job: str | None = None, error: str | None = None) -> None:
+        """The state of the worker itself; each job keeps its own entry in `self.jobs`."""
         self.status = {"state": state, "job": job, "error": error, "since": time.strftime("%Y-%m-%dT%H:%M:%S")}
+
+    def _job_state(self, jid: str, **kw) -> dict:
+        e = self.jobs.setdefault(jid, {"id": jid, "since": time.strftime("%Y-%m-%dT%H:%M:%S"), "pct": None, "msg": None, "label": jid})
+        e.update(kw)
+        return e
 
     # ---- one job
     def _state(self, jd: Path, **kw) -> dict:
@@ -208,10 +215,9 @@ class Worker:
         (jd / "in").mkdir(parents=True)
         (jd / "run").mkdir()
         self._state(jd, phase="running", job=job)
-        self._outcome = None
+        t0 = time.time()
+        self._job_state(jid, label=job.get("label") or jid, outcome=None, t0=t0)
         self._set("running", jid)
-        self.status["label"] = job.get("label") or jid
-        self._t0 = time.time()
         try:
             for i in job["inputs"]:
                 dest = jd / "in" / i["name"]
@@ -249,7 +255,7 @@ class Worker:
                     continue
                 last_beat = time.time()
                 pct, msg = self._progress(jd, int(spec.get("chain_length") or 0))
-                self.status.update({"pct": pct, "msg": msg})
+                self._job_state(jid, pct=pct, msg=msg)
                 try:
                     if not self.main.json("POST", f"/api/cluster/w/jobs/{jid}/heartbeat", {"pct": pct, "msg": msg, "metrics": self.metrics()}).get("continue", False):
                         gone.set()
@@ -264,7 +270,7 @@ class Worker:
         if gone.is_set():
             return self._discard(jd)
         if self.paused.is_set():
-            self._outcome = "stopped"
+            self._job_state(jid, outcome="stopped")
             try:
                 self.main.json("POST", f"/api/cluster/w/jobs/{jid}/release", {})
             except Exception:
@@ -277,11 +283,11 @@ class Worker:
             return self._fail(jd, jid, f"BEAST exited with code {proc.returncode}: {tail.strip()}")
         outs = [{"name": n, "sha256": sha256(jd / "run" / n), "bytes": (jd / "run" / n).stat().st_size} for n in KINDS["beast"]["outputs"] if (jd / "run" / n).is_file()]
         self._state(jd, phase="finished", outputs=outs, seconds=round(time.time() - t0))
-        self._outcome = "done"
+        self._job_state(jid, outcome="done")
         self.deliver(jd)
 
     def _fail(self, jd: Path, jid: str, why: str) -> None:
-        self._outcome = "failed"
+        self._job_state(jid, outcome="failed")
         _log.warning("job %s failed: %s", jid, why)
         try:
             self.main.json("POST", f"/api/cluster/w/jobs/{jid}/fail", {"error": why})
@@ -293,8 +299,9 @@ class Worker:
         shutil.rmtree(jd, ignore_errors=True)
 
     def _discard(self, jd: Path) -> None:
-        if getattr(self, "_outcome", None) not in ("failed", "done"):
-            self._outcome = "stopped"
+        jid = jd.name
+        if (self.jobs.get(jid) or {}).get("outcome") not in ("failed", "done"):
+            self._job_state(jid, outcome="stopped")
         shutil.rmtree(jd, ignore_errors=True)
 
     def deliver(self, jd: Path) -> bool:
@@ -322,7 +329,10 @@ class Worker:
             return False
 
     def resume(self) -> None:
+        """Finish what an earlier run of this worker left behind. Jobs running in this process right now are not touched."""
         for jd in sorted((self.work / "jobs").glob("*")):
+            if jd.name in self.jobs:
+                continue
             try:
                 st = json.loads((jd / "state.json").read_text())
             except (OSError, ValueError):
@@ -334,17 +344,32 @@ class Worker:
                 shutil.rmtree(jd, ignore_errors=True)        # interrupted while running: the main server hands the job out again
 
     # ---- loop
+    def _run_and_record(self, job: dict) -> None:
+        """One job, in its own thread: run it, then keep what happened for the sub-server page."""
+        jid = job["id"]
+        try:
+            self.run_job(job)
+        except Exception as e:                      # never let one job take the worker down
+            _log.warning("job %s ended with an error: %s", jid, e, exc_info=True)
+            self._job_state(jid, outcome="failed")
+        e = self.jobs.pop(jid, {})
+        self.history = ([{"id": jid, "label": e.get("label") or jid, "seconds": round(time.time() - (e.get("t0") or time.time())),
+                          "result": e.get("outcome") or "?", "ended": time.strftime("%Y-%m-%dT%H:%M:%S")}] + self.history)[:10]
+        self._set("running" if self.jobs else "idle", next(iter(self.jobs), None))
+
     def serve(self) -> None:
         caps = capabilities(self.beast)
         _log.info("worker ready: %s", caps)
         known, env_at = False, 0.0
+        threads: list[threading.Thread] = []
         while not self.stop.is_set():
+            threads = [t for t in threads if t.is_alive()]
             try:
                 if time.time() - env_at > ENV_EVERY:
                     env_at = time.time()
-                    env = env_check(self.beast, self.work)
                     from . import netdata
                     nd = netdata.probe()
+                    env = env_check(self.beast, self.work)
                     if env["ok"] != caps.get("env", {}).get("ok") or nd.get("ok") != caps.get("netdata", {}).get("ok"):
                         known = False                   # tell the main server about the change
                     caps["env"], caps["netdata"] = env, nd
@@ -359,7 +384,6 @@ class Worker:
                     self.stop.wait(self.poll)
                     continue
                 if not caps["env"]["ok"]:
-                    # the environment broke after approval: take no work, keep reporting
                     bad = ", ".join(f"{c['name']}: {c['detail']}" for c in caps["env"]["checks"] if not c["ok"])
                     if self.status["state"] != "env_broken":
                         self._set("env_broken", error=bad)
@@ -373,12 +397,14 @@ class Worker:
                     continue
                 job = got.get("job")
                 if job:
-                    self.run_job(job)
-                    self.history = ([{"id": job["id"], "label": job.get("label") or job["id"], "seconds": round(time.time() - getattr(self, "_t0", time.time())),
-                                      "result": getattr(self, "_outcome", "?"), "ended": time.strftime("%Y-%m-%dT%H:%M:%S")}] + self.history)[:10]
-                    self._set("idle")
+                    # how many jobs fit on this machine is the main server's decision; run each of them in its own thread
+                    t = threading.Thread(target=self._run_and_record, args=(job,), daemon=True, name=f"gc-job-{job['id']}")
+                    threads.append(t)
+                    t.start()
+                    self._set("running", job["id"])
+                    self.stop.wait(1.0)
                     continue
-                if self.status["state"] != "idle":
+                if not self.jobs and self.status["state"] != "idle":
                     self._set("idle")
             except Gone as e:
                 _log.error("the main server refused this worker (%s); check the key", e)
@@ -392,6 +418,8 @@ class Worker:
                 self.stop.wait(self.retry)
                 continue
             self.stop.wait(self.poll)
+        for t in threads:
+            t.join(5)
         _log.info("worker stopped")
 
 
@@ -588,6 +616,63 @@ def sub_stop(wait: bool = False, forget: bool = False) -> dict:
                 cfg.pop(k, None)
         save_config(cfg)
     return sub_status()
+
+
+def _points_here(url: str | None, port: str) -> bool:
+    """Does this address lead back to this program? Any address of this machine counts, not only 127.0.0.1: a server started with
+    `--host 10.0.0.1` is reached at that address by its own browser too. An address can be bound only by the machine that owns it."""
+    import socket
+    import urllib.parse
+    if not url:
+        return False
+    u = urllib.parse.urlparse(url.rstrip("/"))
+    if str(u.port or 80) != str(port):
+        return False
+    host = (u.hostname or "").strip("[]")
+    if host in ("127.0.0.1", "::1", "localhost"):
+        return True
+    for fam in (socket.AF_INET, socket.AF_INET6):
+        try:
+            s = socket.socket(fam, socket.SOCK_STREAM)
+            try:
+                s.bind((host, 0))
+                return True
+            finally:
+                s.close()
+        except OSError:
+            continue
+    return False
+
+
+def main_worker_autostart() -> None:
+    """On the main server: make this machine a worker of itself unless it is already a worker of another main server, or the person said no
+    (`GC_MAIN_WORKER=0`, or they revoked it, or they switched it off on the sub-server page)."""
+    if os.environ.get("GC_MAIN_WORKER") == "0":
+        return
+    cfg = load_config()
+    port = os.environ.get("GC_SERVE_PORT") or "8000"
+    is_mine = _points_here(cfg.get("main"), port)
+    if cfg.get("key") and not is_mine:
+        return                                   # this machine serves another main server: leave it alone
+    from . import cluster
+    stale = bool(cfg.get("key")) and is_mine and cluster.authenticate(cfg["key"]) is None
+    if is_mine and cfg.get("key") and cfg.get("enabled") is False and not stale:
+        return                                   # switched off here on purpose (a key that no longer works is not a choice, it is leftover)
+    try:
+        node = cluster.local_node()
+    except Exception:
+        _log.warning("could not register the main server as a worker", exc_info=True)
+        return
+    if node:
+        cfg.update({"main": f"http://127.0.0.1:{port}", "key": node["key"], "name": node["name"], "enabled": True, "join_state": "approved"})
+        save_config(cfg)
+        _log.info("the main server also works as %s", node["name"])
+    cfg = load_config()
+    if cfg.get("enabled") and cfg.get("key") and _points_here(cfg.get("main"), port):
+        try:
+            sub_start()
+        except Exception:
+            _log.warning("could not start the local worker", exc_info=True)
 
 
 def sub_autostart() -> None:

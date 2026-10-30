@@ -658,3 +658,67 @@ def test_the_sub_server_page_says_which_machine_it_is(tmp_path, monkeypatch):
     assert j["host"] == socket.gethostname() and j["workers_here"] == 0
     c.create_node("w1")
     assert cl.get("/api/cluster/sub").json()["workers_here"] == 1                   # the page can warn that this machine is also a main server
+
+
+def test_the_main_server_works_as_a_worker_of_itself_by_default(tmp_path, monkeypatch):
+    """It holds the data, so there is no reason for it to idle; the person can still revoke it or switch it off."""
+    c = _env(tmp_path, monkeypatch)
+    import socket
+    from genomecurator.db import connect
+    monkeypatch.setenv("GC_SERVE_PORT", "8001")
+    monkeypatch.setattr(_cw, "sub_start", lambda *a, **k: {"started": True})      # no real worker thread in the test
+    _cw.main_worker_autostart()
+    nodes = c.list_nodes()
+    assert [n["name"] for n in nodes] == [socket.gethostname()] and nodes[0]["allow_private"] == 1
+    cfg = _cw.load_config()
+    assert cfg["enabled"] and cfg["main"] == "http://127.0.0.1:8001" and c.authenticate(cfg["key"])["id"] == nodes[0]["id"]
+    _cw.main_worker_autostart()
+    assert len(c.list_nodes()) == 1                                               # not created again on the next start
+    c.revoke_node(nodes[0]["id"])
+    _cw.main_worker_autostart()
+    assert c.list_nodes() == []                                                   # a revoked local worker stays revoked
+    # an address of this machine also points here, not only 127.0.0.1
+    assert _cw._points_here("http://127.0.0.1:8001", "8001") and _cw._points_here("http://localhost:8001", "8001")
+    assert not _cw._points_here("http://10.0.0.251:8001", "8001") and not _cw._points_here("http://127.0.0.1:9999", "8001")
+    # a machine that serves another main server is left alone
+    _cw.save_config({"main": "http://10.0.0.251:8001", "key": "k" * 20, "enabled": True})
+    con = connect(); con.execute("DELETE FROM app_meta WHERE key='cluster_local_worker'"); con.commit()
+    _cw.main_worker_autostart()
+    assert c.list_nodes() == [] and _cw.load_config()["main"] == "http://10.0.0.251:8001"
+    monkeypatch.setenv("GC_MAIN_WORKER", "0")
+    _cw.save_config({})
+    _cw.main_worker_autostart()
+    assert c.list_nodes() == []
+
+
+def test_a_local_worker_whose_key_no_longer_works_is_registered_again(tmp_path, monkeypatch):
+    """Leftover settings from an earlier cluster (switched off, key revoked) must not keep the main server idle for ever."""
+    c = _env(tmp_path, monkeypatch)
+    import socket
+    monkeypatch.setenv("GC_SERVE_PORT", "8001")
+    monkeypatch.setattr(_cw, "sub_start", lambda *a, **k: {"started": True})
+    _cw.save_config({"main": "http://127.0.0.1:8001", "key": "dead" * 8, "enabled": False, "name": "old"})
+    _cw.main_worker_autostart()
+    assert [n["name"] for n in c.list_nodes()] == [socket.gethostname()]
+    assert c.authenticate(_cw.load_config()["key"]) is not None and _cw.load_config()["enabled"] is True
+
+
+def test_a_worker_fills_its_cores_with_several_jobs(tmp_path, monkeypatch):
+    """One job per machine wastes a 32-core server; the main server hands out work until a worker's cores are taken."""
+    c = _env(tmp_path, monkeypatch)
+    n = c.authenticate(c.create_node("big")["key"])
+    c.hello(n, {"kinds": ["beast"], "cpus": 32})
+    ids = []
+    for i in range(4):
+        d = _pkg(tmp_path, f"j{i}")
+        (d / "settings.json").write_text(json.dumps({"seed": 1, "threads": 8, "chain_length": 1000, "tag": f"j{i}", "tip_names": []}))
+        ids.append(c.submit_beast(d))
+    got = [c.claim(n) for _ in range(4)]
+    assert [g["id"] for g in got if g] == ids[:3]            # 32 cores - 4 reserved = 28, three jobs of 8 threads fit
+    assert got[3] is None and c.get_job(ids[3])["state"] == "queued"
+    node = c.list_nodes()[0]
+    assert len(node["running_jobs"]) == 3 and node["cpus_busy"] == 24 and node["cpus_free"] == 4
+    small = c.authenticate(c.create_node("small")["key"])
+    c.hello(small, {"kinds": ["beast"], "cpus": 8})
+    assert c.claim(small)["id"] == ids[3]                     # the last one goes to the other worker
+    assert c.claim(small) is None

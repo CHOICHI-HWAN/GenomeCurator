@@ -25,7 +25,9 @@ from .db import audit_now, connect
 
 _log = log.get("cluster")
 LEASE = int(os.environ.get("GC_CLUSTER_LEASE", "600"))          # grace: seconds without a heartbeat before a running job is taken as failed there and handed out again
-STALE = int(os.environ.get("GC_CLUSTER_STALE", "90"))           # seconds without a heartbeat before a running job is shown as "not answering" (grace starts)
+STALE = int(os.environ.get("GC_CLUSTER_STALE", "90"))
+RESERVE_CPUS = int(os.environ.get("GC_CLUSTER_RESERVE_CPUS", "4"))   # cores left free on every worker, so the machine stays usable
+DEFAULT_THREADS = 8                                              # assumed when a job or a worker does not say           # seconds without a heartbeat before a running job is shown as "not answering" (grace starts)
 LOG_MAX = 300
 # the only commands a worker runs; {x} are filled from the job's spec by the worker, never from free text
 KINDS = {"beast": {"label": "BEAST", "inputs": ["beast.xml"], "outputs": ["beast.log", "beast.trees", "beast.ops", "beast.screen.log"], "required": ["beast.log", "beast.trees"]}}
@@ -134,7 +136,9 @@ def list_nodes() -> list[dict]:
     con = connect()
     try:
         rows = [dict(r) for r in con.execute("SELECT * FROM cluster_node WHERE revoked=0 ORDER BY name")]
-        busy = {r["node_id"]: _public(dict(r)) for r in con.execute("SELECT * FROM cluster_job WHERE state='running'")}
+        busy: dict[str, list] = {}
+        for r in con.execute("SELECT * FROM cluster_job WHERE state='running' ORDER BY claimed"):
+            busy.setdefault(r["node_id"], []).append(_public(dict(r)))
     finally:
         con.close()
     for r in rows:
@@ -143,10 +147,44 @@ def list_nodes() -> list[dict]:
         r["metrics"] = json.loads(r.pop("metrics_json", None) or "{}")
         r["paused"] = bool(r["metrics"].get("paused"))
         r["online"] = _online(r["last_seen"])
-        r["running"] = busy.get(r["id"])
+        jobs_here = busy.get(r["id"]) or []
+        r["running"] = jobs_here[0] if jobs_here else None     # kept for older pages
+        r["running_jobs"] = jobs_here
+        cpus = int(r["caps"].get("cpus") or 0)
+        r["cpus_busy"] = sum(int((j.get("spec") or {}).get("threads") or DEFAULT_THREADS) for j in jobs_here) or len(jobs_here) * DEFAULT_THREADS
+        r["cpus_free"] = max(0, cpus - RESERVE_CPUS - r["cpus_busy"]) if cpus else None
         env = r["caps"].get("env") or {}
         r["env_ok"] = env.get("ok")
     return rows
+
+
+def local_node() -> dict | None:
+    """The main server is a worker of itself by default: there is no reason for the machine that holds the data to sit idle while others compute.
+    Created once (private genomes allowed, since nothing leaves the machine) and remembered in `app_meta`; if it is revoked, it is not created again."""
+    import socket
+    con = connect()
+    try:
+        r = con.execute("SELECT value FROM app_meta WHERE key='cluster_local_worker'").fetchone()
+        if r:
+            n = con.execute("SELECT id, revoked FROM cluster_node WHERE id=?", (r[0],)).fetchone()
+            if n and not n["revoked"]:
+                return None                      # already there and working: nothing to do
+            if n:                                # the person revoked it: respect that
+                return None
+    finally:
+        con.close()
+    name = socket.gethostname() or "main"
+    try:
+        node = create_node(name, allow_private=True, note="the main server itself (local worker)")
+    except ValueError:                           # a worker of that name exists already (e.g. added by hand)
+        return None
+    con = connect()
+    try:
+        con.execute("INSERT OR REPLACE INTO app_meta(key, value) VALUES('cluster_local_worker', ?)", (node["id"],))
+        con.commit()
+    finally:
+        con.close()
+    return node
 
 
 # ---------------------------------------------------------------- join requests: a sub-server asks, the main server approves, the key is handed over once
@@ -311,6 +349,7 @@ def _public(j: dict, with_log: bool = False) -> dict:
         out["silent"] = round(silent)
         out["stale"] = silent >= STALE
         out["requeue_in"] = max(0, round(LEASE - silent)) if silent >= STALE else None
+    out["spec"] = json.loads(j.get("spec_json") or "{}")
     out["inputs"] = json.loads(j.get("inputs_json") or "[]")
     out["outputs"] = json.loads(j.get("outputs_json") or "[]")
     if with_log:
@@ -396,14 +435,21 @@ def claim(node: dict, kinds: list[str] | None = None, metrics: dict | None = Non
         if not kinds:
             con.commit()
             return None
-        busy = con.execute("SELECT 1 FROM cluster_job WHERE state='running' AND node_id=?", (node["id"],)).fetchone()
-        if busy:
+        caps = json.loads(con.execute("SELECT caps_json FROM cluster_node WHERE id=?", (node["id"],)).fetchone()[0] or "{}")
+        cpus = int(caps.get("cpus") or 0)
+        running = [json.loads(r[0] or "{}") for r in con.execute("SELECT spec_json FROM cluster_job WHERE state='running' AND node_id=?", (node["id"],))]
+        used = sum(int(x.get("threads") or DEFAULT_THREADS) for x in running)
+        free = (cpus - RESERVE_CPUS - used) if cpus else (0 if running else DEFAULT_THREADS)
+        if running and free < 1:
             con.commit()
-            return None                     # one job at a time per worker
+            return None                     # this worker's cores are taken
         q = "SELECT * FROM cluster_job WHERE state='queued' AND kind IN (%s)" % ",".join("?" * len(kinds))
         if not node["allow_private"]:
             q += " AND private=0"
         for j in con.execute(q + " ORDER BY created, rowid", kinds).fetchall():
+            want = int((json.loads(j["spec_json"] or "{}")).get("threads") or DEFAULT_THREADS)
+            if running and want > free:
+                continue                    # it would oversubscribe this machine; another worker can take it
             n = con.execute("UPDATE cluster_job SET state='running', node_id=?, claimed=?, heartbeat=?, attempts=attempts+1, pct=0, msg='assigned' WHERE id=? AND state='queued'",
                             (node["id"], _now(), _now(), j["id"])).rowcount
             if n:

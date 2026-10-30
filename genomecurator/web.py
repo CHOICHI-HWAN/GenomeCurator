@@ -191,6 +191,7 @@ def create_app(scheduler: bool = True) -> FastAPI:
     if scheduler:
         from . import clusterworker
         clusterworker.sub_autostart()      # a server that was activated as a sub-server stays one after a restart
+        clusterworker.main_worker_autostart()   # and the main server computes too, instead of idling while its workers do
 
     @app.middleware("http")
     async def other_machines_reach_the_cluster_only(request: Request, call_next):
