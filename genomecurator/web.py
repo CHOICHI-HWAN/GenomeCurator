@@ -1,6 +1,7 @@
 import json
 import os
 import time
+from xml.sax.saxutils import escape
 from pathlib import Path
 
 from fastapi import FastAPI, Form, Request, WebSocket, WebSocketDisconnect
@@ -199,12 +200,24 @@ def create_app(scheduler: bool = True) -> FastAPI:
         network where the whole app is meant to be shared; GC_SUB_PAGE_LAN=0 closes the sub-server page to other machines."""
         host = request.client.host if request.client else ""
         path = request.url.path
-        if host not in ("127.0.0.1", "::1", "localhost", "testclient") and os.environ.get("GC_ALLOW_REMOTE_UI") != "1" and not path.startswith("/api/cluster/w/"):
+        if not _is_self(request) and os.environ.get("GC_ALLOW_REMOTE_UI") != "1" and not path.startswith("/api/cluster/w/"):
             sub = path == "/cluster/sub" or path.startswith("/api/cluster/sub")
-            if sub and _is_lan(host) and os.environ.get("GC_SUB_PAGE_LAN") != "0":
+            lan_ok = _is_lan(host) and os.environ.get("GC_SUB_PAGE_LAN") != "0"
+            if sub and lan_ok:
                 pass
-            elif path == "/" and request.method == "GET" and _is_lan(host) and os.environ.get("GC_SUB_PAGE_LAN") != "0":
-                return RedirectResponse("/cluster/sub")
+            elif path == "/" and request.method == "GET" and lan_ok:
+                import socket
+                # NOT a redirect to the sub-server page: that page is about THIS machine, and sending another machine's browser
+                # there has it looking at the wrong server. Say which machine this is and let the person choose.
+                return HTMLResponse(f"""<!doctype html><meta charset="utf-8"><title>{escape(socket.gethostname())}</title>
+<body style="font:15px/1.6 system-ui,sans-serif;max-width:680px;margin:40px auto;padding:0 16px">
+<h2>{escape(socket.gethostname())} <span style="font-weight:400;color:#777">({escape(request.headers.get("host", ""))})</span></h2>
+<p>You are opening this server from another machine ({escape(host)}). Its own screens are available on that machine only.</p>
+<ul>
+<li><b>To make <i>this</i> machine ({escape(socket.gethostname())}) a sub-server:</b> <a href="/cluster/sub">open its sub-server page</a>.</li>
+<li><b>To make <i>your</i> machine a sub-server:</b> start the program there and open <code>http://localhost:8001/cluster/sub</code> on it.</li>
+<li><b>To administer the cluster:</b> open the app on the main server itself.</li>
+</ul></body>""", 200)
             else:
                 return JSONResponse({"error": "this machine may use the cluster only; open the app on the main server itself"}, 403)
         return await call_next(request)
@@ -1861,10 +1874,18 @@ def create_app(scheduler: bool = True) -> FastAPI:
         """-> an error response, or None. Creating keys and queueing work is the owner's business: refused from other machines by default."""
         if not _same_origin(request):
             return JSONResponse({"error": "cross-site request refused"}, 403)
-        host = request.client.host if request.client else ""
-        if host not in ("127.0.0.1", "::1", "localhost", "testclient") and os.environ.get("GC_CLUSTER_ADMIN_REMOTE") != "1":
+        if not _is_self(request) and os.environ.get("GC_CLUSTER_ADMIN_REMOTE") != "1":
             return JSONResponse({"error": "the cluster can be administered from the main server only"}, 403)
         return None
+
+    def _is_self(request: Request) -> bool:
+        """A request from the machine the server runs on: its client address is the address it was sent to (so `serve --host 10.0.0.1`
+        opened at http://10.0.0.1:8001 on that same machine counts as local, not as another machine)."""
+        host = request.client.host if request.client else ""
+        if host in ("127.0.0.1", "::1", "localhost", "testclient"):
+            return True
+        sent_to = (request.headers.get("host") or "").rsplit(":", 1)[0].strip("[]")
+        return bool(host) and host.strip("[]") == sent_to
 
     def _is_lan(host: str) -> bool:
         import ipaddress
@@ -1937,8 +1958,9 @@ def create_app(scheduler: bool = True) -> FastAPI:
     @app.get("/api/cluster/sub")
     def cluster_sub_status():
         from . import clusterworker, sysinfo
+        import socket
         return {**clusterworker.sub_status(), "metrics": sysinfo.snapshot(config.DATA_DIR), "install": clusterworker.install_state(), "env": clusterworker.local_env(),
-                "netdata": _local_netdata(), "version": __version__}
+                "netdata": _local_netdata(), "version": __version__, "host": socket.gethostname(), "workers_here": len(cluster.list_nodes())}
 
     _nd_cache: dict = {"at": 0.0, "v": None}
 

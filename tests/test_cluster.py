@@ -285,7 +285,8 @@ def test_same_network_machines_get_the_sub_server_page_only(tmp_path, monkeypatc
     from genomecurator import web
     app = web.create_app(scheduler=False)
     lan = TestClient(app, client=("192.168.0.20", 5000), follow_redirects=False)
-    assert lan.get("/").status_code in (302, 307) and lan.get("/").headers["location"] == "/cluster/sub"
+    r = lan.get("/")
+    assert r.status_code == 200 and "sub-server page" in r.text      # named, not silently redirected to this machine's page
     assert lan.get("/cluster/sub").status_code == 200
     s = lan.get("/api/cluster/sub").json()
     assert {"enabled", "running", "metrics", "install"} <= set(s) and s["metrics"]["cpus"] and "disk_free" in s["metrics"]
@@ -628,3 +629,32 @@ def test_netdata_streaming_guide_names_the_link_address_and_who_streams(tmp_path
         assert netdata.stream_key() == key                                       # made once
     finally:
         srv.shutdown()
+
+
+def test_a_browser_on_the_server_machine_is_not_treated_as_a_visitor(tmp_path, monkeypatch):
+    """`serve --host 10.0.0.1` opened at http://10.0.0.1:8001 on that same machine: the client address equals the address it was sent to."""
+    _env(tmp_path, monkeypatch)
+    from fastapi.testclient import TestClient
+    from genomecurator import web
+    app = web.create_app(scheduler=False)
+    own = TestClient(app, client=("10.0.0.1", 5000), headers={"host": "10.0.0.1:8001"}, follow_redirects=False)
+    assert own.get("/cluster").status_code == 200                                  # the main screens stay open on the server itself
+    assert own.post("/api/cluster/nodes", json={"name": "n1"}).status_code == 200   # and so does administration
+    other = TestClient(app, client=("10.0.0.2", 5000), headers={"host": "10.0.0.1:8001"}, follow_redirects=False)
+    assert other.get("/cluster").status_code == 403
+    r = other.get("/")
+    assert r.status_code == 200 and "sub-server page" in r.text                     # named, not redirected to this machine's sub-server page
+    assert "10.0.0.2" in r.text and "location" not in r.headers
+    assert other.post("/api/cluster/nodes", json={"name": "n2"}).status_code == 403
+
+
+def test_the_sub_server_page_says_which_machine_it_is(tmp_path, monkeypatch):
+    import socket
+    c = _env(tmp_path, monkeypatch)
+    from fastapi.testclient import TestClient
+    from genomecurator import web
+    cl = TestClient(web.create_app(scheduler=False))
+    j = cl.get("/api/cluster/sub").json()
+    assert j["host"] == socket.gethostname() and j["workers_here"] == 0
+    c.create_node("w1")
+    assert cl.get("/api/cluster/sub").json()["workers_here"] == 1                   # the page can warn that this machine is also a main server

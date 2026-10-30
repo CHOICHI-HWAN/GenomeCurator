@@ -18,7 +18,7 @@ button{padding:8px 16px;border:1px solid var(--acc);background:var(--acc);color:
 .bar i.hi{background:var(--warn)}.bar i.crit{background:var(--bad)}.bar i.job{background:var(--ok)}
 pre{margin:8px 0 0;max-height:210px;overflow:auto;background:var(--bg);border:1px solid var(--bd);border-radius:6px;padding:8px 10px;font:12px/1.5 Consolas,Menlo,monospace;white-space:pre-wrap;overflow-wrap:anywhere}
 </style></head><body><main>
-<h1>서브서버 <span id="hn" class="mut"></span></h1>
+<h1 id="hn">서브서버</h1><div id="mainwarn" class="card" style="display:none;border-color:var(--warn);color:var(--warn)"></div>
 <div class="mut">이 서버를 메인 서버의 작업을 나누어 처리하는 서브서버로 쓸 수 있습니다. 메인 서버의 클러스터 화면에서 이 서버를 워커로 추가하면 받는 <b>키</b>와 메인 주소가 필요합니다.</div>
 
 <div class="card"><div class="row"><h2 style="margin:0">상태</h2><span id="st" class="pill off">확인 중</span><span id="stx" class="mut"></span>
@@ -101,10 +101,14 @@ async function load(){let j;try{j=await (await fetch("/api/cluster/sub")).json()
  $("bx").textContent=b.ok?"":((j.install||{}).installer?"":"mamba/conda가 없어 이 화면에서 설치할 수 없습니다");
  $("inst").style.display=!b.ok&&(j.install||{}).installer?"":"none";$("inst").disabled=!!busy;
  if(ij){$("il").style.display="block";$("il").innerHTML=(ij.error?'<span class="err">'+esc(ij.error)+"</span>\n":"")+(ij.log||[]).slice(-40).map(x=>esc(x.t+"  "+x.msg)).join("\n");$("il").scrollTop=1e9}
+ $("hn").innerHTML="서브서버 <span class=\"mut\" style=\"font-size:15px;font-weight:400\">"+esc(j.host||"")+" · "+esc(location.host)+"</span>";
+ const mw=$("mainwarn");
+ if(j.workers_here){mw.style.display="block";mw.innerHTML="<b>이 서버("+esc(j.host||"")+")는 메인 서버이기도 합니다.</b> 이 화면은 <b>이 컴퓨터</b>를 서브서버로 쓰기 위한 것입니다. 다른 컴퓨터를 붙이려면 그 컴퓨터에서 프로그램을 띄우고 그쪽의 <code>/cluster/sub</code>를 여세요."}
+ else mw.style.display="none";
  const nd=j.netdata||{};$("nds").innerHTML=nd.ok?'Netdata '+esc(nd.version||"")+' · <a href="http://'+location.hostname+':'+(nd.port||19999)+'" target="_blank" style="color:var(--acc)">대시보드 ↗</a>'+(nd.claimed?' · <span class="warn">Netdata Cloud에 연결되어 있습니다</span>':''):'Netdata 없음 (기록 그래프는 Netdata가 있을 때만)';
  SHELL=!!j.shell;$("shs").className="pill "+(j.shell?"on":"off");$("shs").textContent=!j.shell_supported?"이 OS에서는 지원하지 않음":j.shell?"허용됨":"꺼짐";$("shb").textContent=j.shell?"끄기":"허용";$("shb").disabled=!j.shell_supported;
  $("shl").textContent=(j.shell_sessions||[]).length?"지금 접속 중: "+j.shell_sessions.map(x=>x.from+" ("+x.since.replace("T"," ")+"부터)").join(", "):"";
  $("ver").textContent="GenomeCurator "+(j.version||"")}
 async function hist(){try{const h=await (await fetch("/api/cluster/sub/history?minutes="+$("hr").value)).json();miniCharts($("hc"),h)}catch(e){$("hc").textContent="기록을 불러오지 못했습니다."}}
-$("hn").textContent=location.host;load();hist();setInterval(load,3000);setInterval(hist,30000);
+load();hist();setInterval(load,3000);setInterval(hist,30000);
 </script></body></html>
