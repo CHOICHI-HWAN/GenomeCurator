@@ -602,15 +602,28 @@ def combine_runs(clock_run: dict, tags: list[str], out_tag: str, burnin: float =
 # same total length (n chains of S/n states discard n x burnin x S/n = burnin x S states, the same as the long chain), and they run at
 # the same time on different machines. The price is statistical, not arithmetical: each short chain has to reach the posterior within
 # its own burn-in, and that is what `chain_agreement` checks before the parts are joined.
+SPLIT_BURNIN = 0.1                                             # the share of each chain that is thrown away, here and in the joining
+
+
 def split_plan(settings: dict, parts: int, seed0: int = 1) -> list[dict]:
     """Settings for `parts` chains that together hold as many post-burn-in samples as the one chain `settings` describes, each logged
-    at the same interval (so the joined log is evenly spaced) and each with its own seed."""
+    at the same interval (so the joined log is evenly spaced) and each with its own seed.
+
+    What splitting does not change: the number of states thrown away (n chains of S/n discard n x b x S/n = b x S, as the one chain of
+    S does) and the number of samples that remain. What it does change is how long each chain has to find the posterior. Reaching the
+    posterior takes an absolute number of states, not a share of the chain, so a piece must not be shorter than the burn-in the whole
+    analysis was given: that burn-in is the analyst's own statement of how long this analysis needs. Hence at most 1/burn-in pieces."""
     s = dict(settings)
     if parts < 2:
         raise ValueError("두 개 이상으로 나누어야 합니다.")
     total, samples = int(s.get("chain_length") or 0), int(s.get("samples") or 0)
     every = max(1, total // max(1, samples))                   # the logging interval of the whole analysis: every part keeps it
     per = (total // parts // every) * every                    # a whole number of logged states per part
+    burn = int(total * SPLIT_BURNIN)
+    if per < burn:
+        raise ValueError(f"{parts}개로 나누면 한 조각이 {per:,}상태로, 이 분석이 번인으로 잡은 {burn:,}상태보다 짧습니다. "
+                         f"조각은 각자 번인 안에 수렴해야 하므로 최대 {int(1 / SPLIT_BURNIN)}개까지만 나눌 수 있습니다. "
+                         f"더 나누려면 전체 사슬을 늘리세요.")
     if per < every * 100:
         raise ValueError(f"{parts}개로 나누면 한 조각이 너무 짧습니다(조각당 표본 {per // every}개). 사슬을 늘리거나 조각 수를 줄이세요.")
     out = []
@@ -621,13 +634,28 @@ def split_plan(settings: dict, parts: int, seed0: int = 1) -> list[dict]:
     return out
 
 
-def write_split(src: str | Path, parts: int, seed0: int = 1) -> list[Path]:
-    """Write `parts` sibling folders of a prepared BEAST package, each a shorter chain of the same analysis. Only the chain length
-    changes in the XML (the logging interval stays as it was, and the seed is given to BEAST on the command line). -> the folders."""
+def replicate_plan(settings: dict, copies: int, seed0: int = 1) -> list[dict]:
+    """`copies` chains of the same analysis at its **full** length, differing only in the seed.
+
+    This is the other way to use several machines on one analysis, and the safer one. Splitting a fixed total divides each chain's
+    own mixing time, which is what a chain actually needs; running the whole length on every machine does not touch it. The wall
+    clock is that of one chain either way, but here the result holds `copies` times the samples instead of the same number, and the
+    chains can be compared before they are joined. It costs `copies` times the computing, which is exactly what idle machines are."""
+    s = dict(settings)
+    if copies < 2:
+        raise ValueError("두 개 이상이어야 합니다.")
+    return [dict(s, seed=seed0 + i, tag=f"{s.get('tag', 'run')}-r{i + 1}", split_of=s.get("tag", "run"), part=i + 1,
+                 parts=copies, split_mode="replicate") for i in range(copies)]
+
+
+def write_split(src: str | Path, parts: int, seed0: int = 1, mode: str = "split") -> list[Path]:
+    """Write `parts` sibling folders of a prepared BEAST package: shorter chains of the same analysis (`mode="split"`), or the same
+    analysis at full length under different seeds (`mode="replicate"`). Only the chain length changes in the XML, and only when it
+    is split (the logging interval stays as it was, and the seed is given to BEAST on the command line). -> the folders."""
     d = Path(src)
     xml = (d / "beast.xml").read_text(encoding="utf-8")
     s = json.loads((d / "settings.json").read_text(encoding="utf-8"))
-    plan = split_plan(s, parts, seed0)
+    plan = replicate_plan(s, parts, seed0) if mode == "replicate" else split_plan(s, parts, seed0)
     made = []
     for p in plan:
         pd = d.parent / _safe(p["tag"])
@@ -881,7 +909,7 @@ def bets_prepare(clock_run: dict, settings: dict | None = None) -> dict:
         out[tag] = str(base)
     _root(clock_run, s).mkdir(parents=True, exist_ok=True)
     (_root(clock_run, s) / "settings.json").write_text(json.dumps(s), encoding="utf-8")
-    return {"n": n, "settings": s, "folders": out, "span_years": span}
+    return {"n": n, "settings": s, "folders": out, "span_years": span, "tips": sorted(real)}
 
 
 def gss_xml(clock_run: dict, tag: str, s: dict) -> str:
@@ -898,6 +926,64 @@ def gss_xml(clock_run: dict, tag: str, s: dict) -> str:
     ms = {**s, "chain_length": GSS_BURN, "samples": 100, "clock": m["clock"], "tree_prior": m["tree_prior"]}
     return build_xml(seqs, dates, {}, ms, rate0, "gss", proper=True, fixed_freq=True, init=init,
                      gss={"log": "beast.log", "burnin": s["initial_chain"] // 2, "chain_length": s["step_chain"], "path_steps": s["path_steps"], "alpha": 0.3})
+
+
+def bets_gss_template(clock_run: dict, tag: str, s: dict) -> str:
+    """The generalized stepping-stone XML of one BETS analysis, written before its ordinary chain has run.
+
+    `gss_xml` above is for running everything in this process: it reads the finished chain next to it. On the cluster the analysis
+    runs somewhere else, so the XML has to stand on its own. It reads the working prior from `prior.log` (the ordinary chain's log,
+    shipped with the job) and writes `beast.log` / `beast.trees` like any other BEAST job, so a worker needs to know nothing about
+    BETS. What it cannot know in advance are the starting values, which must sit inside the working prior: `bets_gss_start` puts them
+    in once the ordinary chain has come back."""
+    seqs, real, rate0, _n, _span = _bets_data(clock_run, s)
+    m = _model(s, tag)
+    dates = real if m["dated"] else {k: max(real.values()) for k in real}
+    ms = {**s, "chain_length": GSS_BURN, "samples": 100, "clock": m["clock"], "tree_prior": m["tree_prior"]}
+    return build_xml(seqs, dates, {}, ms, rate0, "beast", proper=True, fixed_freq=True,
+                     gss={"log": "prior.log", "burnin": s["initial_chain"] // 2, "chain_length": s["step_chain"], "path_steps": s["path_steps"], "alpha": 0.3})
+
+
+def bets_gss_start(template: str, mcmc_log: str | Path, burnin: float = 0.5) -> str:
+    """Put the middle of the finished ordinary chain into the template as the starting values."""
+    post = read_log(Path(mcmc_log), burnin)["params"]
+    flat = [k for k in GSS_PARAMS if k in post and post[k]["hi"] - post[k]["lo"] <= 0]
+    if flat:                                                  # a parameter that never moved has no density to build a working prior from (BEAST would give NaN)
+        raise RuntimeError(f"일반 체인에서 {', '.join(flat)} 값이 변하지 않았습니다 — 체인이 너무 짧거나 섞이지 않아 작업 사전분포를 만들 수 없습니다. 초기 체인을 늘려 다시 실행하세요.")
+    out = template
+    for name in GSS_PARAMS:
+        if name in post:
+            out = re.sub(rf'(<parameter id="{re.escape(name)}" value=")[^"]*(")',
+                         lambda m, v=post[name]["median"]: f"{m[1]}{v:.8g}{m[2]}", out, count=1)
+    return out
+
+
+def bets_summary(s: dict, screens: dict[str, dict[str, str | Path]], n_tips: int = 0, span_years: float = 0.0, seconds: int = 0) -> dict:
+    """The result of a BETS run from the screen output of its analyses: `screens` is {model tag: {"psss"|"gss": the BEAST screen log}}.
+    Every marginal likelihood BEAST reports is in that text, so the same function serves a run in this process and one on the cluster."""
+    tags = [m["tag"] for m in _models(s)]
+    res: dict = {"settings": s, "seconds": seconds, "n_tips": n_tips, "span_years": span_years, **{t: {} for t in tags}}
+    for tag in tags:
+        for kind, path in (screens.get(tag) or {}).items():
+            if not path or not Path(path).is_file():
+                continue
+            out = Path(path).read_text(encoding="utf-8", errors="replace")
+            for k in (("ps", "ss") if kind == "psss" else ("gss",)):
+                m = _MLE_RE[k].search(out)
+                res[tag][k] = float(m[1]) if m else None
+    if s["compare"]:
+        res["models"] = compare_models({t: res[t] for t in tags})
+        return res
+    for k in ("ps", "ss", "gss"):
+        a, b = res["dated"].get(k), res["undated"].get(k)
+        res["log_bf_" + k] = (a - b) if a is not None and b is not None else None
+    best = next((res["log_bf_" + k] for k in ("gss", "ss", "ps") if res["log_bf_" + k] is not None), None)
+    res["verdict"] = dict(zip(("level", "text"), bets_verdict(best)))
+    res["verdict"]["estimator"] = next((k for k in ("gss", "ss", "ps") if res["log_bf_" + k] is not None), None)
+    vals = [res["log_bf_" + k] for k in ("gss", "ss", "ps") if res["log_bf_" + k] is not None]
+    if len(vals) > 1 and max(vals) - min(vals) > 2:
+        res["verdict"]["text"] += " (추정기들의 값이 2 이상 다릅니다 — 경로 단계와 단계당 체인을 늘려 다시 돌리세요. 신뢰할 수 있는 결론이 아닙니다.)"
+    return res
 
 
 def bets_verdict(log_bf: float | None) -> tuple[str, str]:
@@ -1003,35 +1089,17 @@ def run_bets(clock_run: dict, settings: dict | None = None, progress=None) -> di
                 except subprocess.TimeoutExpired:
                     pr.kill()
             lf.close()
-    res = {"settings": s, "seconds": round(time.time() - t0), "n_tips": info["n"], "span_years": info["span_years"], **{t: {} for t in tags}}
+    screens: dict[str, dict[str, str | Path]] = {t: {} for t in tags}
     for (tag, kind), (pr, _lf) in procs.items():
         d = root / tag / ("psss" if kind == "psss" else "mcmc")
-        out = (d / ("gss.screen.txt" if kind == "gss" else "screen.txt")).read_text(encoding="utf-8")
+        f = d / ("gss.screen.txt" if kind == "gss" else "screen.txt")
         if pr.returncode != 0:
-            raise RuntimeError(f"BEAST({tag}, {kind})가 실패했습니다 (종료 코드 {pr.returncode}): {out.strip()[-300:]}")
-        if kind == "psss":
-            for k in ("ps", "ss"):
-                m = _MLE_RE[k].search(out)
-                res[tag][k] = float(m[1]) if m else None
-        elif kind == "gss":
-            m = _MLE_RE["gss"].search(out)
-            res[tag]["gss"] = float(m[1]) if m else None
-    if s["compare"]:
-        res["models"] = compare_models({t: res[t] for t in tags})
-        (root / "summary.json").write_text(json.dumps(res, ensure_ascii=False), encoding="utf-8")
-        p(100, "모델 비교 완료")
-        return res
-    for k in ("ps", "ss", "gss"):
-        a, b = res["dated"].get(k), res["undated"].get(k)
-        res["log_bf_" + k] = (a - b) if a is not None and b is not None else None
-    best = next((res["log_bf_" + k] for k in ("gss", "ss", "ps") if res["log_bf_" + k] is not None), None)
-    res["verdict"] = dict(zip(("level", "text"), bets_verdict(best)))
-    res["verdict"]["estimator"] = next((k for k in ("gss", "ss", "ps") if res["log_bf_" + k] is not None), None)
-    vals = [res["log_bf_" + k] for k in ("gss", "ss", "ps") if res["log_bf_" + k] is not None]
-    if len(vals) > 1 and max(vals) - min(vals) > 2:
-        res["verdict"]["text"] += " (추정기들의 값이 2 이상 다릅니다 — 경로 단계와 단계당 체인을 늘려 다시 돌리세요. 신뢰할 수 있는 결론이 아닙니다.)"
+            raise RuntimeError(f"BEAST({tag}, {kind})가 실패했습니다 (종료 코드 {pr.returncode}): {f.read_text(encoding='utf-8').strip()[-300:]}")
+        if kind in ("psss", "gss"):
+            screens[tag][kind] = f
+    res = bets_summary(s, screens, info["n"], info["span_years"], round(time.time() - t0))
     (root / "summary.json").write_text(json.dumps(res, ensure_ascii=False), encoding="utf-8")
-    p(100, "BETS 완료")
+    p(100, "모델 비교 완료" if s["compare"] else "BETS 완료")
     return res
 
 

@@ -303,9 +303,11 @@ def _private_ids() -> set[str]:
         con.close()
 
 
-def submit_beast(folder: str | Path, label: str = "", max_attempts: int = 3, private: bool | None = None, group: dict | None = None) -> str:
+def submit_beast(folder: str | Path, label: str = "", max_attempts: int = 3, private: bool | None = None, group: dict | None = None,
+                 extra_inputs: tuple[str, ...] = ()) -> str:
     """Queue the BEAST package in `folder` (its beast.xml and settings.json). The result files are put back into the same folder.
-    `group` marks the job as one part of a split analysis (see `submit_beast_split`) and is carried in the job's spec."""
+    `group` marks the job as one part of a larger piece of work (a split analysis, a BETS run) and is carried in the job's spec.
+    `extra_inputs` are further files of the folder the run reads (a BETS stepping-stone job reads `prior.log`)."""
     d = Path(folder).resolve()
     try:
         d.relative_to(config.DATA_DIR.resolve())
@@ -322,6 +324,12 @@ def submit_beast(folder: str | Path, label: str = "", max_attempts: int = 3, pri
     jd.mkdir(parents=True)
     shutil.copy2(xml, jd / "beast.xml")
     inputs = [{"name": "beast.xml", "sha256": sha256(jd / "beast.xml"), "bytes": (jd / "beast.xml").stat().st_size}]
+    for name in extra_inputs:
+        f = d / _safe_name(name)
+        if not f.is_file():
+            raise ValueError(f"{d}에 {name}이 없습니다")
+        shutil.copy2(f, jd / f.name)
+        inputs.append({"name": f.name, "sha256": sha256(jd / f.name), "bytes": (jd / f.name).stat().st_size})
     spec = {"seed": int(st.get("seed", 1)), "threads": int(st.get("threads") or 0), "chain_length": int(st.get("chain_length") or 0), "tag": st.get("tag", "")}
     if group:
         spec["group"] = dict(group)
@@ -342,9 +350,13 @@ def submit_beast(folder: str | Path, label: str = "", max_attempts: int = 3, pri
 # A chain cannot be cut in two: each state follows from the one before. What is handed out in parallel is several shorter chains of the
 # same analysis under different seeds, which hold together as many usable samples as the one long chain (beastprep.split_plan explains
 # the arithmetic). When the last part comes back the main server joins them with LogCombiner, after checking that the chains agree.
-def submit_beast_split(folder: str | Path, parts: int, label: str = "", max_attempts: int = 3, seed0: int = 1) -> dict:
-    """Split the prepared BEAST package in `folder` into `parts` shorter chains, queue each as its own job, and have the results joined
-    into `<folder>-combined` once every part is in. -> {"group", "jobs", "parts", "out"}"""
+def submit_beast_split(folder: str | Path, parts: int, label: str = "", max_attempts: int = 3, seed0: int = 1, mode: str = "replicate") -> dict:
+    """Run the prepared BEAST package in `folder` on several machines at once and join the results into `<folder>-combined`.
+
+    `mode="replicate"` (the default) gives every machine the analysis at its **full** length under its own seed; `mode="split"`
+    divides one total between them. Measured on the 170-genome BDBV analysis, splitting a 50-million-state total four ways did not
+    reproduce the undivided answer (the deep nodes and the clock rate came out wider and shifted, R-hat 1.07) while one undivided
+    20-million-state chain did, so splitting is offered but is not the default. -> {"group", "jobs", "parts", "out", "mode"}"""
     from . import beastprep
     d = Path(folder).resolve()
     try:
@@ -353,47 +365,65 @@ def submit_beast_split(folder: str | Path, parts: int, label: str = "", max_atte
         raise ValueError("the BEAST folder must be inside the data folder")
     gid = uuid.uuid4().hex[:8]
     out = d.parent / f"{d.name}-combined"
-    dirs = beastprep.write_split(d, parts, seed0)
+    if mode not in ("replicate", "split"):
+        raise ValueError("mode는 replicate 또는 split입니다.")
+    dirs = beastprep.write_split(d, parts, seed0, mode)
     base = label or f"BEAST {json.loads((d / 'settings.json').read_text(encoding='utf-8')).get('tag') or d.name}"
     jobs = []
     for i, pd in enumerate(dirs, 1):
         jobs.append(submit_beast(pd, f"{base} [{i}/{parts}]", max_attempts,
-                                 group={"id": gid, "part": i, "parts": parts, "out": str(out), "source": str(d)}))
-    audit_now("cluster_job", f"split {d.name} into {parts} chains (group {gid})")
-    return {"group": gid, "jobs": jobs, "parts": [str(p) for p in dirs], "out": str(out)}
+                                 group={"id": gid, "part": i, "parts": parts, "out": str(out), "source": str(d), "mode": mode}))
+    audit_now("cluster_job", f"{d.name}: {parts} chains over the cluster, mode {mode} (group {gid})")
+    return {"group": gid, "jobs": jobs, "parts": [str(p) for p in dirs], "out": str(out), "mode": mode}
 
 
-def _groups(rows: list[dict]) -> dict[str, dict]:
+def _groups(rows: list[dict], kind: str = "split") -> dict[str, dict]:
     out: dict[str, dict] = {}
     for j in rows:
         g = (json.loads(j.get("spec_json") or "{}") or {}).get("group")
-        if not g:
+        if not g or g.get("kind", "split") != kind:
             continue
-        e = out.setdefault(g["id"], {"id": g["id"], "parts": g.get("parts"), "out": g.get("out"), "source": g.get("source"), "jobs": [], "dirs": {}})
-        e["jobs"].append({"id": j["id"], "part": g.get("part"), "state": j["state"], "pct": j.get("pct"), "node_id": j.get("node_id")})
-        e["dirs"][g.get("part")] = j.get("target_dir")
+        e = out.setdefault(g["id"], {"id": g["id"], "kind": kind, "jobs": [], "dirs": {},
+                                     **{k: g.get(k) for k in ("parts", "out", "source", "root", "tags", "stages", "name", "mode")}})
+        e["jobs"].append({"id": j["id"], "part": g.get("part"), "tag": g.get("tag"), "stage": g.get("stage"),
+                          "state": j["state"], "pct": j.get("pct"), "node_id": j.get("node_id"), "dir": j.get("target_dir")})
+        e["dirs"][g.get("part") if kind == "split" else (g.get("tag"), g.get("stage"))] = j.get("target_dir")
     for e in out.values():
-        e["jobs"].sort(key=lambda x: x["part"] or 0)
+        e["jobs"].sort(key=lambda x: (x["tag"] or "", x["part"] or 0, x["stage"] or ""))
         e["done"] = sum(1 for x in e["jobs"] if x["state"] == "done")
         e["failed"] = sum(1 for x in e["jobs"] if x["state"] in ("error", "cancelled"))
-        e["ready"] = e["done"] == (e["parts"] or 0) and bool(e["out"])
-        ag = Path(e["out"] or "/nonexistent") / "agreement.json"
-        e["joined"] = ag.is_file()
-        if e["joined"]:
-            try:
-                e["agreement"] = json.loads(ag.read_text(encoding="utf-8"))
-            except (OSError, ValueError):
-                e["agreement"] = None
+        if kind == "split":
+            e["ready"] = e["done"] == (e["parts"] or 0) and bool(e["out"])
+            ag = Path(e["out"] or "/nonexistent") / "agreement.json"
+            e["joined"] = ag.is_file()
+            if e["joined"]:
+                try:
+                    e["agreement"] = json.loads(ag.read_text(encoding="utf-8"))
+                except (OSError, ValueError):
+                    e["agreement"] = None
+        else:
+            e["expected"] = len(e["tags"] or []) * len(e["stages"] or [])
+            e["ready"] = e["done"] == e["expected"] and e["expected"] > 0
+            sm = Path(e["root"] or "/nonexistent") / "summary.json"
+            e["joined"] = sm.is_file()
+            if e["joined"]:
+                try:
+                    e["summary"] = json.loads(sm.read_text(encoding="utf-8"))
+                except (OSError, ValueError):
+                    e["summary"] = None
     return out
 
 
-def split_groups() -> list[dict]:
+def _all_jobs() -> list[dict]:
     con = connect()
     try:
-        rows = [dict(r) for r in con.execute("SELECT * FROM cluster_job ORDER BY created DESC, rowid DESC LIMIT 400")]
+        return [dict(r) for r in con.execute("SELECT * FROM cluster_job ORDER BY created DESC, rowid DESC LIMIT 600")]
     finally:
         con.close()
-    return list(_groups(rows).values())                          # newest first, as the rows came
+
+
+def split_groups() -> list[dict]:
+    return list(_groups(_all_jobs(), "split").values())           # newest first, as the rows came
 
 
 def join_group(gid: str) -> dict:
@@ -439,6 +469,114 @@ def finish_split_groups() -> list[dict]:
             finally:
                 con.close()
             out.append({"group": g["id"], "joined": False, "error": str(ex)})
+    return out
+
+
+# ------------------------------------------------------------------------------------------------ BETS over several machines
+# A BETS run is already several independent BEAST analyses: per model a path/stepping-stone run and an ordinary chain, and after
+# that chain a generalized stepping-stone run built from its posterior. Nothing is split here - each analysis goes whole to one
+# machine - so there is no burn-in question and no agreement check; what the cluster buys is that the 6 (BETS) or 12 (model
+# comparison) analyses run at the same time instead of fighting over the cores of one machine.
+BETS_STAGES = {"psss": "path / stepping-stone", "mcmc": "ordinary chain (for the working prior)", "gss": "generalized stepping-stone"}
+
+
+def _bets_settings(folder: Path, s: dict, tag: str, stage: str, chain: int, tips: list[str]) -> None:
+    folder.mkdir(parents=True, exist_ok=True)
+    (folder / "settings.json").write_text(json.dumps({"seed": s["seed"], "threads": s["threads"], "chain_length": chain,
+                                                      "tag": f"{s.get('name') or 'bets'}-{tag}-{stage}", "tip_names": tips}, ensure_ascii=False), encoding="utf-8")
+
+
+def submit_bets(clock_run: dict, settings: dict | None = None, max_attempts: int = 3) -> dict:
+    """Queue every analysis of a BETS run (or of a model comparison) as its own cluster job. The generalized stepping-stone analyses
+    are queued later, each when its own ordinary chain comes back. -> {"group", "jobs", "root", "tags", "stages"}"""
+    from . import beastprep
+    info = beastprep.bets_prepare(clock_run, settings)
+    s = info["settings"]
+    tags = list(info["folders"])
+    root_dir = Path(info["folders"][tags[0]]).parent
+    try:
+        root_dir.relative_to(config.DATA_DIR.resolve())
+    except ValueError:
+        raise ValueError("the BETS folder must be inside the data folder")
+    stages = (["psss"] if s["estimator"] in ("both", "ps_ss") else []) + (["mcmc", "gss"] if s["estimator"] in ("both", "gss") else [])
+    tips = list(info.get("tips") or [])                           # so that a run with private genomes goes only to workers that accept them
+    gid = uuid.uuid4().hex[:8]
+    what = "model comparison" if s["compare"] else "BETS"
+    jobs = []
+    for tag in tags:
+        base = Path(info["folders"][tag])
+        if "psss" in stages:
+            _bets_settings(base / "psss", s, tag, "psss", s["initial_chain"], tips)
+            jobs.append(_submit_bets_stage(gid, s, root_dir, tags, stages, tag, "psss", base / "psss", what, max_attempts))
+        if "gss" in stages:
+            (base / "gssrun").mkdir(parents=True, exist_ok=True)
+            (base / "gssrun" / "template.xml").write_text(beastprep.bets_gss_template(clock_run, tag, s), encoding="utf-8")
+            _bets_settings(base / "mcmc", s, tag, "mcmc", s["initial_chain"], tips)
+            jobs.append(_submit_bets_stage(gid, s, root_dir, tags, stages, tag, "mcmc", base / "mcmc", what, max_attempts))
+    (root_dir / "summary.json").unlink(missing_ok=True)
+    audit_now("cluster_job", f"{what} {root_dir.name} queued as {len(tags) * len(stages)} analyses (group {gid})")
+    return {"group": gid, "jobs": jobs, "root": str(root_dir), "tags": tags, "stages": stages}
+
+
+def _submit_bets_stage(gid: str, s: dict, root_dir: Path, tags: list[str], stages: list[str], tag: str, stage: str,
+                       folder: Path, what: str, max_attempts: int = 3) -> str:
+    return submit_beast(folder, f"{what} [{tag} · {BETS_STAGES[stage]}]", max_attempts,
+                        group={"id": gid, "kind": "bets", "tag": tag, "stage": stage, "root": str(root_dir),
+                               "tags": tags, "stages": stages, "name": s.get("name") or ""},
+                        extra_inputs=("prior.log",) if stage == "gss" else ())
+
+
+def bets_groups() -> list[dict]:
+    return list(_groups(_all_jobs(), "bets").values())
+
+
+def finish_bets_groups() -> list[dict]:
+    """Queue the generalized stepping-stone analysis of every ordinary chain that has come back, and write the summary of a run
+    whose analyses are all in. Called from the background; a failure is recorded on the jobs, not raised."""
+    from . import beastprep
+    out = []
+    for g in bets_groups():
+        root_dir = Path(g["root"] or "/nonexistent")
+        s = json.loads((root_dir / "settings.json").read_text(encoding="utf-8")) if (root_dir / "settings.json").is_file() else None
+        if not s:
+            continue
+        have = {(x["tag"], x["stage"]) for x in g["jobs"]}
+        for x in [j for j in g["jobs"] if j["stage"] == "mcmc" and j["state"] == "done"]:
+            if (x["tag"], "gss") in have:
+                continue
+            base = Path(x["dir"]).parent                         # <root>/<tag>/mcmc -> <root>/<tag>
+            gd = base / "gssrun"
+            try:
+                gd.mkdir(parents=True, exist_ok=True)
+                gd.joinpath("beast.xml").write_text(beastprep.bets_gss_start((gd / "template.xml").read_text(encoding="utf-8"), Path(x["dir"]) / "beast.log"), encoding="utf-8")
+                shutil.copyfile(Path(x["dir"]) / "beast.log", gd / "prior.log")
+                mcmc_set = json.loads((Path(x["dir"]) / "settings.json").read_text(encoding="utf-8"))
+                _bets_settings(gd, s, x["tag"], "gss", 0, mcmc_set.get("tip_names", []))   # 0: the path sampling has no state count to show progress against
+                jid = _submit_bets_stage(g["id"], s, root_dir, g["tags"], g["stages"], x["tag"], "gss", gd,
+                                         "model comparison" if s.get("compare") else "BETS")
+                out.append({"group": g["id"], "queued": jid, "tag": x["tag"], "stage": "gss"})
+            except Exception as ex:
+                _log.warning("BETS %s/%s: the stepping-stone analysis could not be queued: %s", g["id"], x["tag"], ex)
+                con = connect()
+                try:
+                    _addlog(con, x["id"], f"the generalized stepping-stone analysis could not be prepared: {str(ex)[:200]}")
+                    con.commit()
+                finally:
+                    con.close()
+        if not g["ready"] or g["joined"]:
+            continue
+        try:
+            screens = {t: {} for t in g["tags"]}
+            for x in g["jobs"]:
+                if x["stage"] in ("psss", "gss") and x["state"] == "done" and x["dir"]:
+                    screens[x["tag"]][x["stage"]] = Path(x["dir"]) / "beast.screen.log"
+            res = beastprep.bets_summary(s, screens)
+            (root_dir / "summary.json").write_text(json.dumps(res, ensure_ascii=False), encoding="utf-8")
+            audit_now("cluster_job", f"BETS group {g['id']} summarized in {root_dir.name}")
+            out.append({"group": g["id"], "summary": str(root_dir / "summary.json")})
+        except Exception as ex:
+            _log.warning("BETS group %s could not be summarized: %s", g["id"], ex)
+            out.append({"group": g["id"], "error": str(ex)})
     return out
 
 
@@ -768,19 +906,24 @@ _joining = threading.Lock()
 
 
 def _join_in_background() -> None:
-    """Joining is LogCombiner over gigabytes of trees: it runs off the request thread, one group at a time."""
+    """What happens when a job of a group comes back - LogCombiner over gigabytes of trees, or writing the next BETS analysis -
+    runs off the request thread, one at a time."""
     if _joining.locked():
         return
     def work():
         with _joining:
             finish_split_groups()
-    threading.Thread(target=work, name="gc-split-join", daemon=True).start()
+            finish_bets_groups()
+    threading.Thread(target=work, name="gc-group-finish", daemon=True).start()
 
 
 def state() -> dict:
     reap()
-    groups = split_groups()
-    if any(g["ready"] and not g["joined"] for g in groups):
+    rows = _all_jobs()
+    groups, bets = list(_groups(rows, "split").values()), list(_groups(rows, "bets").values())
+    if any(g["ready"] and not g["joined"] for g in groups + bets) or any(
+            x["stage"] == "mcmc" and x["state"] == "done" and (x["tag"], "gss") not in {(y["tag"], y["stage"]) for y in g["jobs"]}
+            for g in bets for x in g["jobs"]):
         _join_in_background()
-    return {"nodes": list_nodes(), "requests": list_requests(), "jobs": list_jobs(100), "groups": groups,
+    return {"nodes": list_nodes(), "requests": list_requests(), "jobs": list_jobs(100), "groups": groups, "bets": bets,
             "joining": _joining.locked(), "lease": LEASE, "stale": STALE, "now": _now()}
