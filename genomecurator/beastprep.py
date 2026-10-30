@@ -465,7 +465,9 @@ def read_log(path: Path, burnin: float = 0.1) -> dict:
             continue
         lo, hi = hpd(xs)
         xs_s = sorted(xs)
-        out[h] = {"mean": sum(xs) / len(xs), "median": xs_s[len(xs) // 2], "lo": lo, "hi": hi, "ess": ess(xs)}
+        m = sum(xs) / len(xs)
+        out[h] = {"mean": m, "median": xs_s[len(xs) // 2], "lo": lo, "hi": hi, "ess": ess(xs),
+                  "var": sum((x - m) ** 2 for x in xs) / max(1, len(xs) - 1), "n": len(xs)}
     if "mu.a" in header and "mu.b" in header:                       # the partitioned model: the rates of the two kinds of site per sample (clock rate x relative rate) and their ratio
         rk = "ucld.mean" if "ucld.mean" in header else "clock.rate"
         ia, ib, ir = header.index("mu.a"), header.index("mu.b"), header.index(rk)
@@ -586,14 +588,102 @@ def mcc_tree(clock_run: dict, tag: str = "", kind: str = "hipstr", burnin: float
 def combine_runs(clock_run: dict, tags: list[str], out_tag: str, burnin: float = 0.1) -> dict:
     """Join independent runs of the same analysis (different seeds) with LogCombiner, removing `burnin` of each run first, into a new folder `out_tag`
     that is summarized like any other (its settings say `burnin: 0` and name the runs). -> the summary of the combined runs."""
+    out = combine_folders([folder(clock_run, t) for t in tags], folder(clock_run, out_tag), burnin, out_tag)
+    res = summarize(clock_run, out_tag)
+    res["complete"] = True
+    res["agreement"] = json.loads((out / "agreement.json").read_text(encoding="utf-8"))
+    (out / "summary.json").write_text(json.dumps(res, ensure_ascii=False), encoding="utf-8")
+    return res
+
+
+# ------------------------------------------------------------------------------------------------ one analysis over several machines
+# A single MCMC chain cannot be split: every state depends on the one before it. What can be split is the number of chains. Several
+# shorter chains with different seeds, each discarding its own burn-in, leave exactly as many usable samples as one long chain of the
+# same total length (n chains of S/n states discard n x burnin x S/n = burnin x S states, the same as the long chain), and they run at
+# the same time on different machines. The price is statistical, not arithmetical: each short chain has to reach the posterior within
+# its own burn-in, and that is what `chain_agreement` checks before the parts are joined.
+def split_plan(settings: dict, parts: int, seed0: int = 1) -> list[dict]:
+    """Settings for `parts` chains that together hold as many post-burn-in samples as the one chain `settings` describes, each logged
+    at the same interval (so the joined log is evenly spaced) and each with its own seed."""
+    s = dict(settings)
+    if parts < 2:
+        raise ValueError("두 개 이상으로 나누어야 합니다.")
+    total, samples = int(s.get("chain_length") or 0), int(s.get("samples") or 0)
+    every = max(1, total // max(1, samples))                   # the logging interval of the whole analysis: every part keeps it
+    per = (total // parts // every) * every                    # a whole number of logged states per part
+    if per < every * 100:
+        raise ValueError(f"{parts}개로 나누면 한 조각이 너무 짧습니다(조각당 표본 {per // every}개). 사슬을 늘리거나 조각 수를 줄이세요.")
+    out = []
+    for i in range(parts):
+        p = dict(s, chain_length=per, samples=per // every, seed=seed0 + i, tag=f"{s.get('tag', 'run')}-p{i + 1}",
+                 split_of=s.get("tag", "run"), part=i + 1, parts=parts, split_total=total)
+        out.append(p)
+    return out
+
+
+def write_split(src: str | Path, parts: int, seed0: int = 1) -> list[Path]:
+    """Write `parts` sibling folders of a prepared BEAST package, each a shorter chain of the same analysis. Only the chain length
+    changes in the XML (the logging interval stays as it was, and the seed is given to BEAST on the command line). -> the folders."""
+    d = Path(src)
+    xml = (d / "beast.xml").read_text(encoding="utf-8")
+    s = json.loads((d / "settings.json").read_text(encoding="utf-8"))
+    plan = split_plan(s, parts, seed0)
+    made = []
+    for p in plan:
+        pd = d.parent / _safe(p["tag"])
+        pd.mkdir(parents=True, exist_ok=True)
+        got = re.subn(r'(<mcmc\b[^>]*\bchainLength=")\d+(")', lambda m: f'{m[1]}{p["chain_length"]}{m[2]}', xml, count=1)
+        if not got[1]:
+            raise ValueError("beast.xml에서 chainLength를 찾지 못했습니다.")
+        (pd / "beast.xml").write_text(got[0], encoding="utf-8")
+        (pd / "settings.json").write_text(json.dumps(p, ensure_ascii=False, indent=1), encoding="utf-8")
+        for f in ("dates.tsv", "alignment.fasta", "subsample.tsv"):
+            if (d / f).exists():
+                shutil.copyfile(d / f, pd / f)
+        made.append(pd)
+    return made
+
+
+RHAT_LIMIT = 1.05                                              # above this the chains have not settled on the same answer yet
+
+
+def chain_agreement(dirs: list[str | Path], burnin: float = 0.1) -> dict:
+    """Do the chains agree? For every logged quantity: Gelman-Rubin R-hat over the chains (1.0 = indistinguishable) and whether every
+    pair of 95% HPDs overlaps. -> {"ok", "rhat": {name: value}, "worst": [name, value], "disjoint": [names], "chains": n, "samples": n}"""
+    logs = [read_log(Path(d) / "beast.log", burnin) for d in dirs]
+    rows = [{k: v for k, v in lg["params"].items() if not k.startswith("monophyly(")} for lg in logs]
+    common = set(rows[0]).intersection(*[set(r) for r in rows[1:]]) if len(rows) > 1 else set()
+    rhat, disjoint = {}, []
+    m = len(rows)
+    for k in sorted(common):
+        xs = [r[k] for r in rows]
+        means = [x["mean"] for x in xs]
+        grand = sum(means) / m
+        n = min(x.get("n") or 1 for x in xs)
+        w = sum(x.get("var") or 0.0 for x in xs) / m                       # mean of the within-chain variances
+        b_over_n = sum((q - grand) ** 2 for q in means) / max(1, m - 1)    # between-chain variance of the means = B / n
+        rhat[k] = round(math.sqrt((((n - 1) / n) * w + b_over_n) / w), 4) if w > 0 else 1.0
+        for i, a in enumerate(xs):
+            if any(a["hi"] < c["lo"] or c["hi"] < a["lo"] for c in xs[i + 1:]):
+                disjoint.append(k)
+                break
+    worst = max(rhat.items(), key=lambda kv: kv[1], default=("", 1.0))
+    return {"ok": not disjoint and worst[1] <= RHAT_LIMIT, "rhat": rhat, "worst": list(worst), "disjoint": sorted(set(disjoint)),
+            "limit": RHAT_LIMIT, "chains": len(logs), "samples": sum(lg["states"] for lg in logs)}
+
+
+def combine_folders(src: list[Path], out: Path, burnin: float = 0.1, out_tag: str = "") -> Path:
+    """LogCombiner over folders that hold the same analysis under different seeds; writes beast.log, beast.trees, settings.json and
+    agreement.json (what `chain_agreement` found) into `out`. The parts are joined even when they disagree: the report says so, and
+    nothing downstream has to guess why a number looks odd."""
     pre = env_prefix()
     if not pre:
         raise RuntimeError(f"BEAST 환경이 없습니다: {status()['how']}")
-    if len(tags) < 2:
+    src = [Path(d) for d in src]
+    if len(src) < 2:
         raise ValueError("두 개 이상의 실행이 필요합니다.")
-    src = [folder(clock_run, t) for t in tags]
     sets = [json.loads((d / "settings.json").read_text(encoding="utf-8")) for d in src]
-    same = {k for k in sets[0] if k not in ("seed", "tag", "threads")}
+    same = {k for k in sets[0] if k not in ("seed", "tag", "threads", "part")}
     for k in same:
         if any(x.get(k) != sets[0][k] for x in sets[1:]):
             raise ValueError(f"실행들의 설정이 다릅니다 ({k}); 같은 분석의 다른 시드만 합칠 수 있습니다.")
@@ -603,24 +693,25 @@ def combine_runs(clock_run: dict, tags: list[str], out_tag: str, burnin: float =
     states = [int(read_log(d / "beast.log", 0).get("last_state") or 0) for d in src]
     if any(x < sets[0].get("chain_length", 0) for x in states):
         raise ValueError("끝나지 않은 실행은 합칠 수 없습니다.")
+    agree = chain_agreement(src, burnin)
     cut = int(sets[0]["chain_length"] * burnin)
-    out = folder(clock_run, out_tag)
+    out = Path(out)
     out.mkdir(parents=True, exist_ok=True)
     lc = str(pre / "bin" / "logcombiner")
     for args, name in ((["-burnin", str(cut)], "beast.log"), (["-trees", "-burnin", str(cut)], "beast.trees")):
-        r = subprocess.run([lc, *args, *[str(d / name) for d in src], str(out / name)], capture_output=True, text=True, timeout=3600)
+        r = subprocess.run([lc, *args, *[str(d / name) for d in src], str(out / name)], capture_output=True, text=True, timeout=7200)
         if r.returncode != 0 or not (out / name).exists():
             raise RuntimeError("LogCombiner가 실패했습니다: " + (r.stderr or r.stdout)[-400:])
     for f in ("dates.tsv", "alignment.fasta", "subsample.tsv", "beast.xml"):          # the same XML for every run (only the seed differs)
         if (src[0] / f).exists():
             shutil.copyfile(src[0] / f, out / f)
-    st = dict(sets[0], tag=out_tag, burnin=0, combined_from=tags, combined_burnin=burnin, seeds=[x.get("seed") for x in sets],
-              chain_length=sets[0]["chain_length"])
+    st = dict(sets[0], tag=out_tag or out.name, burnin=0, combined_from=[d.name for d in src], combined_burnin=burnin,
+              seeds=[x.get("seed") for x in sets], chain_length=sets[0]["chain_length"])
+    for k in ("part", "parts", "split_of"):
+        st.pop(k, None)
     (out / "settings.json").write_text(json.dumps(st, ensure_ascii=False, indent=1), encoding="utf-8")
-    res = summarize(clock_run, out_tag)
-    res["complete"] = True
-    (out / "summary.json").write_text(json.dumps(res, ensure_ascii=False), encoding="utf-8")
-    return res
+    (out / "agreement.json").write_text(json.dumps(agree, ensure_ascii=False, indent=1), encoding="utf-8")
+    return out
 
 
 def _short_country(c: str) -> str:

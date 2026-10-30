@@ -852,3 +852,87 @@ def test_a_job_is_not_handed_out_again_just_because_the_main_server_restarted(tm
     assert c.reap() == 0 and c.get_job(jid)["state"] == "running"
     monkeypatch.setattr(c, "_UP_SINCE", dt.datetime.now() - dt.timedelta(seconds=c.LEASE * 2))
     assert c.reap() == 1 and c.get_job(jid)["state"] == "queued"               # once it has been up long enough, the silence counts
+
+
+# ---- one analysis over several machines: several shorter chains, checked and then joined
+def _split_pkg(tmp_path, name="whole", chain=1_000_000, samples=1000):
+    d = tmp_path / "beast" / name
+    d.mkdir(parents=True)
+    (d / "beast.xml").write_text(f'<beast>\n<mcmc id="mcmc" chainLength="{chain}" autoOptimize="true">\n'
+                                 f'<log id="fileLog" logEvery="{chain // samples}"/>\n</mcmc>\n</beast>\n', encoding="utf-8")
+    (d / "settings.json").write_text(json.dumps({"seed": 1, "threads": 0, "chain_length": chain, "samples": samples, "tag": name,
+                                                 "clock": "strict", "tip_names": ["A", "B"]}), encoding="utf-8")
+    (d / "dates.tsv").write_text("name\tdate\nA\t2026.1\nB\t2026.2\n", encoding="utf-8")
+    return d
+
+
+def test_split_keeps_the_same_number_of_samples_and_the_same_logging_interval():
+    from genomecurator import beastprep
+    whole = {"chain_length": 30_000_000, "samples": 10_000, "seed": 1, "tag": "x"}
+    plan = beastprep.split_plan(whole, 4)
+    every = whole["chain_length"] // whole["samples"]
+    assert [p["seed"] for p in plan] == [1, 2, 3, 4] and {p["tag"] for p in plan} == {"x-p1", "x-p2", "x-p3", "x-p4"}
+    assert all(p["chain_length"] // p["samples"] == every for p in plan)        # the joined log stays evenly spaced
+    assert sum(p["samples"] for p in plan) == whole["samples"]                  # and holds as many samples as the one long chain
+    assert sum(p["chain_length"] for p in plan) == whole["chain_length"]
+    with pytest.raises(ValueError):
+        beastprep.split_plan(whole, 1)
+    with pytest.raises(ValueError):
+        beastprep.split_plan(whole, 400)                                        # pieces too short to be worth running
+
+
+def test_split_writes_one_folder_per_part_with_only_the_chain_length_changed(tmp_path, monkeypatch):
+    from genomecurator import beastprep
+    d = _split_pkg(tmp_path)
+    made = beastprep.write_split(d, 4)
+    assert [p.name for p in made] == ["whole-p1", "whole-p2", "whole-p3", "whole-p4"]
+    for i, p in enumerate(made, 1):
+        xml = (p / "beast.xml").read_text()
+        assert 'chainLength="250000"' in xml and 'logEvery="1000"' in xml       # the interval is untouched
+        s = json.loads((p / "settings.json").read_text())
+        assert s["seed"] == i and s["part"] == i and s["parts"] == 4 and s["split_of"] == "whole" and s["split_total"] == 1_000_000
+        assert (p / "dates.tsv").is_file()
+
+
+def test_a_split_job_group_is_joined_only_when_every_part_is_back(tmp_path, monkeypatch):
+    c = _env(tmp_path, monkeypatch)
+    joined = []
+    monkeypatch.setattr(c, "join_group", lambda gid: joined.append(gid) or {"group": gid, "joined": True})
+    g = c.submit_beast_split(_split_pkg(tmp_path), 3)
+    assert len(g["jobs"]) == 3 and len(c.split_groups()) == 1
+    grp = c.split_groups()[0]
+    assert grp["parts"] == 3 and grp["done"] == 0 and not grp["ready"] and not grp["joined"]
+    assert c.finish_split_groups() == [] and joined == []
+    from genomecurator.db import connect
+    con = connect()
+    for jid in g["jobs"][:2]:
+        con.execute("UPDATE cluster_job SET state='done' WHERE id=?", (jid,))
+    con.commit()
+    assert not c.split_groups()[0]["ready"] and c.finish_split_groups() == []   # two of three: still nothing to join
+    con.execute("UPDATE cluster_job SET state='done' WHERE id=?", (g["jobs"][2],))
+    con.commit()
+    assert c.split_groups()[0]["ready"]
+    c.finish_split_groups()
+    assert joined == [g["group"]]
+
+
+def test_chains_that_disagree_are_reported(tmp_path):
+    """R-hat near 1 when the chains sample the same thing, well above it when they do not."""
+    from genomecurator import beastprep
+    import math
+
+    def chain(path, shift):
+        path.mkdir(parents=True, exist_ok=True)
+        rows = ["state\tposterior\trate"]
+        for i in range(600):
+            x = math.sin(i * 0.7) + math.sin(i * 0.11) * 0.5                   # something that wanders but has no trend
+            rows.append(f"{i * 100}\t{-100 + x:.5f}\t{1.0 + shift + x * 0.01:.6f}")
+        (path / "beast.log").write_text("\n".join(rows) + "\n", encoding="utf-8")
+
+    chain(tmp_path / "a", 0.0)
+    chain(tmp_path / "b", 0.0005)
+    ok = beastprep.chain_agreement([tmp_path / "a", tmp_path / "b"])
+    assert ok["ok"] and ok["chains"] == 2 and ok["worst"][1] <= beastprep.RHAT_LIMIT and ok["disjoint"] == []
+    chain(tmp_path / "c", 0.4)                                                 # a chain that settled somewhere else entirely
+    bad = beastprep.chain_agreement([tmp_path / "a", tmp_path / "c"])
+    assert not bad["ok"] and "rate" in bad["disjoint"] and bad["rhat"]["rate"] > beastprep.RHAT_LIMIT

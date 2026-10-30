@@ -16,6 +16,7 @@ import json
 import os
 import secrets
 import shutil
+import threading
 import uuid
 from datetime import datetime, timedelta
 from pathlib import Path
@@ -302,8 +303,9 @@ def _private_ids() -> set[str]:
         con.close()
 
 
-def submit_beast(folder: str | Path, label: str = "", max_attempts: int = 3, private: bool | None = None) -> str:
-    """Queue the BEAST package in `folder` (its beast.xml and settings.json). The result files are put back into the same folder."""
+def submit_beast(folder: str | Path, label: str = "", max_attempts: int = 3, private: bool | None = None, group: dict | None = None) -> str:
+    """Queue the BEAST package in `folder` (its beast.xml and settings.json). The result files are put back into the same folder.
+    `group` marks the job as one part of a split analysis (see `submit_beast_split`) and is carried in the job's spec."""
     d = Path(folder).resolve()
     try:
         d.relative_to(config.DATA_DIR.resolve())
@@ -321,6 +323,8 @@ def submit_beast(folder: str | Path, label: str = "", max_attempts: int = 3, pri
     shutil.copy2(xml, jd / "beast.xml")
     inputs = [{"name": "beast.xml", "sha256": sha256(jd / "beast.xml"), "bytes": (jd / "beast.xml").stat().st_size}]
     spec = {"seed": int(st.get("seed", 1)), "threads": int(st.get("threads") or 0), "chain_length": int(st.get("chain_length") or 0), "tag": st.get("tag", "")}
+    if group:
+        spec["group"] = dict(group)
     con = connect()
     try:
         con.execute("INSERT INTO cluster_job(id,kind,label,state,created,max_attempts,private,spec_json,inputs_json,target_dir,log_json) VALUES(?,?,?,?,?,?,?,?,?,?,?)",
@@ -332,6 +336,110 @@ def submit_beast(folder: str | Path, label: str = "", max_attempts: int = 3, pri
         con.close()
     audit_now("cluster_job", f"queued {jid} ({d.name})")
     return jid
+
+
+# ------------------------------------------------------------------------------------------------ one analysis over several machines
+# A chain cannot be cut in two: each state follows from the one before. What is handed out in parallel is several shorter chains of the
+# same analysis under different seeds, which hold together as many usable samples as the one long chain (beastprep.split_plan explains
+# the arithmetic). When the last part comes back the main server joins them with LogCombiner, after checking that the chains agree.
+def submit_beast_split(folder: str | Path, parts: int, label: str = "", max_attempts: int = 3, seed0: int = 1) -> dict:
+    """Split the prepared BEAST package in `folder` into `parts` shorter chains, queue each as its own job, and have the results joined
+    into `<folder>-combined` once every part is in. -> {"group", "jobs", "parts", "out"}"""
+    from . import beastprep
+    d = Path(folder).resolve()
+    try:
+        d.relative_to(config.DATA_DIR.resolve())
+    except ValueError:
+        raise ValueError("the BEAST folder must be inside the data folder")
+    gid = uuid.uuid4().hex[:8]
+    out = d.parent / f"{d.name}-combined"
+    dirs = beastprep.write_split(d, parts, seed0)
+    base = label or f"BEAST {json.loads((d / 'settings.json').read_text(encoding='utf-8')).get('tag') or d.name}"
+    jobs = []
+    for i, pd in enumerate(dirs, 1):
+        jobs.append(submit_beast(pd, f"{base} [{i}/{parts}]", max_attempts,
+                                 group={"id": gid, "part": i, "parts": parts, "out": str(out), "source": str(d)}))
+    audit_now("cluster_job", f"split {d.name} into {parts} chains (group {gid})")
+    return {"group": gid, "jobs": jobs, "parts": [str(p) for p in dirs], "out": str(out)}
+
+
+def _groups(rows: list[dict]) -> dict[str, dict]:
+    out: dict[str, dict] = {}
+    for j in rows:
+        g = (json.loads(j.get("spec_json") or "{}") or {}).get("group")
+        if not g:
+            continue
+        e = out.setdefault(g["id"], {"id": g["id"], "parts": g.get("parts"), "out": g.get("out"), "source": g.get("source"), "jobs": [], "dirs": {}})
+        e["jobs"].append({"id": j["id"], "part": g.get("part"), "state": j["state"], "pct": j.get("pct"), "node_id": j.get("node_id")})
+        e["dirs"][g.get("part")] = j.get("target_dir")
+    for e in out.values():
+        e["jobs"].sort(key=lambda x: x["part"] or 0)
+        e["done"] = sum(1 for x in e["jobs"] if x["state"] == "done")
+        e["failed"] = sum(1 for x in e["jobs"] if x["state"] in ("error", "cancelled"))
+        e["ready"] = e["done"] == (e["parts"] or 0) and bool(e["out"])
+        ag = Path(e["out"] or "/nonexistent") / "agreement.json"
+        e["joined"] = ag.is_file()
+        if e["joined"]:
+            try:
+                e["agreement"] = json.loads(ag.read_text(encoding="utf-8"))
+            except (OSError, ValueError):
+                e["agreement"] = None
+    return out
+
+
+def split_groups() -> list[dict]:
+    con = connect()
+    try:
+        rows = [dict(r) for r in con.execute("SELECT * FROM cluster_job ORDER BY created DESC, rowid DESC LIMIT 400")]
+    finally:
+        con.close()
+    return list(_groups(rows).values())                          # newest first, as the rows came
+
+
+def join_group(gid: str) -> dict:
+    """Join the parts of a finished split analysis. Safe to call again: a group that is already joined is left alone."""
+    from . import beastprep
+    g = next((x for x in split_groups() if x["id"] == gid), None)
+    if not g:
+        raise ValueError(f"split group {gid} not found")
+    if g["joined"]:
+        return {"group": gid, "joined": True, "already": True, "out": g["out"]}
+    if not g["ready"]:
+        raise ValueError(f"{g['done']}/{g['parts']} parts are done; nothing to join yet")
+    dirs = [g["dirs"][i] for i in sorted(g["dirs"]) if g["dirs"].get(i)]
+    out = beastprep.combine_folders(dirs, Path(g["out"]), 0.1)
+    agree = json.loads((out / "agreement.json").read_text(encoding="utf-8"))
+    why = "the chains agree" if agree["ok"] else ("the chains do NOT agree: " + (", ".join(agree["disjoint"]) or f"R-hat {agree['worst'][1]}"))
+    con = connect()
+    try:
+        for x in g["jobs"]:
+            _addlog(con, x["id"], f"joined into {Path(g['out']).name} ({why})")
+        con.commit()
+    finally:
+        con.close()
+    audit_now("cluster_job", f"split group {gid} joined into {Path(g['out']).name} (agreement: {'ok' if agree['ok'] else 'check'})")
+    return {"group": gid, "joined": True, "out": str(out), "agreement": agree}
+
+
+def finish_split_groups() -> list[dict]:
+    """Join every split analysis whose parts have all come back. Called from the background; errors are recorded on the jobs, not raised."""
+    out = []
+    for g in split_groups():
+        if not g["ready"] or g["joined"]:
+            continue
+        try:
+            out.append(join_group(g["id"]))
+        except Exception as ex:                                  # a join that fails must not stop the server or the other groups
+            _log.warning("split group %s could not be joined: %s", g["id"], ex)
+            con = connect()
+            try:
+                for x in g["jobs"]:
+                    _addlog(con, x["id"], f"joining the parts failed: {str(ex)[:200]}")
+                con.commit()
+            finally:
+                con.close()
+            out.append({"group": g["id"], "joined": False, "error": str(ex)})
+    return out
 
 
 def _job(con, jid: str) -> dict | None:
@@ -593,6 +701,8 @@ def complete(node: dict, jid: str, outputs: list[dict], seconds: float | None = 
     if installed:
         shutil.rmtree(root() / "jobs" / jid, ignore_errors=True)       # the folder now holds the only copy
     audit_now("cluster_job", f"{jid} done on {node['name']}")
+    if json.loads(j.get("spec_json") or "{}").get("group"):
+        _join_in_background()                                          # the last part of a split analysis: join without waiting for anyone to open the page
     return {"ack": True}
 
 
@@ -654,6 +764,23 @@ def cancel(jid: str) -> bool:
     return bool(n)
 
 
+_joining = threading.Lock()
+
+
+def _join_in_background() -> None:
+    """Joining is LogCombiner over gigabytes of trees: it runs off the request thread, one group at a time."""
+    if _joining.locked():
+        return
+    def work():
+        with _joining:
+            finish_split_groups()
+    threading.Thread(target=work, name="gc-split-join", daemon=True).start()
+
+
 def state() -> dict:
     reap()
-    return {"nodes": list_nodes(), "requests": list_requests(), "jobs": list_jobs(100), "lease": LEASE, "stale": STALE, "now": _now()}
+    groups = split_groups()
+    if any(g["ready"] and not g["joined"] for g in groups):
+        _join_in_background()
+    return {"nodes": list_nodes(), "requests": list_requests(), "jobs": list_jobs(100), "groups": groups,
+            "joining": _joining.locked(), "lease": LEASE, "stale": STALE, "now": _now()}

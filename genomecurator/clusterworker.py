@@ -497,12 +497,15 @@ def _status_path() -> Path:
 def _worker_pid() -> int | None:
     """The PID of the worker process of this data folder, when it is alive (a stale PID file, or a PID reused by another program, gives None)."""
     try:
-        pid = int(_pid_path().read_text().strip())
+        raw = _pid_path().read_text().strip()
+        pid = int(raw) if raw.isdigit() and len(raw) <= 9 else 0       # a damaged file must not look like a running worker
+        if pid <= 0:
+            return None
     except (OSError, ValueError):
         return None
     try:
         os.kill(pid, 0)
-    except (ProcessLookupError, PermissionError, OSError):
+    except (ProcessLookupError, PermissionError, OSError, OverflowError):
         return None
     try:
         cmd = subprocess.run(["ps", "-p", str(pid), "-o", "command="], capture_output=True, text=True, timeout=5).stdout

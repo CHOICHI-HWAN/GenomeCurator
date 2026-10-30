@@ -1946,6 +1946,28 @@ def create_app(scheduler: bool = True) -> FastAPI:
         except (ValueError, KeyError) as ex:
             return JSONResponse({"error": str(ex)}, 400)
 
+    @app.post("/api/cluster/jobs/split")
+    async def cluster_job_split(request: Request):
+        """One analysis over several machines: the chain is run as `parts` shorter chains with different seeds, joined when the last one is in."""
+        if (e := _cluster_admin(request)):
+            return e
+        b = await request.json()
+        try:
+            f = str(b["folder"])
+            return cluster.submit_beast_split(config.DATA_DIR / f if not Path(f).is_absolute() else f, int(b.get("parts", 2)),
+                                              str(b.get("label", "")), int(b.get("max_attempts", 3)), int(b.get("seed0", 1)))
+        except (ValueError, KeyError, RuntimeError) as ex:
+            return JSONResponse({"error": str(ex)}, 400)
+
+    @app.post("/api/cluster/groups/{gid}/join")
+    def cluster_group_join(request: Request, gid: str):
+        if (e := _cluster_admin(request)):
+            return e
+        try:
+            return cluster.join_group(gid)
+        except (ValueError, RuntimeError) as ex:
+            return JSONResponse({"error": str(ex)}, 400)
+
     @app.post("/api/cluster/jobs/{jid}/cancel")
     def cluster_job_cancel(request: Request, jid: str):
         if (e := _cluster_admin(request)):

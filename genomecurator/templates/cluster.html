@@ -23,7 +23,15 @@
 <h3>작업</h3>
 <div style="display:flex;gap:8px;align-items:center;margin:0 0 10px;flex-wrap:wrap">
  <input id="jf" placeholder="BEAST 폴더 (데이터 폴더 기준, 예: nextstrain/runs/.../beast/a41-x)" style="width:520px">
- <button onclick="addJob()">클러스터에서 실행</button><span class="mut" id="jmsg"></span></div>
+ <button onclick="addJob()">클러스터에서 실행</button>
+ <span class="mut">|</span>
+ <label>나누어 실행 <input id="jn" type="number" min="2" max="12" value="4" style="width:58px"> 조각</label>
+ <button onclick="addSplit()">여러 서버로 나누어 실행</button><span class="mut" id="jmsg"></span></div>
+<div class="help" style="margin:-4px 0 10px">하나의 MCMC 사슬은 쪼갤 수 없습니다(각 상태가 앞 상태에서 나오므로). 대신 <b>같은 분석을 시드만 다르게 한 짧은 사슬 여러 개</b>로 나누어 서버마다 하나씩 돌립니다.
+조각 수가 n이면 각 사슬은 1/n 길이이고 각자 자기 번인(10%)을 버리므로, 합친 표본 수는 긴 사슬 하나와 같습니다. 기록 간격도 같게 맞춥니다.
+마지막 조각이 돌아오면 메인이 <b>사슬들이 서로 같은 답에 도달했는지</b>(Gelman–Rubin R-hat, 95% HPD 겹침) 확인한 뒤 LogCombiner로 합쳐 <code>&lt;폴더이름&gt;-combined</code>에 넣습니다.
+짧은 사슬일수록 각자 번인 안에 수렴해야 하므로, 조각을 너무 잘게 나누지 마세요.</div>
+<div id="gt"></div>
 <table id="jt"><thead><tr><th class="nw">상태</th><th>작업</th><th class="nw">서브서버</th><th class="nw">시도</th><th class="nw">시작</th><th style="width:28%">진행</th><th></th></tr></thead><tbody></tbody></table>
 
 <style>
@@ -45,6 +53,23 @@ async function addNode(){const [ok,j]=await post("/api/cluster/nodes",{name:docu
  b.innerHTML='<b>워커 키는 지금 한 번만 보입니다.</b> 워커 서버에서: <code>genomecurator worker --main http://메인주소:8000 --key '+esc(j.key)+' --workdir gc-worker</code>';load()}
 async function addJob(){const [ok,j]=await post("/api/cluster/jobs",{folder:document.getElementById("jf").value});
  document.getElementById("jmsg").textContent=ok?"대기열에 넣었습니다 ("+j.id+")":j.error;if(ok)load()}
+async function addSplit(){const n=parseInt(document.getElementById("jn").value||"2",10);
+ const [ok,j]=await post("/api/cluster/jobs/split",{folder:document.getElementById("jf").value,parts:n});
+ document.getElementById("jmsg").textContent=ok?n+"조각으로 나누어 대기열에 넣었습니다":j.error;if(ok)load()}
+async function joinGroup(id){const [ok,j]=await post("/api/cluster/groups/"+id+"/join",{});
+ document.getElementById("jmsg").textContent=ok?"합쳤습니다":j.error;load()}
+function groupBox(s){if(!s.groups||!s.groups.length)return"";
+ const b=[];for(const g of s.groups){
+  const bar=g.jobs.map(x=>'<span class="cst '+x.state+'" style="margin-right:4px">'+(x.part||"?")+'</span>').join("");
+  let st;
+  if(g.joined)st=g.agreement?(g.agreement.ok?'<b style="color:#1a7f37">합쳤습니다 · 사슬들이 일치합니다</b> <span class="mut">(최대 R-hat '+g.agreement.worst[1]+", 표본 "+(g.agreement.samples||0).toLocaleString()+')</span>'
+                                             :'<b style="color:#b2182b">합쳤지만 사슬들이 일치하지 않습니다</b> <span class="mut">('+(g.agreement.disjoint.length?"95% HPD가 겹치지 않음: "+esc(g.agreement.disjoint.join(", ")):"최대 R-hat "+g.agreement.worst[1])+')</span>')
+                            :'<b>합쳤습니다</b>';
+  else if(g.failed)st='<span style="color:#b2182b">조각 '+g.failed+'개가 실패/취소되었습니다</span>';
+  else if(g.ready)st=(s.joining?'합치는 중…':'<button onclick="joinGroup(\''+g.id+'\')">지금 합치기</button>');
+  else st='<span class="mut">'+g.done+'/'+g.parts+' 조각 완료</span>';
+  b.push('<div style="border:1px solid var(--line);border-radius:8px;padding:8px 10px;margin:0 0 8px"><b>나누어 실행</b> <span class="mut">'+esc((g.source||"").split("/").pop())+' → '+esc((g.out||"").split("/").pop())+'</span><br>'+bar+' &nbsp; '+st+'</div>')}
+ return b.join("")}
 async function approve(id){const r=REQ[id];const pv=document.getElementById("rp-"+id).checked;
  if(!confirm(r.name+" ("+r.ip+")을(를) 서브서버로 승인합니다."+(pv?"\n비공개 유전체가 든 작업도 이 서버로 갑니다.":"")+"\n아는 서버가 맞습니까?"))return;await post("/api/cluster/requests/"+id+"/approve",{allow_private:pv});load()}
 async function reject(id){await post("/api/cluster/requests/"+id+"/reject");load()}
@@ -84,6 +109,7 @@ async function load(){if(busy)return;busy=true;try{const s=await (await fetch("/
  document.querySelectorAll("#nt tr.nr").forEach(r=>r.onclick=()=>{const id=r.dataset.id;openN.has(id)?openN.delete(id):openN.add(id);busy=false;load()});
  const rows=[];for(const j of s.jobs){rows.push('<tr class="jr" data-id="'+j.id+'" style="cursor:pointer"><td><span class="cst '+j.state+'">'+ST[j.state]+'</span></td><td>'+esc(j.label)+(j.private?' <span class="mut">(비공개)</span>':"")+'</td><td class="nw">'+esc(j.node||"-")+'</td><td class="nw">'+j.attempts+"/"+j.max_attempts+'</td><td class="nw">'+esc((j.created||"").replace("T"," "))+'</td><td>'+(j.state==="running"?prog(j.pct,j.msg,j.claimed)+stale(j):'<span class="mut">'+esc(j.state==="error"?j.error:j.msg||"")+'</span>')+'</td><td>'+(j.state==="queued"||j.state==="running"?'<button onclick="event.stopPropagation();cancel(\''+j.id+'\')">취소</button>':"")+'</td></tr>');
   if(open_.has(j.id))rows.push('<tr class="dt" data-for="'+j.id+'"><td colspan="7" class="jdet">…</td></tr>')}
+ document.getElementById("gt").innerHTML=groupBox(s);
  document.querySelector("#jt tbody").innerHTML=rows.join("")||'<tr><td colspan="7" class="mut">작업이 없습니다.</td></tr>';
  for(const id of open_){const c=document.querySelector('tr.dt[data-for="'+id+'"] td');if(c)c.innerHTML=await detail(id)}
  document.querySelectorAll("#jt tr.jr").forEach(r=>r.onclick=()=>{const id=r.dataset.id;open_.has(id)?open_.delete(id):open_.add(id);busy=false;load()})
