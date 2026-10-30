@@ -403,6 +403,10 @@ class Worker:
                 if not known:
                     self.main.json("POST", "/api/cluster/w/hello", {**caps, "metrics": self.metrics()})
                     known = True
+                    self.resume()
+                    # jobs the main server still counts as ours but that do not run here (this process is new, or a job was lost):
+                    # hand them back now instead of after the grace period
+                    self.main.json("POST", "/api/cluster/w/sync", {"running": list(self.jobs)})
                 self.resume()
                 if self.paused.is_set():
                     if self.status["state"] != "paused":
@@ -699,6 +703,7 @@ def _wait_for_approval(every: float = 5.0) -> None:
 def sub_start(main: str | None = None, key: str | None = None, beast: str | None = None) -> dict:
     """Start with a key that is already known (handed over at approval, or typed for a worker added by hand on the main server)."""
     cfg = load_config()
+    before = (cfg.get("main"), cfg.get("key"), cfg.get("beast"))
     if main:
         cfg["main"] = main.strip().rstrip("/")
     if key:
@@ -710,6 +715,10 @@ def sub_start(main: str | None = None, key: str | None = None, beast: str | None
     env = env_check(find_beast(cfg.get("beast")), _workdir())
     if not env["ok"]:
         raise ValueError("the environment check failed: " + "; ".join(f"{c['name']} ({c['detail']})" for c in env["checks"] if not c["ok"]))
+    if not IN_PROCESS and _worker_pid() is not None and (cfg.get("main"), cfg.get("key"), cfg.get("beast")) == before:
+        cfg["enabled"] = True                  # the worker already runs with these settings: keep it (and its jobs), never restart it
+        save_config(cfg)
+        return sub_status()
     sub_stop(wait=True)
     cfg["enabled"] = True
     save_config(cfg)

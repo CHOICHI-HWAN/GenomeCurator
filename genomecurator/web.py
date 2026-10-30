@@ -2229,6 +2229,13 @@ def create_app(scheduler: bool = True) -> FastAPI:
         from . import clusterworker
         return clusterworker.sub_shell(bool((await request.json()).get("on")))
 
+    @app.post("/api/cluster/w/sync")
+    async def cluster_w_sync(request: Request):
+        n = _worker(request)
+        if not n:
+            return JSONResponse({"error": "unknown worker key"}, 403)
+        return cluster.sync_running(n, (await request.json()).get("running") or [])
+
     @app.post("/api/cluster/w/hello")
     async def cluster_w_hello(request: Request):
         n = _worker(request)

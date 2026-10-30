@@ -805,3 +805,30 @@ def test_the_worker_process_follows_switch_off_and_pause_from_the_app(tmp_path, 
     assert w2.stop.is_set()
     _cw._write_status(w2)
     assert json.loads(_cw._status_path().read_text())["status"]["state"] == "starting"
+
+
+def test_restarting_the_app_keeps_a_running_worker_process(tmp_path, monkeypatch):
+    """The app's start-up calls sub_start(); with a worker process already running on the same settings it must not stop it."""
+    _env(tmp_path, monkeypatch)
+    monkeypatch.setattr(_cw, "IN_PROCESS", False)
+    monkeypatch.setattr(_cw, "_worker_pid", lambda: 31337)                      # a worker process is alive
+    stopped, spawned = [], []
+    monkeypatch.setattr(_cw, "sub_stop", lambda **k: stopped.append(k) or {})
+    monkeypatch.setattr(_cw, "_spawn_worker", lambda: spawned.append(1) or 1)
+    _cw.save_config({"main": "http://127.0.0.1:8001", "key": "k" * 30, "enabled": True})
+    _cw.sub_start()
+    assert stopped == [] and spawned == []                                     # left alone
+    _cw.sub_start("http://10.0.0.9:8001", "z" * 30)                            # other settings: then it is restarted
+    assert stopped and _cw.load_config()["main"] == "http://10.0.0.9:8001"
+
+
+def test_a_restarted_worker_hands_back_jobs_it_no_longer_runs(tmp_path, monkeypatch):
+    c = _env(tmp_path, monkeypatch)
+    n = c.authenticate(c.create_node("w")["key"])
+    c.hello(n, {"kinds": ["beast"], "cpus": 64})
+    a = c.submit_beast(_pkg(tmp_path, "a"))
+    b = c.submit_beast(_pkg(tmp_path, "b"))
+    c.claim(n); c.claim(n)
+    r = c.sync_running(n, [a])                                                 # the worker still runs a, lost b
+    assert r["released"] == [b]
+    assert c.get_job(a)["state"] == "running" and c.get_job(b)["state"] == "queued" and c.get_job(b)["attempts"] == 0

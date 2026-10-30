@@ -616,6 +616,23 @@ def give_back(node: dict, jid: str, why: str = "stopped on the sub-server") -> d
     return {"ack": True}
 
 
+def sync_running(node: dict, running: list[str]) -> dict:
+    """The worker says which jobs it runs. Any other job the main server still counts as running there is handed out again at once
+    (not counted as an attempt: the job did not fail, the worker lost it, e.g. it was restarted)."""
+    keep = set(running or [])
+    released = []
+    con = connect()
+    try:
+        for r in con.execute("SELECT id FROM cluster_job WHERE state='running' AND node_id=?", (node["id"],)).fetchall():
+            if r["id"] not in keep:
+                _release(con, r["id"], f"{node['name']} no longer runs it", count=False)
+                released.append(r["id"])
+        con.commit()
+    finally:
+        con.close()
+    return {"released": released}
+
+
 def cancel(jid: str) -> bool:
     con = connect()
     try:
