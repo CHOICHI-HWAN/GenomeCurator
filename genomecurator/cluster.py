@@ -383,8 +383,15 @@ def list_jobs(limit: int = 100) -> list[dict]:
     return rows
 
 
+_UP_SINCE = datetime.now()                                       # when this main server started: workers need time to check in again after it was away
+
+
 def reap() -> int:
-    """Running jobs whose worker has not been heard from for LEASE seconds go back to the queue (or to error after the last attempt)."""
+    """Running jobs whose worker has not been heard from for LEASE seconds go back to the queue (or to error after the last attempt).
+    Silence while this server was down does not count: after a restart every worker gets the same LEASE to report in, so that a job
+    that is still computing on its worker is not handed out a second time."""
+    if datetime.now() - _UP_SINCE < timedelta(seconds=LEASE):
+        return 0                                                 # this server has just started: every worker still has its full lease to report in
     cut = (datetime.now() - timedelta(seconds=LEASE)).isoformat(timespec="seconds")
     n = 0
     con = connect()

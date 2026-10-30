@@ -4081,3 +4081,27 @@ for f in ins:
     run("s3", 3, 0.3, chain=2000)
     with _pytest.raises(ValueError):
         beastprep.combine_runs({}, ["s1", "s3"], "bad")              # a different analysis
+
+
+def test_beast_xml_can_use_gtr_as_well_as_hky(tmp_path, monkeypatch):
+    """ModelFinder picks GTR for some viruses, so the XML writer must offer more than HKY."""
+    import random
+    import re
+    from genomecurator import beastprep
+    rng = random.Random(0)
+    seqs = {f"s{i}": "".join(rng.choice("ACGT") for _ in range(300)) for i in range(12)}
+    dates = {k: 2020.0 + i * 0.3 for i, k in enumerate(seqs)}
+    made = {}
+    for model in ("hky", "gtr"):
+        s = beastprep.parse_settings({"n_tips": 12, "chain_length": 20000, "samples": 200, "subst_model": model})
+        assert s["subst_model"] == model
+        x = beastprep.build_xml(seqs, dates, {"g": list(seqs)[:3]}, s, 4e-5)
+        made[model] = x
+        ids = set(re.findall(r'idref="([^"]+)"', x))
+        defined = set(re.findall(r' id="([^"]+)"', x))
+        assert not ids - defined, f"{model}: {sorted(ids - defined)}"      # every reference points at something BEAST will have read
+    assert "<gtrModel" in made["gtr"] and "<HKYModel" not in made["gtr"]
+    assert all(f"<rate{r.upper()}>" in made["gtr"] for r in beastprep.GTR_RATES) and "rateCT" not in made["gtr"]
+    assert "kappa" not in made["gtr"] and made["gtr"].count('idref="ac"') >= 3   # operator, prior and log
+    assert "<HKYModel" in made["hky"] and "<gtrModel" not in made["hky"] and "kappa" in made["hky"]
+    assert beastprep.parse_settings({"subst_model": "nonsense"})["subst_model"] == "hky"

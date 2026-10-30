@@ -74,7 +74,9 @@ def test_claim_order_one_job_per_worker_and_private_routing(tmp_path, monkeypatc
 
 
 def test_silent_worker_loses_the_job_and_attempts_run_out(tmp_path, monkeypatch):
+    import datetime as dt
     c = _env(tmp_path, monkeypatch)
+    monkeypatch.setattr(c, "_UP_SINCE", dt.datetime.now() - dt.timedelta(seconds=c.LEASE * 2))   # not a fresh start
     from genomecurator.db import connect
     jid = c.submit_beast(_pkg(tmp_path), max_attempts=2)
     n = c.authenticate(c.create_node("w")["key"])
@@ -832,3 +834,21 @@ def test_a_restarted_worker_hands_back_jobs_it_no_longer_runs(tmp_path, monkeypa
     r = c.sync_running(n, [a])                                                 # the worker still runs a, lost b
     assert r["released"] == [b]
     assert c.get_job(a)["state"] == "running" and c.get_job(b)["state"] == "queued" and c.get_job(b)["attempts"] == 0
+
+
+def test_a_job_is_not_handed_out_again_just_because_the_main_server_restarted(tmp_path, monkeypatch):
+    """The worker keeps computing while the main server is away; it must get its full lease to report in before the job is taken from it."""
+    import datetime as dt
+    c = _env(tmp_path, monkeypatch)
+    from genomecurator.db import connect
+    jid = c.submit_beast(_pkg(tmp_path))
+    n = c.authenticate(c.create_node("w")["key"])
+    c.claim(n)
+    old = (dt.datetime.now() - dt.timedelta(seconds=c.LEASE * 3)).isoformat(timespec="seconds")
+    con = connect()
+    con.execute("UPDATE cluster_job SET heartbeat=?, claimed=? WHERE id=?", (old, old, jid))
+    con.commit()
+    monkeypatch.setattr(c, "_UP_SINCE", dt.datetime.now())                     # as if the server had just come back
+    assert c.reap() == 0 and c.get_job(jid)["state"] == "running"
+    monkeypatch.setattr(c, "_UP_SINCE", dt.datetime.now() - dt.timedelta(seconds=c.LEASE * 2))
+    assert c.reap() == 1 and c.get_job(jid)["state"] == "queued"               # once it has been up long enough, the silence counts

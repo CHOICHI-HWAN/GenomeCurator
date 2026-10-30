@@ -25,7 +25,9 @@ _log = log.get("beast")
 DEFAULTS = {"n_tips": 150, "chain_length": 30000000, "samples": 10000, "clock": "relaxed", "tree_prior": "exponential", "seed": 1, "threads": 0}
 CLOCKS = ("strict", "relaxed")
 PRIORS = ("constant", "exponential")                     # the parametric tree priors the marginal-likelihood comparison (BETS / GSS) uses
-TREE_PRIORS = PRIORS + ("skygrid",)                       # all tree priors a BEAST analysis accepts
+TREE_PRIORS = PRIORS + ("skygrid",)
+SUBST_MODELS = ("hky", "gtr")                            # HKY (one transition/transversion ratio) or GTR (six exchange rates)
+GTR_RATES = ("ac", "ag", "at", "cg", "gt")               # BEAST fixes the sixth (C<->T) at 1; the XML elements are rateAC, rateAG, ...                       # all tree priors a BEAST analysis accepts
 
 
 def env_prefix() -> Path | None:
@@ -63,6 +65,7 @@ def parse_settings(raw: dict | None) -> dict:
         raise ValueError("체인 길이는 10,000 이상, 표본 수는 100~100,000이어야 합니다.")
     if out["clock"] not in CLOCKS or out["tree_prior"] not in TREE_PRIORS:
         raise ValueError(f"시계는 {', '.join(CLOCKS)}, 트리 사전분포는 {', '.join(TREE_PRIORS)} 중 하나입니다.")
+    out["subst_model"] = str(s.get("subst_model") or "hky").lower() if str(s.get("subst_model") or "hky").lower() in SUBST_MODELS else "hky"
     out["site_rates"] = str(s.get("site_rates") or "gamma") if str(s.get("site_rates") or "gamma") in ("gamma", "inv", "gamma_inv") else "gamma"   # rate variation among sites: gamma(4), a proportion of invariant sites, or both
     out["skygrid_points"] = max(8, min(200, int(s.get("skygrid_points") or 36)))      # SkyGrid: number of grid cells (one per month by default)
     out["month_dates"] = bool(s.get("month_dates"))                                # use month-only dates at the middle of the month
@@ -135,6 +138,7 @@ def build_xml(seqs: dict[str, str], dates: dict[str, float], groups: dict[str, l
     """The BEAST 1.10-style XML. `proper`: only proper priors (the clock rate and the population size get log-normal priors instead of the vague gamma / 1/x ones): a marginal likelihood, and so a Bayes factor, exists only for proper priors. `fixed_freq`: the base frequencies are the alignment's own and not sampled (needed for generalized stepping-stone sampling, which has no working prior for a simplex). `gss` = {"log", "burnin", "chain_length", "path_steps", "alpha"}: instead of path sampling / stepping-stone sampling, generalized stepping-stone sampling against a working prior built from the posterior samples of an earlier ordinary run of this model (`log` is read from the folder BEAST runs in, the first `burnin` states are discarded). `init` = {parameter id: starting value}: the chain starts there (for GSS, from the middle of the earlier posterior - a start outside the working prior has zero density and BEAST refuses it). `mle` = {"chain_length", "path_steps", "alpha"}: after the initial chain, path sampling and stepping-stone sampling of the marginal likelihood (`marginalLikelihoodEstimator`, written to `<prefix>.mle.log`). `seqs` {taxon: aligned sequence}, `dates` {taxon: decimal year}, `groups` {name: [taxa]} for the tMRCA of each group, `rate0` the starting clock rate (substitutions / site / year)."""
     names = list(seqs)
     sr = s.get("site_rates", "gamma")
+    sm = s.get("subst_model", "hky")
     chain, every = s["chain_length"], max(1, s["chain_length"] // s["samples"])
     L = []
     w = L.append
@@ -209,9 +213,13 @@ def build_xml(seqs: dict[str, str], dates: dict[str, float], groups: dict[str, l
             freq_value = " ".join(f"{x:.10f}" for x in fr) + f" {1 - sum(fr):.10f}"                 # the last one is the remainder: BEAST refuses frequencies that do not sum to 1 (6 decimals gave 1.000001)
         else:
             freq_value = "0.25 0.25 0.25 0.25"
-        w(f'\t<HKYModel id="hky{suf}"><frequencies><frequencyModel dataType="nucleotide"><frequencies><parameter id="frequencies{suf}" value="' + freq_value + '"/></frequencies></frequencyModel></frequencies>'
-          f'<kappa><parameter id="kappa{suf}" value="2.0" lower="0.0"/></kappa></HKYModel>')
-        w(f'\t<siteModel id="siteModel{suf}"><substitutionModel><HKYModel idref="hky{suf}"/></substitutionModel>' + (f'<relativeRate><parameter id="mu{suf}" value="1.0" lower="0.0"/></relativeRate>' if part else "")
+        freqs = f'<frequencies><frequencyModel dataType="nucleotide"><frequencies><parameter id="frequencies{suf}" value="' + freq_value + '"/></frequencies></frequencyModel></frequencies>'
+        if sm == "gtr":
+            w(f'\t<gtrModel id="gtr{suf}">' + freqs + "".join(f'<rate{r.upper()}><parameter id="{r}{suf}" value="1.0" lower="0.0"/></rate{r.upper()}>' for r in GTR_RATES) + '</gtrModel>')
+            w(f'\t<compoundParameter id="allRates{suf}">' + "".join(f'<parameter idref="{r}{suf}"/>' for r in GTR_RATES) + '</compoundParameter>')
+        else:
+            w(f'\t<HKYModel id="hky{suf}">' + freqs + f'<kappa><parameter id="kappa{suf}" value="2.0" lower="0.0"/></kappa></HKYModel>')
+        w(f'\t<siteModel id="siteModel{suf}"><substitutionModel>' + (f'<gtrModel idref="gtr{suf}"/>' if sm == "gtr" else f'<HKYModel idref="hky{suf}"/>') + '</substitutionModel>' + (f'<relativeRate><parameter id="mu{suf}" value="1.0" lower="0.0"/></relativeRate>' if part else "")
           + (f'<gammaShape gammaCategories="4"><parameter id="alpha{suf}" value="0.5" lower="0.0"/></gammaShape>' if sr != "inv" else "")
           + (f'<proportionInvariant><parameter id="pInv{suf}" value="0.5" lower="0.0" upper="1.0"/></proportionInvariant>' if sr != "gamma" else "") + '</siteModel>')
     if part:
@@ -219,7 +227,11 @@ def build_xml(seqs: dict[str, str], dates: dict[str, float], groups: dict[str, l
     w('\t<treeDataLikelihood id="treeLikelihood" useAmbiguities="false">' + "".join(f'<partition><patterns idref="patterns{suf}"/><siteModel idref="siteModel{suf}"/></partition>' for suf, _q in sets) + f'<treeModel idref="treeModel"/>{rate_ref}</treeDataLikelihood>')
     w('\t<operators id="operators" optimizationSchedule="default">')
     for suf, _q in sets:
-        w(f'\t\t<scaleOperator scaleFactor="0.75" weight="0.1"><parameter idref="kappa{suf}"/></scaleOperator>')
+        if sm == "gtr":
+            for r in GTR_RATES:
+                w(f'\t\t<scaleOperator scaleFactor="0.75" weight="0.1"><parameter idref="{r}{suf}"/></scaleOperator>')
+        else:
+            w(f'\t\t<scaleOperator scaleFactor="0.75" weight="0.1"><parameter idref="kappa{suf}"/></scaleOperator>')
         if sr != "inv":
             w(f'\t\t<scaleOperator scaleFactor="0.75" weight="0.1"><parameter idref="alpha{suf}"/></scaleOperator>')
         if sr != "gamma":
@@ -250,7 +262,10 @@ def build_xml(seqs: dict[str, str], dates: dict[str, float], groups: dict[str, l
     w(f'\t<mcmc id="mcmc" chainLength="{chain}" autoOptimize="true" operatorAnalysis="{fileprefix}.ops">')
     w('\t\t<posterior id="posterior"><prior id="prior">')
     for suf, _q in sets:
-        w(f'\t\t\t<logNormalPrior mean="1.0" stdev="1.25" offset="0.0" meanInRealSpace="false"><parameter idref="kappa{suf}"/></logNormalPrior>')
+        if sm == "gtr":
+            w(f'\t\t\t<gammaPrior shape="0.05" scale="20.0" offset="0.0">' + "".join(f'<parameter idref="{r}{suf}"/>' for r in GTR_RATES) + '</gammaPrior>')
+        else:
+            w(f'\t\t\t<logNormalPrior mean="1.0" stdev="1.25" offset="0.0" meanInRealSpace="false"><parameter idref="kappa{suf}"/></logNormalPrior>')
         if sr != "inv":
             w(f'\t\t\t<exponentialPrior mean="0.5" offset="0.0"><parameter idref="alpha{suf}"/></exponentialPrior>')
         if sr != "gamma":
@@ -283,7 +298,7 @@ def build_xml(seqs: dict[str, str], dates: dict[str, float], groups: dict[str, l
       '<column label="Likelihood" dp="4" width="12"><likelihood idref="likelihood"/></column><column label="rootAge" sf="6" width="12"><tmrcaStatistic idref="age(root)"/></column></log>')
     w(f'\t\t<log id="fileLog" logEvery="{every}" fileName="{fileprefix}.log" overwrite="false"><posterior idref="posterior"/><prior idref="prior"/><likelihood idref="likelihood"/>'
       '<parameter idref="treeModel.rootHeight"/><tmrcaStatistic idref="age(root)"/>' + "".join(f'<tmrcaStatistic idref="age({_safe(g)})"/>' + (f'<tmrcaStatistic idref="stem({_safe(g)})"/><monophylyStatistic idref="monophyly({_safe(g)})"/>' if g in s.get("stem_groups", []) else "") for g in groups) + '<treeLengthStatistic idref="treeLength"/>' +
-      ('<parameter idref="skygrid.precision"/><parameter idref="skygrid.logPopSize"/>' if sky else '<parameter idref="demographic.popSize"/>') + ('<parameter idref="demographic.growthRate"/>' if s["tree_prior"] == "exponential" else "") + "".join(f'<parameter idref="kappa{suf}"/>' + (f'<parameter idref="alpha{suf}"/>' if sr != "inv" else "") + (f'<parameter idref="pInv{suf}"/>' if sr != "gamma" else "") for suf, _q in sets) + ('<parameter idref="mu.a"/><parameter idref="mu.b"/>' if part else "") +
+      ('<parameter idref="skygrid.precision"/><parameter idref="skygrid.logPopSize"/>' if sky else '<parameter idref="demographic.popSize"/>') + ('<parameter idref="demographic.growthRate"/>' if s["tree_prior"] == "exponential" else "") + "".join(("".join(f'<parameter idref="{r}{suf}"/>' for r in GTR_RATES) if sm == "gtr" else f'<parameter idref="kappa{suf}"/>') + (f'<parameter idref="alpha{suf}"/>' if sr != "inv" else "") + (f'<parameter idref="pInv{suf}"/>' if sr != "gamma" else "") for suf, _q in sets) + ('<parameter idref="mu.a"/><parameter idref="mu.b"/>' if part else "") +
       f'<parameter idref="{rate_param}"/>' + ('<parameter idref="ucld.stdev"/>' if s["clock"] == "relaxed" else "") + '<rateStatistic idref="meanRate"/><treeDataLikelihood idref="treeLikelihood"/>' + ('<gmrfSkyGridLikelihood idref="skygrid"/>' if sky else '<coalescentLikelihood idref="coalescent"/>') + '</log>')
     w(f'\t\t<logTree id="treeFileLog" logEvery="{every}" nexusFormat="true" fileName="{fileprefix}.trees" sortTranslationTable="true"><treeModel idref="treeModel"/>'
       f'<trait name="rate" tag="rate">{rate_ref}</trait><posterior idref="posterior"/></logTree>')
@@ -303,7 +318,7 @@ def build_xml(seqs: dict[str, str], dates: dict[str, float], groups: dict[str, l
         w(f'\t<marginalLikelihoodEstimator id="MLE" chainLength="{gss["chain_length"]}" pathSteps="{gss["path_steps"]}" pathScheme="betaquantile" alpha="{gss.get("alpha", 0.3)}">')
         w('\t\t<samplers><mcmc idref="mcmc"/></samplers>')
         w('\t\t<pathLikelihood id="pathLikelihood"><source><posterior idref="posterior"/></source><destination><workingPrior id="workingPrior">')
-        for par in ("kappa", "alpha", rate_param) + (("ucld.stdev",) if s["clock"] == "relaxed" else ()) + ("demographic.popSize",):
+        for par in ((GTR_RATES if sm == "gtr" else ("kappa",)) + ("alpha", rate_param)) + (("ucld.stdev",) if s["clock"] == "relaxed" else ()) + ("demographic.popSize",):
             w(f'\t\t\t{ref("logTransformedNormalReferencePrior", par)}<parameter idref="{par}"/></logTransformedNormalReferencePrior>')
         if s["tree_prior"] == "exponential":
             w(f'\t\t\t{ref("normalReferencePrior", "demographic.growthRate")}<parameter idref="demographic.growthRate"/></normalReferencePrior>')
