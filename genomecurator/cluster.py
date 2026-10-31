@@ -914,6 +914,11 @@ def _join_in_background() -> None:
         with _joining:
             finish_split_groups()
             finish_bets_groups()
+            try:
+                from . import beastplan
+                beastplan.advance_all()                          # a plan whose step is now in starts its next one
+            except Exception:
+                _log.warning("could not advance the analysis plans", exc_info=True)
     threading.Thread(target=work, name="gc-group-finish", daemon=True).start()
 
 
@@ -925,5 +930,10 @@ def state() -> dict:
             x["stage"] == "mcmc" and x["state"] == "done" and (x["tag"], "gss") not in {(y["tag"], y["stage"]) for y in g["jobs"]}
             for g in bets for x in g["jobs"]):
         _join_in_background()
+    try:
+        from . import beastplan
+        plans = beastplan.unfinished()
+    except Exception:
+        plans = []
     return {"nodes": list_nodes(), "requests": list_requests(), "jobs": list_jobs(100), "groups": groups, "bets": bets,
-            "joining": _joining.locked(), "lease": LEASE, "stale": STALE, "now": _now()}
+            "plans": plans, "joining": _joining.locked(), "lease": LEASE, "stale": STALE, "now": _now()}

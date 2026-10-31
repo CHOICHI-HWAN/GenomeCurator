@@ -886,6 +886,7 @@ def parse_bets_settings(raw: dict | None) -> dict:
     out["site_rates"] = str(s.get("site_rates") or "gamma") if str(s.get("site_rates") or "gamma") in ("gamma", "inv", "gamma_inv") else "gamma"
     out["compare"] = bool(s.get("compare"))
     out["name"] = re.sub(r"[^A-Za-z0-9_.\-]", "_", str(s.get("name") or ""))[:40]     # its own folder `bets/<name>/`, so that two estimations can run side by side
+    out["tip_names"] = [str(x) for x in (s.get("tip_names") or [])]        # the exact genomes to use; empty means draw a subsample of n_tips
     if not 10 <= out["n_tips"] <= 300:
         raise ValueError("표본 유전체 수는 10~300입니다.")
     if out["initial_chain"] < 10000 or out["step_chain"] < 1000 or not 4 <= out["path_steps"] <= 500:
@@ -954,7 +955,14 @@ def _bets_data(clock_run: dict, s: dict) -> tuple[dict, dict, float, int, float]
     src = next((r for r in nextstrain.list_runs(clock_run["dataset_id"]) if r["id"] == S["source_run"]), None)
     if not src or src["tool"] != "squirrel":
         raise ValueError("BETS는 Squirrel 정렬이 필요합니다. 분자시계를 Squirrel 트리로 실행하세요.")
-    chosen = choose_tips(S["tips"], s["n_tips"], s["seed"])
+    if s.get("tip_names"):                                                # the dating analysis's own genomes, so that the signal and the
+        want = set(s["tip_names"])                                        # model are judged on the data the answer comes from
+        chosen = sorted((t for t in S["tips"] if t["name"] in want), key=lambda t: t["date"])
+        missing = want - {t["name"] for t in chosen}
+        if missing:
+            raise ValueError(f"고른 유전체 중 이 분자시계 실행에 없는 것이 있습니다: {', '.join(sorted(missing)[:8])}")
+    else:
+        chosen = choose_tips(S["tips"], s["n_tips"], s["seed"])
     if len(chosen) < 10:
         raise ValueError(f"BETS에 쓸 수 있는 유전체(날짜가 일 단위이고 이상치가 아님)가 {len(chosen)}개뿐입니다.")
     want = {t["name"] for t in chosen}

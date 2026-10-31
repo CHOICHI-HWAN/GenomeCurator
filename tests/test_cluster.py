@@ -980,3 +980,61 @@ def test_the_cluster_runs_whole_chains_unless_splitting_is_asked_for(tmp_path, m
     assert g2["mode"] == "split" and 'chainLength="500000"' in (Path(g2["parts"][0]) / "beast.xml").read_text()
     with pytest.raises(ValueError):
         c.submit_beast_split(d, 2, mode="nonsense")
+
+
+# ---- a whole analysis as one plan: same genomes, same alignment, same substitution model at every step
+def test_a_plan_holds_every_step_to_one_setting(tmp_path, monkeypatch):
+    from genomecurator import beastplan, beastprep
+    c = _env(tmp_path, monkeypatch)
+    mf = tmp_path / "mf.iqtree"
+    mf.write_text("Best-fit model according to BIC: GTR+F+I\n", encoding="utf-8")
+    tips = [f"g{i}" for i in range(20)]
+    sent = {}
+
+    def fake_bets(cr, st, **k):
+        sent[st.get("name")] = st
+        return {"group": "G1", "jobs": ["j1", "j2"], "root": str(tmp_path), "tags": ["dated", "undated"], "stages": ["mcmc", "gss"]}
+    monkeypatch.setattr(c, "submit_bets", fake_bets)
+    cr = {"run_dir": str(tmp_path), "id": 7}
+    p = beastplan.start(cr, "ib", tips, mf, dating={"chain_length": 30_000_000, "samples": 10_000}, chains=3)
+    assert p["stage"] == "bets" and p["n_tips"] == 20 and p["chains"] == 3
+    assert p["model"]["model"] == "GTR+F+I" and p["model"]["subst_model"] == "gtr" and p["model"]["site_rates"] == "inv"
+    for s in (p["bets_settings"], p["dating_settings"]):                       # the same genomes and the same model everywhere
+        assert s["tip_names"] == sorted(tips) and s["subst_model"] == "gtr" and s["site_rates"] == "inv"
+    assert p["grid"] == [f"{a}-{b}" for a in beastprep.CLOCKS for b in beastprep.PRIORS] and len(p["grid"]) == 12
+    assert beastplan.read(cr, "ib")["stage"] == "bets" and len(beastplan.unfinished()) >= 0
+    with pytest.raises(ValueError):
+        beastplan.start(cr, "ib", tips, mf)                                    # not twice
+
+
+def test_a_plan_stops_when_the_dates_carry_no_signal(tmp_path, monkeypatch):
+    from genomecurator import beastplan
+    c = _env(tmp_path, monkeypatch)
+    mf = tmp_path / "mf.iqtree"
+    mf.write_text("Best-fit model according to BIC: HKY+F+I\n", encoding="utf-8")
+    monkeypatch.setattr(c, "submit_bets", lambda cr, st, **k: {"group": "Gsignal", "jobs": ["j"], "root": str(tmp_path), "tags": [], "stages": []})
+    cr = {"run_dir": str(tmp_path), "id": 7}
+    beastplan.start(cr, "p", [f"g{i}" for i in range(12)], mf)
+    monkeypatch.setattr(c, "split_groups", lambda: [])
+    monkeypatch.setattr(c, "bets_groups", lambda: [{"id": "Gsignal", "joined": True, "summary": {"log_bf_gss": 1.2}}])
+    p = beastplan.advance(cr, "p")
+    assert p["stage"] == "stopped" and "1.2" in p["stopped_because"] and "멈춥니다" in p["stopped_because"]
+    monkeypatch.setattr(c, "bets_groups", lambda: [{"id": "Gsignal", "joined": True, "summary": {"log_bf_gss": 35.7}}])
+    assert beastplan.advance(cr, "p")["stage"] == "stopped"                    # a stopped plan stays stopped
+
+
+def test_a_plan_with_a_signal_goes_on_to_compare_every_combination(tmp_path, monkeypatch):
+    from genomecurator import beastplan, beastprep
+    c = _env(tmp_path, monkeypatch)
+    mf = tmp_path / "mf.iqtree"
+    mf.write_text("Best-fit model according to BIC: HKY+F+I\n", encoding="utf-8")
+    calls = []
+    monkeypatch.setattr(c, "submit_bets", lambda cr, st, **k: calls.append(st) or
+                        {"group": "G%d" % len(calls), "jobs": ["j"], "root": str(tmp_path), "tags": [], "stages": []})
+    cr = {"run_dir": str(tmp_path), "id": 7}
+    beastplan.start(cr, "p", [f"g{i}" for i in range(12)], mf)
+    monkeypatch.setattr(c, "split_groups", lambda: [])
+    monkeypatch.setattr(c, "bets_groups", lambda: [{"id": "G1", "joined": True, "summary": {"log_bf_gss": 35.7}}])
+    p = beastplan.advance(cr, "p")
+    assert p["stage"] == "compare" and calls[1]["compare"] is True
+    assert calls[1]["subst_model"] == "hky" and calls[1]["site_rates"] == "inv" and calls[1]["tip_names"] == calls[0]["tip_names"]
