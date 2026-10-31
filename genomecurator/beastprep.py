@@ -36,7 +36,7 @@ DEMOGRAPHICS = {                                         # parametric coalescent
     "exponential": {"element": "exponentialGrowth", "extra": ("demographic.growthRate",), "label": "exponential-growth"},
     # t50 must start above zero and the growth rate modestly, or the coalescent likelihood of the starting tree is -Inf
     "logistic":    {"element": "logisticGrowth", "extra": ("demographic.growthRate", "demographic.t50"), "label": "logistic-growth",
-                    "start": {"demographic.growthRate": "0.1", "demographic.t50": "1.0"}},
+                    "start": {"demographic.growthRate": "0.1", "demographic.t50": '1.0" lower="0.0'}},
     "expansion":   {"element": "expansion", "extra": ("demographic.growthRate", "demographic.ancestralProportion"), "label": "exponential-expansion"},
 }
 CLOCKS = tuple(CLOCK_MODELS)
@@ -196,7 +196,7 @@ def build_xml(seqs: dict[str, str], dates: dict[str, float], groups: dict[str, l
         w(f'\t<patterns id="patterns{suf}" from="1" strip="false" ambiguousConstant="true"><alignment idref="alignment{suf}"/></patterns>')
     sky = s["tree_prior"] == "skygrid"
     demo = DEMOGRAPHICS["constant" if sky else s["tree_prior"]]               # with SkyGrid the block is only there to simulate a starting tree
-    START = {"demographic.popSize": '1.0" lower="0.0', "demographic.growthRate": "1.0", "demographic.t50": "1.0",
+    START = {"demographic.popSize": '1.0" lower="0.0', "demographic.growthRate": "1.0", "demographic.t50": '1.0" lower="0.0',
              "demographic.ancestralProportion": '0.1" lower="0.0" upper="1.0', **demo.get("start", {})}
     ELEM = {"demographic.popSize": "populationSize", "demographic.growthRate": "growthRate", "demographic.t50": "t50",
             "demographic.ancestralProportion": "ancestralPopulationProportion"}
@@ -236,8 +236,6 @@ def build_xml(seqs: dict[str, str], dates: dict[str, float], groups: dict[str, l
         w(f'\t<discretizedBranchRates id="branchRates"><treeModel idref="treeModel"/><distribution>{dist}</distribution>'
           '<rateCategories><parameter id="branchRates.categories"/></rateCategories></discretizedBranchRates>')
         rate_ref = '<discretizedBranchRates idref="branchRates"/>'
-    if "demographic.t50" in demo["extra"]:                                    # logistic growth is only defined while t50 is inside the tree
-        w('\t<booleanLikelihood id="t50BeforeRoot"><testStatistic name="t50BeforeRoot" type="lessThan"><parameter idref="demographic.t50"/><lessThan><parameter idref="treeModel.rootHeight"/></lessThan></testStatistic></booleanLikelihood>')
     w(f'\t<rateStatistic id="meanRate" name="meanRate" mode="mean" internal="true" external="true"><treeModel idref="treeModel"/>{rate_ref}</rateStatistic>')
     for suf, sq in sets:
         if fixed_freq:
@@ -331,10 +329,14 @@ def build_xml(seqs: dict[str, str], dates: dict[str, float], groups: dict[str, l
         for q in demo["extra"]:
             if q == "demographic.ancestralProportion":
                 w(f'\t\t\t<uniformPrior lower="0.0" upper="1.0"><parameter idref="{q}"/></uniformPrior>')
+            elif q == "demographic.t50":
+                # the time at which the population was half its present size: positive, and on the scale of the sampled period.
+                # An exponential prior keeps it there without a hard edge - a hard edge makes the prior end of a path-sampling
+                # run almost unreachable, which is how the logistic analyses came back with an empty marginal-likelihood file.
+                w(f'\t\t\t<exponentialPrior mean="{max(0.5, round(max(dates.values()) - min(dates.values()), 3)):g}" offset="0.0"><parameter idref="{q}"/></exponentialPrior>')
             else:
                 w(f'\t\t\t<laplacePrior mean="0.0" scale="100.0"><parameter idref="{q}"/></laplacePrior>')
-        if "demographic.t50" in demo["extra"]:
-            w('\t\t\t<booleanLikelihood idref="t50BeforeRoot"/>')
+
     w('\t\t\t<gmrfSkyGridLikelihood idref="skygrid"/>' if sky else '\t\t\t<coalescentLikelihood idref="coalescent"/>')
     w('\t\t</prior><likelihood id="likelihood"><treeDataLikelihood idref="treeLikelihood"/></likelihood></posterior>')
     w('\t\t<operators idref="operators"/>')
