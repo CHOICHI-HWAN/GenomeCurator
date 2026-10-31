@@ -1101,3 +1101,26 @@ def test_extra_beast_switches_travel_in_the_spec_and_are_filtered(tmp_path, monk
     from genomecurator import clusterworker as cw
     kept = [str(x) for x in spec["beast_args"] if str(x).startswith("-") or str(x).replace("_", "").isalnum()]
     assert kept == ["-beagle_single", "-pattern_compression", "unique"]         # the worker drops anything that is not a switch or a plain word
+
+
+def test_the_cluster_total_separates_cores_in_use_from_threads_asked_for(tmp_path, monkeypatch):
+    """BEAST asks for twelve threads and uses about one, so summing the requests and calling it cores in use gave
+    "240/120" - more cores busy than the cluster has. The measured figure and the requested one are now separate."""
+    c = _env(tmp_path, monkeypatch)
+    GB = 2 ** 30
+    a = c.authenticate(c.create_node("linux")["key"])
+    b = c.authenticate(c.create_node("mac")["key"])
+    c.hello(a, {"kinds": ["beast"], "cpus": 64})
+    c.hello(b, {"kinds": ["beast"], "cpus": 24})
+    for i in range(3):
+        c.submit_beast(_pkg(tmp_path, f"a{i}", threads=12))
+    for _ in range(3):
+        c.claim(a, metrics={"cpu_pct": 18.0, "cpus": 64, "mem_total": 256 * GB, "mem_used": 30 * GB})
+    c.submit_beast(_pkg(tmp_path, "b0", threads=12))
+    c.claim(b, metrics={"load1": 9.6, "load_pct": 40.0, "cpus": 24, "mem_total": 192 * GB, "mem_used": 60 * GB})
+    t = c.totals()
+    assert t["cpus"] == 88                                                     # what the machines have
+    assert t["threads_asked"] == 48                                            # 4 jobs x 12 threads
+    assert t["cpus_used"] == round(0.18 * 64 + 9.6, 1) == 21.1                 # cpu_pct where there is one, load where there is not
+    assert t["cpu_pct"] == round(100 * 21.1 / 88, 1)
+    assert t["cpus_used"] < t["threads_asked"] < t["cpus"] + t["threads_asked"]

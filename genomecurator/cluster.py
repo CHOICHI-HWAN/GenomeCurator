@@ -168,11 +168,18 @@ def totals(nodes: list[dict] | None = None) -> dict:
     t: dict = {"nodes": len(ns), "offline": len([n for n in (nodes or []) if not n.get("online")]) or None,
                "cpus": 0, "cpus_busy": 0, "cpus_free": 0, "mem_total": 0, "mem_used": 0, "disk_free": 0,
                "jobs": 0, "no_memory": []}
+    t["threads_asked"], t["cpus_used"] = 0, 0.0
     for n in ns:
         m, c = n.get("metrics") or {}, n.get("caps") or {}
-        t["cpus"] += int(c.get("cpus") or m.get("cpus") or 0)
+        phys = int(c.get("cpus") or m.get("cpus") or 0)
+        t["cpus"] += phys
         t["cpus_busy"] += int(n.get("cpus_busy") or 0)
         t["cpus_free"] += int(n.get("cpus_free") or 0)
+        # what the jobs asked for and what the machine is actually doing are different numbers, and on this work they are
+        # very different: BEAST asks for twelve threads and uses about one. Reporting the first as "cores in use" gave
+        # "240/120", which reads as more cores busy than exist.
+        t["threads_asked"] += int(n.get("cpus_busy") or 0)
+        t["cpus_used"] += (m["cpu_pct"] / 100 * phys) if m.get("cpu_pct") is not None else min(float(m.get("load1") or 0), phys)
         t["jobs"] += len(n.get("running_jobs") or [])
         t["disk_free"] += int(m.get("disk_free") or 0)
         if m.get("mem_total"):
@@ -188,7 +195,8 @@ def totals(nodes: list[dict] | None = None) -> dict:
                              ((n.get("caps") or {}).get("build") or {}).get("commit") != mine.get("commit"))
     t["no_build"] = sorted(n.get("name") for n in ns if not ((n.get("caps") or {}).get("build") or {}).get("commit"))
     t["mem_pct"] = round(100.0 * t["mem_used"] / t["mem_total"], 1) if t["mem_total"] else None
-    t["cpu_pct"] = round(100.0 * t["cpus_busy"] / t["cpus"], 1) if t["cpus"] else None
+    t["cpus_used"] = round(t["cpus_used"], 1)
+    t["cpu_pct"] = round(100.0 * t["cpus_used"] / t["cpus"], 1) if t["cpus"] else None
     return t
 
 
