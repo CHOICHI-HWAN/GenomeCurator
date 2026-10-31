@@ -446,7 +446,17 @@ def _groups(rows: list[dict], kind: str = "split") -> dict[str, dict]:
                     e["agreement"] = None
         else:
             e["expected"] = len(e["tags"] or []) * len(e["stages"] or [])
-            e["ready"] = e["done"] == e["expected"] and e["expected"] > 0
+            # A run is ready to summarize when every model has a marginal likelihood from at least one estimator, not when
+            # every analysis succeeded. Path sampling walks to the prior and some models cannot survive the journey - logistic
+            # growth here - while their generalized stepping-stone run, which walks only as far as a working prior, is fine.
+            # Waiting for all of them left a finished comparison sitting unread with its answer already on disk.
+            by_tag: dict[str, set] = {}
+            for x in e["jobs"]:
+                if x["state"] == "done" and x["stage"] in ("psss", "gss"):
+                    by_tag.setdefault(x["tag"], set()).add(x["stage"])
+            still = any(x["state"] in ("queued", "running") for x in e["jobs"])
+            e["ready"] = bool(e["tags"]) and not still and all(by_tag.get(t) for t in e["tags"])
+            e["partial"] = sorted(t for t in (e["tags"] or []) if by_tag.get(t) and "psss" not in by_tag[t])
             sm = Path(e["root"] or "/nonexistent") / "summary.json"
             e["joined"] = sm.is_file()
             if e["joined"]:
