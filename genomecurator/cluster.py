@@ -387,7 +387,8 @@ def _groups(rows: list[dict], kind: str = "split") -> dict[str, dict]:
                                      **{k: g.get(k) for k in ("parts", "out", "source", "root", "tags", "stages", "name", "mode")}})
         e["jobs"].append({"id": j["id"], "part": g.get("part"), "tag": g.get("tag"), "stage": g.get("stage"),
                           "state": j["state"], "pct": j.get("pct"), "node_id": j.get("node_id"), "dir": j.get("target_dir")})
-        e["dirs"][g.get("part") if kind == "split" else (g.get("tag"), g.get("stage"))] = j.get("target_dir")
+        key = g.get("part") if kind == "split" else f'{g.get("tag")}/{g.get("stage")}'      # a string, not a tuple: this goes out as JSON
+        e["dirs"][key] = j.get("target_dir")
     for e in out.values():
         e["jobs"].sort(key=lambda x: (x["tag"] or "", x["part"] or 0, x["stage"] or ""))
         e["done"] = sum(1 for x in e["jobs"] if x["state"] == "done")
