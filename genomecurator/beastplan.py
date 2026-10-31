@@ -67,7 +67,12 @@ def start(clock_run: dict, name: str, tip_names: list[str], modelfinder: str | P
     model = beastprep.modelfinder_choice(modelfinder)
     tips = sorted(set(tip_names))                                      # one fixed, reproducible order for every step
     ds = dict(dating or {}, tip_names=tips, subst_model=model["subst_model"], site_rates=model["site_rates"])
-    bs = dict(bets or {}, tip_names=tips, subst_model=model["subst_model"], site_rates=model["site_rates"], compare=False)
+    # The signal test asks one thing: do the collection dates improve the model. The clock and the tree prior are a nuisance there
+    # and are what the next step is for, so it uses the steadiest pair. Exponential growth is not it: with every tip given the same
+    # date the growth rate runs large (17 against 1.4 here), N(t) collapses along the stepping-stone path and the marginal
+    # likelihood comes back empty. Constant size has no growth rate to run away.
+    bs = dict({"clock": "strict", "tree_prior": "constant"}, **(bets or {}),
+              tip_names=tips, subst_model=model["subst_model"], site_rates=model["site_rates"], compare=False)
     p = {"name": name, "created": datetime.now().isoformat(timespec="seconds"), "run_dir": str(clock_run["run_dir"]),
          "clock_run_id": clock_run.get("id"), "n_tips": len(tips), "tip_names": tips, "model": model,
          "bets_settings": bs, "dating_settings": ds, "chains": int(chains), "stage": "bets", "groups": {}, "results": {},

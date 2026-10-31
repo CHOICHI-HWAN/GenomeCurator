@@ -59,6 +59,33 @@ async function addSplit(){const n=parseInt(document.getElementById("jn").value||
  document.getElementById("jmsg").textContent=ok?n+"조각으로 나누어 대기열에 넣었습니다":j.error;if(ok)load()}
 async function joinGroup(id){const [ok,j]=await post("/api/cluster/groups/"+id+"/join",{});
  document.getElementById("jmsg").textContent=ok?"합쳤습니다":j.error;load()}
+const STAGE_KO={bets:"시계 신호(BETS)",compare:"모델 비교",dating:"본 분석",done:"완료",stopped:"중단"};
+const BSTAGE_KO={psss:"경로/스테핑스톤",mcmc:"일반 체인",gss:"일반화 스테핑스톤"};
+function planBox(s){const ps=s.plans||[];if(!ps.length&&!(s.bets||[]).length)return"";
+ const b=[];
+ for(const p of ps){
+  const gid=(p.groups||{})[p.stage], g=(s.bets||[]).concat(s.groups||[]).find(x=>x.id===gid);
+  const n=g?(g.done+"/"+(g.expected||g.parts||"?")):"—";
+  const steps=["bets","compare","dating"].map(st=>{
+    const cur=p.stage===st, done=["bets","compare","dating"].indexOf(p.stage)>["bets","compare","dating"].indexOf(st)||p.stage==="done";
+    return '<span class="cst '+(done?"done":(cur?"running":"queued"))+'" style="margin-right:5px">'+STAGE_KO[st]+'</span>'}).join("→ ");
+  let extra="";
+  if(p.stage==="stopped")extra='<div style="color:#b2182b;margin-top:4px">'+esc(p.stopped_because||"중단됨")+'</div>';
+  else if(p.chosen)extra='<div class="mut" style="margin-top:4px">선택된 모형 <b>'+esc(p.chosen.clock)+' · '+esc(p.chosen.tree_prior)+'</b>'+(p.chosen.runner_up?' (2위 '+esc(p.chosen.runner_up)+', 로그 BF '+(p.chosen.log_bf_over_runner_up||0).toFixed(1)+')':'')+'</div>';
+  const last=(p.log||[]).slice(-1)[0]||"";
+  b.push('<div style="border:1px solid var(--line);border-radius:8px;padding:9px 11px;margin:0 0 8px;background:#fbfbfd">'
+   +'<b>분석 계획 '+esc(p.name)+'</b> <span class="mut">유전체 '+p.n_tips+'개 · 치환 모형 '+esc((p.model||{}).model||"?")+' · 격자 '+((p.grid||[]).length)+'조합 · 사슬 '+p.chains+'개</span>'
+   +'<div style="margin:6px 0 2px">'+steps+' <span class="mut">현재 단계 작업 '+n+'</span></div>'+extra
+   +'<div class="mut" style="font-size:12px;margin-top:4px">'+esc(last)+'</div></div>')}
+ for(const g of (s.bets||[])){
+  const cells=(g.jobs||[]).map(j=>'<span class="cst '+j.state+'" style="margin:0 4px 4px 0;display:inline-block">'+esc(j.tag||"")+' · '+(BSTAGE_KO[j.stage]||j.stage)+(j.state==="running"&&j.pct?" "+Math.round(j.pct)+"%":"")+'</span>').join("");
+  let st='<span class="mut">'+g.done+'/'+(g.expected||"?")+' 완료</span>';
+  if(g.joined&&g.summary){const v=g.summary.verdict,m=g.summary.models;
+   st=v?'<b>'+esc(v.text||"")+'</b>':(m?'<b>'+esc(m.text||"")+'</b>':'<b>요약 완료</b>')}
+  else if(g.failed)st='<span style="color:#b2182b">'+g.failed+'개 실패</span>';
+  b.push('<div style="border:1px solid var(--line);border-radius:8px;padding:9px 11px;margin:0 0 8px"><b>'
+   +(g.name&&g.name.indexOf("models")>=0?"모델 비교":"시계 신호(BETS)")+'</b> <span class="mut">'+esc(g.name||g.id)+'</span><div style="margin:6px 0">'+cells+'</div>'+st+'</div>')}
+ return b.join("")}
 function groupBox(s){if(!s.groups||!s.groups.length)return"";
  const b=[];for(const g of s.groups){
   const bar=g.jobs.map(x=>'<span class="cst '+x.state+'" style="margin-right:4px">'+(x.part||"?")+'</span>').join("");
@@ -110,7 +137,7 @@ async function load(){if(busy)return;busy=true;try{const s=await (await fetch("/
  document.querySelectorAll("#nt tr.nr").forEach(r=>r.onclick=()=>{const id=r.dataset.id;openN.has(id)?openN.delete(id):openN.add(id);busy=false;load()});
  const rows=[];for(const j of s.jobs){rows.push('<tr class="jr" data-id="'+j.id+'" style="cursor:pointer"><td><span class="cst '+j.state+'">'+ST[j.state]+'</span></td><td>'+esc(j.label)+(j.private?' <span class="mut">(비공개)</span>':"")+'</td><td class="nw">'+esc(j.node||"-")+'</td><td class="nw">'+j.attempts+"/"+j.max_attempts+'</td><td class="nw">'+esc((j.created||"").replace("T"," "))+'</td><td>'+(j.state==="running"?prog(j.pct,j.msg,j.claimed)+stale(j):'<span class="mut">'+esc(j.state==="error"?j.error:j.msg||"")+'</span>')+'</td><td>'+(j.state==="queued"||j.state==="running"?'<button onclick="event.stopPropagation();cancel(\''+j.id+'\')">취소</button>':"")+'</td></tr>');
   if(open_.has(j.id))rows.push('<tr class="dt" data-for="'+j.id+'"><td colspan="7" class="jdet">…</td></tr>')}
- document.getElementById("gt").innerHTML=groupBox(s);
+ document.getElementById("gt").innerHTML=planBox(s)+groupBox(s);
  document.querySelector("#jt tbody").innerHTML=rows.join("")||'<tr><td colspan="7" class="mut">작업이 없습니다.</td></tr>';
  for(const id of open_){const c=document.querySelector('tr.dt[data-for="'+id+'"] td');if(c)c.innerHTML=await detail(id)}
  document.querySelectorAll("#jt tr.jr").forEach(r=>r.onclick=()=>{const id=r.dataset.id;open_.has(id)?open_.delete(id):open_.add(id);busy=false;load()})
