@@ -3568,12 +3568,13 @@ def test_hyphy_export_cuts_codons_in_coding_direction_and_writes_a_pruned_tree()
     assert nw.count("(") == 2 and "private:x" not in nw and nw.startswith("((a:0.02000000,b:0.05000000):0.10000000,c:0.04000000):0.00000000;")
 
 
-def test_four_model_comparison_prepares_four_analyses_and_ranks_them(tmp_path, monkeypatch):
+def test_the_model_comparison_prepares_every_clock_x_tree_prior_and_ranks_them(tmp_path, monkeypatch):
     import random
     import pytest
     from genomecurator import beastprep
     s = beastprep.parse_bets_settings({"compare": True})
-    assert s["compare"] and [m["tag"] for m in beastprep._models(s)] == ["strict-constant", "strict-exponential", "relaxed-constant", "relaxed-exponential"] and all(m["dated"] for m in beastprep._models(s))
+    want = [f"{c}-{t}" for c in beastprep.CLOCKS for t in beastprep.PRIORS]                                          # the grid is the two model tables, not a hand-written list
+    assert len(want) == 12 and s["compare"] and [m["tag"] for m in beastprep._models(s)] == want and all(m["dated"] for m in beastprep._models(s))
     assert [m["tag"] for m in beastprep._models(beastprep.parse_bets_settings({}))] == ["dated", "undated"]            # BETS keeps its two analyses
     rng = random.Random(2)
     names = [f"s{i}" for i in range(12)]
@@ -3583,9 +3584,10 @@ def test_four_model_comparison_prepares_four_analyses_and_ranks_them(tmp_path, m
     cr = {"run_dir": str(tmp_path)}
     info = beastprep.bets_prepare(cr, {"compare": True, "estimator": "both"})
     root = tmp_path / "beast" / "bets" / "models"
-    assert set(info["folders"]) == {"strict-constant", "strict-exponential", "relaxed-constant", "relaxed-exponential"} and (root / "settings.json").exists()
+    assert set(info["folders"]) == set(want) and (root / "settings.json").exists()
     x = {t: (root / t / "psss" / "beast.xml").read_text(encoding="utf-8") for t in info["folders"]}
-    assert "ucld" in x["relaxed-constant"] and "ucld" not in x["strict-constant"]                                    # the clock differs
+    assert "ucld" in x["relaxed-constant"] and "ucld" not in x["strict-constant"] and "uced" in x["relaxed_exp-constant"]      # the clock differs
+    assert "logisticGrowth" in x["strict-logistic"] and "ancestralPopulationProportion" in x["strict-expansion"]      # and so does the demographic model
     assert x["strict-constant"] != x["strict-exponential"] and (root / "relaxed-exponential" / "mcmc" / "beast.xml").exists()   # so does the tree prior
     assert all(len({e.get("value") for e in __import__("xml.etree.ElementTree", fromlist=["x"]).fromstring(v).find("taxa").iter("date")}) > 1 for v in x.values())   # all with the real dates
     res = {"strict-constant": {"ps": -105.0, "ss": -105.4, "gss": -105.2}, "strict-exponential": {"ps": -101.0, "ss": -101.1, "gss": -101.0},

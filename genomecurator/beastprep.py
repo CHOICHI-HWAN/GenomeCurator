@@ -23,9 +23,26 @@ from . import aligned, clock, log, nextstrain, runs
 
 _log = log.get("beast")
 DEFAULTS = {"n_tips": 150, "chain_length": 30000000, "samples": 10000, "clock": "relaxed", "tree_prior": "exponential", "seed": 1, "threads": 0}
-CLOCKS = ("strict", "relaxed")
-PRIORS = ("constant", "exponential")                     # the parametric tree priors the marginal-likelihood comparison (BETS / GSS) uses
-TREE_PRIORS = PRIORS + ("skygrid",)
+# ---- the models the XML writer knows. Everything that depends on a model below - the block itself, its operators, its priors, the
+# columns of the log, and the working prior a marginal likelihood needs - is driven by these two tables, so that a model is added
+# in one place and cannot be half-added. `extra` are the parameters beyond the one every model of that kind has.
+CLOCK_MODELS = {
+    "strict":      {"rate": "clock.rate", "extra": (), "label": "strict clock"},
+    "relaxed":     {"rate": "ucld.mean", "extra": ("ucld.stdev",), "label": "uncorrelated log-normal relaxed clock"},
+    "relaxed_exp": {"rate": "uced.mean", "extra": (), "label": "uncorrelated exponential relaxed clock"},
+}
+DEMOGRAPHICS = {                                         # parametric coalescent models: each has a marginal likelihood GSS can reach
+    "constant":    {"element": "constantSize", "extra": (), "label": "constant-size"},
+    "exponential": {"element": "exponentialGrowth", "extra": ("demographic.growthRate",), "label": "exponential-growth"},
+    # t50 must start above zero and the growth rate modestly, or the coalescent likelihood of the starting tree is -Inf
+    "logistic":    {"element": "logisticGrowth", "extra": ("demographic.growthRate", "demographic.t50"), "label": "logistic-growth",
+                    "start": {"demographic.growthRate": "0.1", "demographic.t50": "1.0"}},
+    "expansion":   {"element": "expansion", "extra": ("demographic.growthRate", "demographic.ancestralProportion"), "label": "exponential-expansion"},
+}
+CLOCKS = tuple(CLOCK_MODELS)
+PRIORS = tuple(DEMOGRAPHICS)                             # the tree priors the marginal-likelihood comparison (BETS / GSS) uses
+TREE_PRIORS = PRIORS + ("skygrid",)                      # SkyGrid is for an analysis, not for the comparison: it is not parametric, so GSS has no working prior for it
+DEMO_PARAMS = lambda tp: ("demographic.popSize",) + tuple(DEMOGRAPHICS[tp]["extra"])
 SUBST_MODELS = ("hky", "gtr")                            # HKY (one transition/transversion ratio) or GTR (six exchange rates)
 GTR_RATES = ("ac", "ag", "at", "cg", "gt")               # BEAST fixes the sixth (C<->T) at 1; the XML elements are rateAC, rateAG, ...                       # all tree priors a BEAST analysis accepts
 
@@ -143,7 +160,7 @@ def build_xml(seqs: dict[str, str], dates: dict[str, float], groups: dict[str, l
     L = []
     w = L.append
     w('<?xml version="1.0" standalone="yes"?>')
-    w('<!-- Written by Virus Genome Metadata Curator (genomecurator/beastprep.py). Model: HKY + gamma(4) sites, ' + ("strict clock" if s["clock"] == "strict" else "uncorrelated log-normal relaxed clock") + ", " + ("constant-size" if s["tree_prior"] == "constant" else "exponential-growth") + " coalescent tree prior, tip dates in years. Open in BEAUti or a text editor to change it. -->")
+    w('<!-- Written by Virus Genome Metadata Curator (genomecurator/beastprep.py). Model: HKY + gamma(4) sites, ' + CLOCK_MODELS[s["clock"]]["label"] + ", " + (DEMOGRAPHICS.get(s["tree_prior"], {}).get("label") or s["tree_prior"]) + " coalescent tree prior, tip dates in years. Open in BEAUti or a text editor to change it. -->")
     w('<beast version="1.10.4">')
     w('\t<taxa id="taxa">')
     for n in names:
@@ -174,13 +191,18 @@ def build_xml(seqs: dict[str, str], dates: dict[str, float], groups: dict[str, l
         w('\t</alignment>')
         w(f'\t<patterns id="patterns{suf}" from="1" strip="false"><alignment idref="alignment{suf}"/></patterns>')
     sky = s["tree_prior"] == "skygrid"
-    if sky:                                                                   # the starting tree only needs a demographic model; the SkyGrid itself is the tree prior below
-        w('\t<constantSize id="demographic" units="years"><populationSize><parameter id="demographic.popSize" value="1.0" lower="0.0"/></populationSize></constantSize>')
-    elif s["tree_prior"] == "constant":
-        w('\t<constantSize id="demographic" units="years"><populationSize><parameter id="demographic.popSize" value="1.0" lower="0.0"/></populationSize></constantSize>')
-    else:
-        w('\t<exponentialGrowth id="demographic" units="years"><populationSize><parameter id="demographic.popSize" value="1.0" lower="0.0"/></populationSize><growthRate><parameter id="demographic.growthRate" value="1.0"/></growthRate></exponentialGrowth>')
-    w('\t<coalescentSimulator id="startingTree"><taxa idref="taxa"/><' + ("exponentialGrowth" if s["tree_prior"] == "exponential" else "constantSize") + ' idref="demographic"/></coalescentSimulator>')
+    demo = DEMOGRAPHICS["constant" if sky else s["tree_prior"]]               # with SkyGrid the block is only there to simulate a starting tree
+    START = {"demographic.popSize": '1.0" lower="0.0', "demographic.growthRate": "1.0", "demographic.t50": "1.0",
+             "demographic.ancestralProportion": '0.1" lower="0.0" upper="1.0', **demo.get("start", {})}
+    ELEM = {"demographic.popSize": "populationSize", "demographic.growthRate": "growthRate", "demographic.t50": "t50",
+            "demographic.ancestralProportion": "ancestralPopulationProportion"}
+    body = "".join(f'<{ELEM[q]}><parameter id="{q}" value="{START[q]}"/></{ELEM[q]}>'
+                   for q in (("demographic.popSize",) + tuple(demo["extra"])))
+    w(f'\t<{demo["element"]} id="demographic" units="years">{body}</{demo["element"]}>')
+    # the starting tree is always simulated under a constant size: BEAST cannot simulate one under logistic growth
+    # (LogisticGrowth.getInverseIntensity is not implemented), and BEAUti does the same. It only has to be a tree to start from.
+    w('\t<constantSize id="startingDemographic" units="years"><populationSize><parameter id="startingDemographic.popSize" value="1.0" lower="0.0"/></populationSize></constantSize>')
+    w('\t<coalescentSimulator id="startingTree"><taxa idref="taxa"/><constantSize idref="startingDemographic"/></coalescentSimulator>')
     w('\t<treeModel id="treeModel"><coalescentTree idref="startingTree"/><rootHeight><parameter id="treeModel.rootHeight"/></rootHeight>'
       '<nodeHeights internalNodes="true"><parameter id="treeModel.internalNodeHeights"/></nodeHeights><nodeHeights internalNodes="true" rootNode="true"><parameter id="treeModel.allInternalNodeHeights"/></nodeHeights></treeModel>')
     w('\t<treeLengthStatistic id="treeLength"><treeModel idref="treeModel"/></treeLengthStatistic>')
@@ -196,14 +218,22 @@ def build_xml(seqs: dict[str, str], dates: dict[str, float], groups: dict[str, l
           f'<precisionParameter><parameter id="skygrid.precision" value="0.1" lower="0.0"/></precisionParameter><numGridPoints><parameter id="skygrid.numGridPoints" value="{npts}"/></numGridPoints>'
           f'<cutOff><parameter id="skygrid.cutOff" value="{cut}"/></cutOff><populationTree><treeModel idref="treeModel"/></populationTree></gmrfSkyGridLikelihood>')
     else:
-        w('\t<coalescentLikelihood id="coalescent"><model><' + ("constantSize" if s["tree_prior"] == "constant" else "exponentialGrowth") + ' idref="demographic"/></model><populationTree><treeModel idref="treeModel"/></populationTree></coalescentLikelihood>')
+        w(f'\t<coalescentLikelihood id="coalescent"><model><{demo["element"]} idref="demographic"/></model><populationTree><treeModel idref="treeModel"/></populationTree></coalescentLikelihood>')
+    ck = CLOCK_MODELS[s["clock"]]
+    rate_param = ck["rate"]
     if s["clock"] == "strict":
-        w(f'\t<strictClockBranchRates id="branchRates"><rate><parameter id="clock.rate" value="{rate0:.4e}" lower="0.0"/></rate></strictClockBranchRates>')
-        rate_param, rate_ref = "clock.rate", '<strictClockBranchRates idref="branchRates"/>'
+        w(f'\t<strictClockBranchRates id="branchRates"><rate><parameter id="{rate_param}" value="{rate0:.4e}" lower="0.0"/></rate></strictClockBranchRates>')
+        rate_ref = '<strictClockBranchRates idref="branchRates"/>'
     else:
-        w(f'\t<discretizedBranchRates id="branchRates"><treeModel idref="treeModel"/><distribution><logNormalDistributionModel meanInRealSpace="true"><mean><parameter id="ucld.mean" value="{rate0:.4e}" lower="0.0"/></mean>'
-          '<stdev><parameter id="ucld.stdev" value="0.3333333333333333" lower="0.0"/></stdev></logNormalDistributionModel></distribution><rateCategories><parameter id="branchRates.categories"/></rateCategories></discretizedBranchRates>')
-        rate_param, rate_ref = "ucld.mean", '<discretizedBranchRates idref="branchRates"/>'
+        dist = (f'<logNormalDistributionModel meanInRealSpace="true"><mean><parameter id="{rate_param}" value="{rate0:.4e}" lower="0.0"/></mean>'
+                '<stdev><parameter id="ucld.stdev" value="0.3333333333333333" lower="0.0"/></stdev></logNormalDistributionModel>'
+                if s["clock"] == "relaxed" else
+                f'<exponentialDistributionModel><mean><parameter id="{rate_param}" value="{rate0:.4e}" lower="0.0"/></mean></exponentialDistributionModel>')
+        w(f'\t<discretizedBranchRates id="branchRates"><treeModel idref="treeModel"/><distribution>{dist}</distribution>'
+          '<rateCategories><parameter id="branchRates.categories"/></rateCategories></discretizedBranchRates>')
+        rate_ref = '<discretizedBranchRates idref="branchRates"/>'
+    if "demographic.t50" in demo["extra"]:                                    # logistic growth is only defined while t50 is inside the tree
+        w('\t<booleanLikelihood id="t50BeforeRoot"><testStatistic name="t50BeforeRoot" type="lessThan"><parameter idref="demographic.t50"/><lessThan><parameter idref="treeModel.rootHeight"/></lessThan></testStatistic></booleanLikelihood>')
     w(f'\t<rateStatistic id="meanRate" name="meanRate" mode="mean" internal="true" external="true"><treeModel idref="treeModel"/>{rate_ref}</rateStatistic>')
     for suf, sq in sets:
         if fixed_freq:
@@ -241,8 +271,8 @@ def build_xml(seqs: dict[str, str], dates: dict[str, float], groups: dict[str, l
     if part:                                                                                     # the relative rates of the two partitions: their mean over the sites stays 1, so the clock rate is the genome-wide rate
         w(f'\t\t<deltaExchange delta="0.75" weight="3" parameterWeights="{nsites[0]} {nsites[1]}"><parameter idref="allMus"/></deltaExchange>')
     w(f'\t\t<scaleOperator scaleFactor="0.75" weight="3"><parameter idref="{rate_param}"/></scaleOperator>')
-    if s["clock"] == "relaxed":
-        w('\t\t<scaleOperator scaleFactor="0.75" weight="3"><parameter idref="ucld.stdev"/></scaleOperator>')
+    for q in ck["extra"]:
+        w(f'\t\t<scaleOperator scaleFactor="0.75" weight="3"><parameter idref="{q}"/></scaleOperator>')
         w('\t\t<swapOperator size="1" weight="10" autoOptimize="false"><parameter idref="branchRates.categories"/></swapOperator>')
         w('\t\t<uniformIntegerOperator weight="10"><parameter idref="branchRates.categories"/></uniformIntegerOperator>')
     w('\t\t<subtreeSlide size="0.1" gaussian="true" weight="30"><treeModel idref="treeModel"/></subtreeSlide>')
@@ -256,8 +286,12 @@ def build_xml(seqs: dict[str, str], dates: dict[str, float], groups: dict[str, l
         w('\t\t<scaleOperator scaleFactor="0.75" weight="1"><parameter idref="skygrid.precision"/></scaleOperator>')
     else:
         w('\t\t<scaleOperator scaleFactor="0.75" weight="3"><parameter idref="demographic.popSize"/></scaleOperator>')
-    if s["tree_prior"] == "exponential":
-        w('\t\t<randomWalkOperator windowSize="1.0" weight="3"><parameter idref="demographic.growthRate"/></randomWalkOperator>')
+    if not sky:
+        for q in demo["extra"]:                                               # growth rate and t50 may be negative; the ancestral proportion is a fraction
+            if q == "demographic.ancestralProportion":
+                w(f'\t\t<randomWalkOperator windowSize="0.05" weight="3" autoOptimize="false" boundaryCondition="reflecting"><parameter idref="{q}"/></randomWalkOperator>')
+            else:
+                w(f'\t\t<randomWalkOperator windowSize="1.0" weight="3"><parameter idref="{q}"/></randomWalkOperator>')
     w('\t</operators>')
     w(f'\t<mcmc id="mcmc" chainLength="{chain}" autoOptimize="true" operatorAnalysis="{fileprefix}.ops">')
     w('\t\t<posterior id="posterior"><prior id="prior">')
@@ -281,16 +315,22 @@ def build_xml(seqs: dict[str, str], dates: dict[str, float], groups: dict[str, l
         w(f'\t\t\t<logNormalPrior mean="-11.5" stdev="2.0" offset="0.0" meanInRealSpace="false"><parameter idref="{rate_param}"/></logNormalPrior>')        # median 1e-5, four orders of magnitude wide
     else:
         w(f'\t\t\t<gammaPrior shape="0.001" scale="1000.0" offset="0.0"><parameter idref="{rate_param}"/></gammaPrior>')
-    if s["clock"] == "relaxed":
-        w('\t\t\t<exponentialPrior mean="0.3333333333333333" offset="0.0"><parameter idref="ucld.stdev"/></exponentialPrior>')
+    for q in ck["extra"]:
+        w(f'\t\t\t<exponentialPrior mean="0.3333333333333333" offset="0.0"><parameter idref="{q}"/></exponentialPrior>')
     if sky:
         w('\t\t\t<gammaPrior shape="0.001" scale="1000.0" offset="0.0"><parameter idref="skygrid.precision"/></gammaPrior>')       # the usual vague prior on the smoothing precision
     elif proper:
         w('\t\t\t<logNormalPrior mean="0.0" stdev="2.0" offset="0.0" meanInRealSpace="false"><parameter idref="demographic.popSize"/></logNormalPrior>')
     else:
         w('\t\t\t<oneOnXPrior><parameter idref="demographic.popSize"/></oneOnXPrior>')
-    if s["tree_prior"] == "exponential":
-        w('\t\t\t<laplacePrior mean="0.0" scale="100.0"><parameter idref="demographic.growthRate"/></laplacePrior>')
+    if not sky:
+        for q in demo["extra"]:
+            if q == "demographic.ancestralProportion":
+                w(f'\t\t\t<uniformPrior lower="0.0" upper="1.0"><parameter idref="{q}"/></uniformPrior>')
+            else:
+                w(f'\t\t\t<laplacePrior mean="0.0" scale="100.0"><parameter idref="{q}"/></laplacePrior>')
+        if "demographic.t50" in demo["extra"]:
+            w('\t\t\t<booleanLikelihood idref="t50BeforeRoot"/>')
     w('\t\t\t<gmrfSkyGridLikelihood idref="skygrid"/>' if sky else '\t\t\t<coalescentLikelihood idref="coalescent"/>')
     w('\t\t</prior><likelihood id="likelihood"><treeDataLikelihood idref="treeLikelihood"/></likelihood></posterior>')
     w('\t\t<operators idref="operators"/>')
@@ -298,8 +338,8 @@ def build_xml(seqs: dict[str, str], dates: dict[str, float], groups: dict[str, l
       '<column label="Likelihood" dp="4" width="12"><likelihood idref="likelihood"/></column><column label="rootAge" sf="6" width="12"><tmrcaStatistic idref="age(root)"/></column></log>')
     w(f'\t\t<log id="fileLog" logEvery="{every}" fileName="{fileprefix}.log" overwrite="false"><posterior idref="posterior"/><prior idref="prior"/><likelihood idref="likelihood"/>'
       '<parameter idref="treeModel.rootHeight"/><tmrcaStatistic idref="age(root)"/>' + "".join(f'<tmrcaStatistic idref="age({_safe(g)})"/>' + (f'<tmrcaStatistic idref="stem({_safe(g)})"/><monophylyStatistic idref="monophyly({_safe(g)})"/>' if g in s.get("stem_groups", []) else "") for g in groups) + '<treeLengthStatistic idref="treeLength"/>' +
-      ('<parameter idref="skygrid.precision"/><parameter idref="skygrid.logPopSize"/>' if sky else '<parameter idref="demographic.popSize"/>') + ('<parameter idref="demographic.growthRate"/>' if s["tree_prior"] == "exponential" else "") + "".join(("".join(f'<parameter idref="{r}{suf}"/>' for r in GTR_RATES) if sm == "gtr" else f'<parameter idref="kappa{suf}"/>') + (f'<parameter idref="alpha{suf}"/>' if sr != "inv" else "") + (f'<parameter idref="pInv{suf}"/>' if sr != "gamma" else "") for suf, _q in sets) + ('<parameter idref="mu.a"/><parameter idref="mu.b"/>' if part else "") +
-      f'<parameter idref="{rate_param}"/>' + ('<parameter idref="ucld.stdev"/>' if s["clock"] == "relaxed" else "") + '<rateStatistic idref="meanRate"/><treeDataLikelihood idref="treeLikelihood"/>' + ('<gmrfSkyGridLikelihood idref="skygrid"/>' if sky else '<coalescentLikelihood idref="coalescent"/>') + '</log>')
+      ('<parameter idref="skygrid.precision"/><parameter idref="skygrid.logPopSize"/>' if sky else "".join(f'<parameter idref="{q}"/>' for q in DEMO_PARAMS(s["tree_prior"]))) + "".join(("".join(f'<parameter idref="{r}{suf}"/>' for r in GTR_RATES) if sm == "gtr" else f'<parameter idref="kappa{suf}"/>') + (f'<parameter idref="alpha{suf}"/>' if sr != "inv" else "") + (f'<parameter idref="pInv{suf}"/>' if sr != "gamma" else "") for suf, _q in sets) + ('<parameter idref="mu.a"/><parameter idref="mu.b"/>' if part else "") +
+      f'<parameter idref="{rate_param}"/>' + "".join(f'<parameter idref="{q}"/>' for q in ck["extra"]) + '<rateStatistic idref="meanRate"/><treeDataLikelihood idref="treeLikelihood"/>' + ('<gmrfSkyGridLikelihood idref="skygrid"/>' if sky else '<coalescentLikelihood idref="coalescent"/>') + '</log>')
     w(f'\t\t<logTree id="treeFileLog" logEvery="{every}" nexusFormat="true" fileName="{fileprefix}.trees" sortTranslationTable="true"><treeModel idref="treeModel"/>'
       f'<trait name="rate" tag="rate">{rate_ref}</trait><posterior idref="posterior"/></logTree>')
     w('\t</mcmc>')
@@ -308,20 +348,18 @@ def build_xml(seqs: dict[str, str], dates: dict[str, float], groups: dict[str, l
         f_, bi = gss["log"], gss["burnin"]
         ref = lambda tag, col: f'<{tag} fileName="{f_}" parameterColumn="{col}" burnin="{bi}">'
         w('\t<!-- generalized stepping-stone sampling: the working prior is built from the posterior samples of an earlier ordinary run of this model (' + f_ + ') -->')
-        if s["tree_prior"] == "constant":
-            w(f'\t<constantSize id="demographicReference" units="years"><populationSize><parameter id="demographicReference.popSize" value="0.1" parameterColumn="demographic.popSize" fileName="{f_}" burnin="{bi}" dimension="1"/></populationSize></constantSize>')
-            w('\t<coalescentLikelihood id="coalescentReference"><model><constantSize idref="demographicReference"/></model><populationTree><treeModel idref="treeModel"/></populationTree></coalescentLikelihood>')
-        else:
-            w(f'\t<exponentialGrowth id="demographicReference" units="years"><populationSize><parameter id="demographicReference.popSize" value="0.1" parameterColumn="demographic.popSize" fileName="{f_}" burnin="{bi}" dimension="1"/></populationSize>'
-              f'<growthRate><parameter id="demographicReference.growthRate" value="0.1" parameterColumn="demographic.growthRate" fileName="{f_}" burnin="{bi}" dimension="1"/></growthRate></exponentialGrowth>')
-            w('\t<coalescentLikelihood id="coalescentReference"><model><exponentialGrowth idref="demographicReference"/></model><populationTree><treeModel idref="treeModel"/></populationTree></coalescentLikelihood>')
+        rbody = "".join(f'<{ELEM[q]}><parameter id="demographicReference.{q.split(".")[1]}" value="0.1" parameterColumn="{q}" fileName="{f_}" burnin="{bi}" dimension="1"/></{ELEM[q]}>'
+                        for q in DEMO_PARAMS(s["tree_prior"]))
+        w(f'\t<{demo["element"]} id="demographicReference" units="years">{rbody}</{demo["element"]}>')
+        w(f'\t<coalescentLikelihood id="coalescentReference"><model><{demo["element"]} idref="demographicReference"/></model><populationTree><treeModel idref="treeModel"/></populationTree></coalescentLikelihood>')
         w(f'\t<marginalLikelihoodEstimator id="MLE" chainLength="{gss["chain_length"]}" pathSteps="{gss["path_steps"]}" pathScheme="betaquantile" alpha="{gss.get("alpha", 0.3)}">')
         w('\t\t<samplers><mcmc idref="mcmc"/></samplers>')
         w('\t\t<pathLikelihood id="pathLikelihood"><source><posterior idref="posterior"/></source><destination><workingPrior id="workingPrior">')
-        for par in ((GTR_RATES if sm == "gtr" else ("kappa",)) + ("alpha", rate_param)) + (("ucld.stdev",) if s["clock"] == "relaxed" else ()) + ("demographic.popSize",):
+        site = (GTR_RATES if sm == "gtr" else ("kappa",)) + (("alpha",) if sr != "inv" else ()) + (("pInv",) if sr != "gamma" else ())
+        for par in site + (rate_param,) + tuple(ck["extra"]) + ("demographic.popSize",):
             w(f'\t\t\t{ref("logTransformedNormalReferencePrior", par)}<parameter idref="{par}"/></logTransformedNormalReferencePrior>')
-        if s["tree_prior"] == "exponential":
-            w(f'\t\t\t{ref("normalReferencePrior", "demographic.growthRate")}<parameter idref="demographic.growthRate"/></normalReferencePrior>')
+        for par in demo["extra"]:                                             # these may be negative or bounded, so a plain normal working prior
+            w(f'\t\t\t{ref("normalReferencePrior", par)}<parameter idref="{par}"/></normalReferencePrior>')
         w('\t\t\t<coalescentLikelihood idref="coalescentReference"/>')
         w('\t\t</workingPrior></destination></pathLikelihood>')
         w(f'\t\t<log id="MLELog" logEvery="{max(1, gss["chain_length"] // 100)}" fileName="{fileprefix}.mle.log"><pathLikelihood idref="pathLikelihood"/></log>')
@@ -828,7 +866,11 @@ ESTIMATORS = ("both", "gss", "ps_ss")
 _MLE_RE = {"ps": re.compile(r"log marginal likelihood \(using path sampling\)[^=]*=\s*(-?[0-9.eE+-]+)"), "ss": re.compile(r"log marginal likelihood \(using stepping stone sampling\)[^=]*=\s*(-?[0-9.eE+-]+)"),
            "gss": re.compile(r"log marginal likelihood \(using generalized stepping stone sampling\)[^=]*=\s*(-?[0-9.eE+-]+)")}
 GSS_BURN = 2000           # states of the ordinary chain run before the path begins: kept short so that the chain stays where it started (the middle of the earlier posterior, inside the working prior)
-GSS_PARAMS = ("kappa", "alpha", "clock.rate", "ucld.mean", "ucld.stdev", "demographic.popSize", "demographic.growthRate")
+GSS_PARAMS = tuple(dict.fromkeys(                         # every parameter any model may have: a GSS chain must start at the middle of
+    ("kappa",) + GTR_RATES + ("alpha", "pInv")             # the earlier posterior for all of them, since a start outside the working
+    + tuple(m["rate"] for m in CLOCK_MODELS.values())      # prior has zero density and BEAST refuses it. Built from the tables above,
+    + tuple(q for m in CLOCK_MODELS.values() for q in m["extra"])      # so a new model cannot be left without its starting value.
+    + ("demographic.popSize",) + tuple(q for m in DEMOGRAPHICS.values() for q in m["extra"])))
 
 
 def parse_bets_settings(raw: dict | None) -> dict:
@@ -859,7 +901,7 @@ def _root(clock_run: dict, s: dict) -> Path:
 
 
 def _models(s: dict) -> list[dict]:
-    """The analyses of one run: BETS = the same model with real and with identical dates; comparison = the four clock x tree-prior models, all with the real dates (their marginal likelihoods are compared)."""
+    """The analyses of one run: BETS = the same model with real and with identical dates; comparison = every clock x tree-prior model, all with the real dates (their marginal likelihoods are compared)."""
     if s.get("compare"):
         return [{"tag": f"{c}-{t}", "dated": True, "clock": c, "tree_prior": t} for c in CLOCKS for t in PRIORS]
     return [{"tag": "dated", "dated": True, "clock": s["clock"], "tree_prior": s["tree_prior"]}, {"tag": "undated", "dated": False, "clock": s["clock"], "tree_prior": s["tree_prior"]}]
