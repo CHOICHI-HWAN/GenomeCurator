@@ -1103,7 +1103,10 @@ def bets_summary(s: dict, screens: dict[str, dict[str, str | Path]], n_tips: int
             out = Path(path).read_text(encoding="utf-8", errors="replace")
             for k in (("ps", "ss") if kind == "psss" else ("gss",)):
                 m = _MLE_RE[k].search(out)
-                res[tag][k] = float(m[1]) if m else None
+                v = float(m[1]) if m else None
+                # BEAST prints 0.0 when the path did not actually integrate - a likelihood of exactly zero is not a result,
+                # and taken as one it sorts to the top of the ranking and buries every real model under it.
+                res[tag][k] = v if v is not None and math.isfinite(v) and v != 0.0 else None
     if s["compare"]:
         res["models"] = compare_models({t: res[t] for t in tags})
         return res
@@ -1239,10 +1242,14 @@ def run_bets(clock_run: dict, settings: dict | None = None, progress=None) -> di
 def compare_models(res: dict) -> dict:
     """Rank the models by marginal likelihood (GSS if there is one, else SS, else PS) and give each one's log Bayes factor against the best; the estimators' disagreement is reported per model.
     Kass & Raftery: a log BF of 1-3 is weak, 3-5 positive, over 5 strong evidence for the better model."""
-    est = next((k for k in ("gss", "ss", "ps") if all(r.get(k) is not None for r in res.values())), None)
-    if est is None:
-        return {"estimator": None, "ranking": [], "text": "한계우도를 추정하지 못했습니다."}
-    ranking = sorted(({"model": t, "ml": r[est], "ps": r.get("ps"), "ss": r.get("ss"), "gss": r.get("gss")} for t, r in res.items()), key=lambda x: -x["ml"])
+    # the estimator that covers the most models, preferring GSS. Requiring one that covers them all meant a single model
+    # that could not be estimated threw away the other eleven; the models it does not cover are named instead.
+    est = max(("gss", "ss", "ps"), key=lambda k: (sum(r.get(k) is not None for r in res.values()), -("gss", "ss", "ps").index(k)))
+    covered = {t: r for t, r in res.items() if r.get(est) is not None}
+    missing = sorted(set(res) - set(covered))
+    if not covered:
+        return {"estimator": None, "ranking": [], "missing": missing, "text": "한계우도를 추정하지 못했습니다."}
+    ranking = sorted(({"model": t, "ml": r[est], "ps": r.get("ps"), "ss": r.get("ss"), "gss": r.get("gss")} for t, r in covered.items()), key=lambda x: -x["ml"])
     best = ranking[0]["ml"]
     for x in ranking:
         x["log_bf_vs_best"] = round(x["ml"] - best, 2)
@@ -1255,7 +1262,9 @@ def compare_models(res: dict) -> dict:
         text += f" 2위({ranking[1]['model']})와의 로그 베이즈 인수 {gap:.1f}: " + {"strong": "뚜렷한 차이", "positive": "차이의 증거가 있으나 결정적이지 않음", "weak": "약한 차이", "none": "차이가 없음", "against": "차이가 없음"}.get(level, "")
     if any((x["estimator_spread"] or 0) > 2 for x in ranking):
         text += " 추정기들의 값이 2 이상 다른 모델이 있습니다 — 경로 단계와 단계당 체인을 늘려 다시 돌리세요."
-    return {"estimator": est, "ranking": ranking, "text": text}
+    if missing:
+        text += f" 한계우도를 얻지 못해 순위에서 빠진 모형: {', '.join(missing)}."
+    return {"estimator": est, "ranking": ranking, "missing": missing, "text": text}
 
 
 def bets_result(clock_run: dict, compare: bool = False, name: str = "") -> dict:
