@@ -1,0 +1,82 @@
+{% extends "base.html" %}{% block body %}
+<div class="pagehead"><h2>BEAST 분석 목록</h2><span class="mut">이 분자시계 실행으로 돌린 모든 베이즈 분석과 그 추정값</span></div>
+<div class="help">같은 자료를 모형·표본·사전분포를 바꿔 가며 돌린 결과가 모두 여기 모입니다. <b>민감도 분석</b>은 수치 하나를 보여 주는 것이 아니라 <b>조건을 바꿔도 답이 같은지</b>를 보여 주는 것이므로, 한 줄씩이 아니라 열을 따라 세로로 읽으세요.
+ESS가 200 미만인 줄은 체인이 덜 돈 것이니 구간을 믿지 마세요. 합친 실행(<code>combined</code>)은 번인을 이미 버린 것이라 두 번 자르지 않습니다.</div>
+
+<div style="display:flex;gap:10px;align-items:center;margin:0 0 10px;flex-wrap:wrap">
+  <label>보여줄 값 <select id="col" onchange="draw()"></select></label>
+  <label><input type="checkbox" id="onlyok" onchange="draw()"> ESS 200 이상만</label>
+  <label><input type="checkbox" id="onlyfull" onchange="draw()"> 끝난 것만</label>
+  <span class="mut" id="cnt"></span>
+  <button onclick="dl()">CSV로 받기</button>
+</div>
+<table id="t"><thead></thead><tbody></tbody></table>
+<div id="plans"></div>
+
+<style>
+#t td,#t th{font-size:12.6px;padding:4px 7px}
+.badess{color:var(--bad);font-weight:600}
+.tagc{font-family:ui-monospace,monospace;font-size:12px}
+.pill{border-radius:9px;padding:1px 7px;font-size:11.5px;border:1px solid var(--line);white-space:nowrap}
+</style>
+<script>
+const RID={{ rid }};
+let A=[],KEYS=[];
+const esc=s=>String(s==null?"":s).replace(/[&<>"]/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c]));
+const ym=t=>{if(t==null)return"-";const y=Math.floor(t),d=new Date(Date.UTC(y,0,1)+(t-y)*365.25*86400000);
+ return t.toFixed(2)+" ("+d.getUTCFullYear()+"-"+String(d.getUTCMonth()+1).padStart(2,"0")+")"};
+const num=(v,k)=>k==="rate"?(v==null?"-":v.toExponential(2)):ym(v);
+function cell(x,k){
+ let p=null;
+ if(k==="root")p=x.root; else if(k==="rate")p=x.rate;
+ else if(k.startsWith("age:"))p=x.groups[k.slice(4)];
+ else if(k.startsWith("stem:"))p=x.stems[k.slice(5)];
+ if(!p)return '<span class="mut">-</span>';
+ return '<b>'+num(p.median,k)+'</b><br><span class="mut">'+num(p.lo,k)+' – '+num(p.hi,k)+'</span>';
+}
+function draw(){
+ const k=document.getElementById("col").value;
+ let rows=A.slice();
+ if(document.getElementById("onlyok").checked)rows=rows.filter(x=>(x.min_ess||0)>=200);
+ if(document.getElementById("onlyfull").checked)rows=rows.filter(x=>x.complete);
+ rows.sort((a,b)=>b.mtime-a.mtime);
+ document.getElementById("cnt").textContent=rows.length+" / "+A.length+"개";
+ document.querySelector("#t thead").innerHTML='<tr><th>분석</th><th class="nw">유전체</th><th>모형</th><th class="nw">체인</th><th class="nw">최소 ESS</th><th class="nw">'+esc(k)+'</th><th></th></tr>';
+ document.querySelector("#t tbody").innerHTML=rows.map(x=>{
+  const m=x.model,comb=m.combined_from?'<span class="pill">합침 '+m.combined_from.length+'개</span> ':'';
+  const mod=esc(m.subst_model.toUpperCase()+"+"+({gamma:"Γ4",inv:"I",gamma_inv:"I+Γ4"}[m.site_rates]||m.site_rates))
+   +' · '+esc(m.clock||"?")+' · '+esc(m.tree_prior||"?")
+   +(m.partition?' <span class="pill">'+esc(m.partition)+'</span>':'')+(m.masked?' <span class="pill">'+m.masked+'자리 제외</span>':'')
+   +(m.rate_prior?' <span class="pill">율 사전분포</span>':'');
+  const e=x.min_ess==null?"-":Math.round(x.min_ess);
+  return '<tr><td class="tagc">'+comb+esc(x.tag)+'</td><td class="nw">'+(x.genomes||"-")+'</td><td>'+mod+'</td>'
+   +'<td class="nw mut">'+((m.chain_length||0).toLocaleString())+(m.seeds?' ×'+m.seeds.length:'')+'</td>'
+   +'<td class="nw'+((x.min_ess!=null&&x.min_ess<200)?' badess':'')+'">'+e+'</td>'
+   +'<td class="nw">'+cell(x,k)+'</td>'
+   +'<td class="nw">'+(x.tree?'<a href="/api/clock/'+RID+'/beast/tree?tag='+encodeURIComponent(x.tag==="(기본)"?"":x.tag)+'&download=1">트리</a>':'')+'</td></tr>'}).join("")
+  ||'<tr><td colspan="7" class="mut">없습니다.</td></tr>';
+}
+function dl(){
+ const k=document.getElementById("col").value;
+ const head=["tag","genomes","subst_model","site_rates","clock","tree_prior","chain_length","min_ess",k+"_median",k+"_lo",k+"_hi"];
+ const get=x=>{let p=null;if(k==="root")p=x.root;else if(k==="rate")p=x.rate;else if(k.startsWith("age:"))p=x.groups[k.slice(4)];else if(k.startsWith("stem:"))p=x.stems[k.slice(5)];return p||{}};
+ const body=A.map(x=>{const p=get(x),m=x.model;return [x.tag,x.genomes,m.subst_model,m.site_rates,m.clock,m.tree_prior,m.chain_length,x.min_ess,p.median,p.lo,p.hi].map(v=>v==null?"":v).join(",")});
+ const b=new Blob([head.join(",")+"\n"+body.join("\n")],{type:"text/csv"});
+ const a=document.createElement("a");a.href=URL.createObjectURL(b);a.download="beast_analyses.csv";a.click()}
+(async()=>{
+ const d=await (await fetch("/api/clock/"+RID+"/beast/analyses")).json();
+ A=d.analyses||[];
+ const gs=new Set(),ss=new Set();
+ for(const x of A){Object.keys(x.groups||{}).forEach(g=>gs.add(g));Object.keys(x.stems||{}).forEach(g=>ss.add(g))}
+ KEYS=["root","rate"].concat([...ss].sort().map(g=>"stem:"+g)).concat([...gs].sort().map(g=>"age:"+g));
+ document.getElementById("col").innerHTML=KEYS.map(k=>'<option'+(k==="stem:korea"?" selected":"")+'>'+esc(k)+'</option>').join("");
+ if(d.plans&&d.plans.length){
+  document.getElementById("plans").innerHTML='<h3 style="margin-top:22px">분석 계획</h3>'+d.plans.map(p=>
+   '<div class="card"><b>'+esc(p.name)+'</b> <span class="mut">유전체 '+p.n_tips+'개 · '+esc((p.model||{}).model||"")+' · 단계 '+esc(p.stage)+'</span>'
+   +(p.chosen?'<div>선택된 모형 <b>'+esc(p.chosen.clock)+' · '+esc(p.chosen.tree_prior)+'</b></div>':'')
+   +(p.stopped_because?'<div style="color:var(--bad)">'+esc(p.stopped_because)+'</div>':'')
+   +'<div class="mut" style="font-size:12px">'+esc((p.log||[]).slice(-1)[0]||"")+'</div></div>').join("")}
+ draw();
+})();
+</script>
+{% endblock %}

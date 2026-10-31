@@ -623,6 +623,47 @@ def mcc_tree(clock_run: dict, tag: str = "", kind: str = "hipstr", burnin: float
     return {"tree": out.name, "tips": tips.name if tips.exists() else None, "trees": n, "burnin_trees": skip, "newest_tip": newest, "kind": kind}
 
 
+def list_analyses(clock_run: dict, refresh: bool = False) -> list[dict]:
+    """Every BEAST analysis of this clock run, with what it was and what it found: the tag folders under `beast/` plus the
+    untagged one. The summary of a finished chain is cached as `summary.json`, so this is cheap to ask for; a folder without one
+    is summarized on first sight. There was no way to see these from the app - 38 analyses sat on disk unread."""
+    root = Path(clock_run["run_dir"]) / "beast"
+    if not root.is_dir():
+        return []
+    out = []
+    for d in sorted([root] + [p for p in root.iterdir() if p.is_dir()], key=lambda p: p.name):
+        if not (d / "beast.log").is_file():
+            continue
+        tag = "" if d == root else d.name
+        cache = d / "summary.json"
+        res = None
+        if cache.is_file() and not refresh:
+            try:
+                res = json.loads(cache.read_text(encoding="utf-8"))
+            except (OSError, ValueError):
+                res = None
+        if res is None:
+            try:
+                res = summarize(clock_run, tag)
+                if res.get("complete"):
+                    cache.write_text(json.dumps(res, ensure_ascii=False), encoding="utf-8")
+            except Exception:                                  # a half-written folder must not hide the rest
+                continue
+        s = res.get("settings") or {}
+        n = sum(1 for ln in (d / "dates.tsv").read_text(encoding="utf-8").splitlines()[1:] if ln.strip()) if (d / "dates.tsv").is_file() else None
+        out.append({
+            "tag": tag or "(기본)", "folder": str(d), "genomes": n, "states": res.get("states"), "complete": res.get("complete"),
+            "model": {"clock": s.get("clock"), "tree_prior": s.get("tree_prior"), "subst_model": s.get("subst_model") or "hky",
+                      "site_rates": s.get("site_rates") or "gamma", "chain_length": s.get("chain_length"), "seed": s.get("seed"),
+                      "combined_from": s.get("combined_from"), "seeds": s.get("seeds"), "rate_prior": s.get("rate_prior"),
+                      "month_dates": s.get("month_dates"), "partition": s.get("partition") or "", "masked": len(s.get("mask_columns") or [])},
+            "min_ess": res.get("min_ess"), "root": res.get("root"), "rate": res.get("rate"), "rate_param": res.get("rate_param"),
+            "groups": res.get("groups") or {}, "stems": res.get("stems") or {}, "monophyly": res.get("monophyly") or {},
+            "agreement": res.get("agreement"), "mtime": (d / "beast.log").stat().st_mtime,
+            "tree": (d / "mcc-hipstr.tree").is_file()})
+    return out
+
+
 def combine_runs(clock_run: dict, tags: list[str], out_tag: str, burnin: float = 0.1) -> dict:
     """Join independent runs of the same analysis (different seeds) with LogCombiner, removing `burnin` of each run first, into a new folder `out_tag`
     that is summarized like any other (its settings say `burnin: 0` and name the runs). -> the summary of the combined runs."""

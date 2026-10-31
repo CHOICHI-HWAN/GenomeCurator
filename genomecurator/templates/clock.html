@@ -47,7 +47,7 @@ async function load(){const r=await fetch('/api/clock/'+RID);const D=await r.jso
 let BT=null;
 async function beast(){const D=await (await fetch('/api/clock/'+RID+'/beast')).json();const st=D.status,R=D.result||{},S0=R.settings||D.defaults;let el=document.getElementById('beast');if(!el){el=document.createElement('div');el.id='beast';document.getElementById('root').appendChild(el)}
  const running=(D.runs||[]).find(r=>r.status==='running'),last=(D.runs||[])[0];
- let h='<h3 style="margin-top:22px">BEAST — 베이즈 tMRCA <span class="mut" style="font-size:12.5px;font-weight:400">인용할 수 있는 추정은 이쪽 · 하위 표본 · 모델이 XML에 그대로 적힘</span></h3>';
+ let h='<h3 style="margin-top:22px">BEAST — 베이즈 tMRCA <a href="/clock/'+RID+'/beast" style="font-size:13px;font-weight:400">모든 분석 보기 →</a> <span class="mut" style="font-size:12.5px;font-weight:400">인용할 수 있는 추정은 이쪽 · 하위 표본 · 모델이 XML에 그대로 적힘</span></h3>';
  h+='<div class="help">TreeTime은 빠르지만 한 트리와 적합한 속도에 조건부인 구간입니다. BEAST는 날짜·시계 모델·트리 사전분포를 함께 표집해 tMRCA의 사후분포를 줍니다. 유전체 수천 개는 너무 느리므로 <b>하위 표본</b>(수집 기간 전체와 lineage를 보존, 일 단위 날짜이고 이상치·QC 제외가 아닌 것)으로 합니다. <span class="caut">ESS가 200 미만이면 체인이 덜 돈 것이니 그 구간을 믿지 마세요. 정식 분석은 체인을 여러 개 돌려 Tracer로 확인하고 모델을 비교하세요.</span></div>';
  if(!st.ok)h+='<div class="card" style="color:var(--bad)">BEAST 환경이 없습니다: <code>'+esc(st.how)+'</code></div>';
  else{const f=(k,l,v,t,w)=>'<label title="'+t+'">'+l+'<br><input id="bs_'+k+'" value="'+v+'" style="width:'+(w||90)+'px"></label>';

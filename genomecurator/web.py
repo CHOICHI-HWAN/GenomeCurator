@@ -1415,6 +1415,19 @@ def create_app(scheduler: bool = True) -> FastAPI:
                 "tips_usable": sum(1 for t in clock.summary(r).get("tips", []) if not t["outlier"] and t["precision"] == "day"),
                 "trees": sorted(f.parent.name for f in d.glob("*/beast.trees")) + (["" ] if (d / "beast.trees").exists() else [])}
 
+    @app.get("/clock/{rid}/beast")
+    def clock_beast_runs_page(request: Request, rid: int):
+        """Every BEAST analysis of a clock run side by side: what was changed, and whether the answer changed with it."""
+        return render(request, "beastruns.html", nav="datasets", rid=rid)
+
+    @app.get("/api/clock/{rid}/beast/analyses")
+    def api_clock_beast_analyses(rid: int, refresh: int = 0):
+        r = nextstrain.get_run(rid)
+        if not r or r["tool"] != "clock":
+            return JSONResponse({"error": "clock run not found"}, 404)
+        from . import beastplan
+        return {"analyses": beastprep.list_analyses(r, bool(refresh)), "plans": beastplan.list_plans(r)}
+
     @app.get("/api/clock/{rid}/beast/tree")
     def api_clock_beast_tree(rid: int, tag: str = "", kind: str = "hipstr", file: str = "tree", download: int = 0):
         """The summary tree of a BEAST chain (NEXUS), or `file=tips` for the tip table; made on first use with TreeAnnotator."""
