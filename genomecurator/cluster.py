@@ -180,6 +180,13 @@ def totals(nodes: list[dict] | None = None) -> dict:
             t["mem_used"] += int(m.get("mem_used") or 0)
         else:
             t["no_memory"].append(n.get("name"))
+    from . import build
+    mine = build()
+    t["build"] = mine
+    t["other_code"] = sorted(n.get("name") for n in ns
+                             if ((n.get("caps") or {}).get("build") or {}).get("commit") and
+                             ((n.get("caps") or {}).get("build") or {}).get("commit") != mine.get("commit"))
+    t["no_build"] = sorted(n.get("name") for n in ns if not ((n.get("caps") or {}).get("build") or {}).get("commit"))
     t["mem_pct"] = round(100.0 * t["mem_used"] / t["mem_total"], 1) if t["mem_total"] else None
     t["cpu_pct"] = round(100.0 * t["cpus_busy"] / t["cpus"], 1) if t["cpus"] else None
     return t

@@ -238,14 +238,14 @@ def record_version(con: sqlite3.Connection) -> None:
 
 
 def version_info() -> dict:
-    from . import DB_SCHEMA_VERSION, __version__
+    from . import DB_SCHEMA_VERSION, __version__, build
     con = connect()
     try:
         meta = {r[0]: r[1] for r in con.execute("SELECT key, value FROM app_meta")}
     finally:
         con.close()
     return {"version": __version__, "db_schema_version": DB_SCHEMA_VERSION, "first_version": meta.get("first_version"),
-            "db_recorded_version": meta.get("app_version")}
+            "db_recorded_version": meta.get("app_version"), "build": build()}
 
 
 def parse_version(v: str) -> tuple:

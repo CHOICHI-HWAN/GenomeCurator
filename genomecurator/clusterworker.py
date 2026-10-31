@@ -71,8 +71,8 @@ class Main:
 
 def capabilities(beast: str | None) -> dict:
     import sys
-    from . import __version__
-    caps = {"kinds": [], "port": os.environ.get("GC_SERVE_PORT"), "cpus": os.cpu_count(), "platform": platform.platform(), "host": platform.node(), "python": sys.version.split()[0], "app_version": __version__, "tools": {}}
+    from . import __version__, build
+    caps = {"kinds": [], "port": os.environ.get("GC_SERVE_PORT"), "cpus": os.cpu_count(), "platform": platform.platform(), "host": platform.node(), "python": sys.version.split()[0], "app_version": __version__, "build": build(), "tools": {}}
     mem = sysinfo.memory()
     if mem:
         caps["mem_total"] = mem[0]
