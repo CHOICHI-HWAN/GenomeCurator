@@ -1017,3 +1017,59 @@ def state() -> dict:
     ns = list_nodes()
     return {"nodes": ns, "totals": totals(ns), "requests": list_requests(), "jobs": list_jobs(100), "groups": groups, "bets": bets,
             "plans": plans, "joining": _joining.locked(), "lease": LEASE, "stale": STALE, "now": _now()}
+
+
+def _group_progress(e: dict | None) -> dict | None:
+    if not e:
+        return None
+    n = e.get("expected") or e.get("parts") or len(e["jobs"])
+    # Counting only finished analyses left the bar at 0% for hours while three chains ran to half way. A stage is as far along
+    # as its analyses are: a finished one counts whole, a running one counts its own progress.
+    part = sum(1.0 if x["state"] == "done" else (x.get("pct") or 0) / 100 for x in e["jobs"] if x["state"] in ("done", "running"))
+    return {"done": e["done"], "expected": n, "pct": round(100 * part / n, 1) if n else None, "failed": e["failed"],
+            "running": sum(1 for x in e["jobs"] if x["state"] == "running"), "queued": sum(1 for x in e["jobs"] if x["state"] == "queued"),
+            "ready": e.get("ready"), "joined": e.get("joined")}
+
+
+def overview(node: dict | None = None) -> dict:
+    """What the whole cluster is doing, for a sub-server to show on its own page — the same picture as the main server's, with
+    nothing private in it.
+
+    A worker could see only the one job it was running, so from the machine in front of you there was no way to tell whether the
+    analysis as a whole was moving, or where the other chains of your own run had got to. This is that shared view. What a worker
+    is trusted with is running the work, not reading the owner's cluster, so the addresses, keys, pending join requests, data
+    folders and job specifications stay on the main server; names, progress and machine load go out. `node` is the worker asking,
+    and marks itself in the answer so its own machine and its own jobs can be picked out."""
+    rows = _all_jobs()
+    ns = list_nodes()
+    gs = {g["id"]: g for g in list(_groups(rows, "split").values()) + list(_groups(rows, "bets").values())}
+    try:
+        from . import beastplan
+        plans, stages = beastplan.unfinished(), list(beastplan.STAGES)
+    except Exception:
+        _log.warning("could not read the analysis plans", exc_info=True)
+        plans, stages = [], []
+    me = (node or {}).get("id")
+    names = {n["id"]: n["name"] for n in ns}
+
+    def machine(n: dict) -> dict:
+        m = n.get("metrics") or {}
+        return {"name": n["name"], "online": n["online"], "paused": n["paused"], "you": n["id"] == me,
+                "cpus": (n.get("caps") or {}).get("cpus") or m.get("cpus"), "cpus_busy": n.get("cpus_busy"), "cpus_free": n.get("cpus_free"),
+                "jobs": len(n.get("running_jobs") or []), "env_ok": n.get("env_ok"), "last_seen": n.get("last_seen"),
+                "metrics": {k: m.get(k) for k in ("cpu_pct", "load1", "cpus", "mem_total", "mem_used", "mem_pct", "disk_free")}}
+
+    def plan(p: dict) -> dict:
+        return {"name": p.get("name"), "stage": p.get("stage"), "stages": stages, "chosen": p.get("chosen"), "n_tips": p.get("n_tips"), "chains": p.get("chains"),
+                "model": (p.get("model") or {}).get("model"), "grid": len(p.get("grid") or []),
+                "started": p.get("started"), "log": (p.get("log") or [])[-3:],
+                "progress": _group_progress(gs.get((p.get("groups") or {}).get(p.get("stage"))))}
+
+    def job(j: dict) -> dict:
+        x = _public(j)
+        return {"label": x["label"], "state": x["state"], "pct": x["pct"], "kind": x["kind"], "claimed": x["claimed"],
+                "node": names.get(x["node_id"]), "mine": bool(me) and x["node_id"] == me, "stale": x.get("stale")}
+
+    return {"nodes": [machine(n) for n in ns], "totals": totals(ns), "plans": [plan(p) for p in plans],
+            "jobs": [job(j) for j in rows if j["state"] in ("running", "queued")],
+            "you": (node or {}).get("name"), "lease": LEASE, "now": _now()}

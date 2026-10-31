@@ -4,12 +4,15 @@
 서브서버의 소식(heartbeat)이 {{ stale }}초 넘게 없으면 <b>응답 없음</b>으로 표시하고 유예 시간을 셉니다. {{ lease // 60 }}분이 지나도 소식이 없으면 그 서브서버에서는 실패한 것으로 보고 작업을 대기열로 돌려 다른 서브서버에 다시 나눠 줍니다. 서브서버에서 <b>정지</b>를 누르면 유예 없이 바로 돌아옵니다(시도 횟수에 넣지 않음). 메인이 잠시 꺼져도 실행 중인 작업은 계속되고 결과는 서브서버에 보관되었다가 전달됩니다.<br>
 <b>서브서버 추가:</b> 서브서버로 쓸 서버를 <code>genomecurator serve --host 0.0.0.0</code>으로 띄우고 그 주소(<code>http://그 서버:8000</code>)로 접속해 분석 환경 점검을 통과한 뒤 이 서버의 주소로 <b>참여 요청</b>을 보냅니다. 요청이 아래 <b>승인 대기</b>에 나타나면 내용을 확인하고 승인하세요. 승인 전에는 어떤 작업도 받지 못합니다.</div>
 
+<h3>현황</h3>
+<div class="mut" style="margin-bottom:8px">이 화면과 <b>각 서브서버의 화면(<code>/cluster/sub</code>)</b>이 같은 현황을 봅니다 — 어느 컴퓨터 앞에 앉아 있어도 분석 전체가 어디까지 왔는지 보입니다.</div>
+<div id="ov"></div>
+
 <h3>승인 대기</h3>
 <table id="rt"><thead><tr><th>서버</th><th class="nw">IP</th><th class="nw">요청</th><th>분석 환경</th><th>자원</th><th class="nw">비공개 허용</th><th></th></tr></thead><tbody></tbody></table>
 
 <h3>서브서버</h3>
 <div class="mut" style="margin-bottom:6px">줄을 누르면 그 서브서버의 분석 환경(점검 결과, 도구 버전, OS, 자원)이 펼쳐집니다. <b>터미널</b> 버튼은 서브서버가 자기 화면에서 웹 터미널을 허용했을 때만 나타납니다.</div>
-<div id="tot" class="mut" style="margin:0 0 8px"></div>
 <table id="nt"><thead><tr><th class="nw">연결</th><th>이름</th><th>분석 환경</th><th>자원</th><th class="nw">마지막 연락</th><th style="width:24%">실행 중인 작업</th><th class="nw">비공개</th><th></th></tr></thead><tbody></tbody></table>
 <details style="margin:10px 0"><summary class="mut">명령줄 워커용: 메인에서 직접 키 만들기</summary>
 <div style="display:flex;gap:8px;align-items:center;margin:10px 0;flex-wrap:wrap">
@@ -44,6 +47,7 @@
 .envd{background:var(--stripe);padding:10px 14px}.envd table{margin:0}.envd td{padding:2px 10px 2px 0;border:0;vertical-align:top}
 </style>
 <script src="/static/gc/minichart.js"></script>
+<script src="/static/gc/clusterview.js"></script>
 <script>
 const ST={queued:"대기",running:"실행 중",done:"완료",error:"오류",cancelled:"취소"};
 const esc=s=>String(s==null?"":s).replace(/[&<>"']/g,c=>({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;","'":"&#39;"}[c]));
@@ -60,24 +64,11 @@ async function addSplit(){const n=parseInt(document.getElementById("jn").value||
  document.getElementById("jmsg").textContent=ok?n+"조각으로 나누어 대기열에 넣었습니다":j.error;if(ok)load()}
 async function joinGroup(id){const [ok,j]=await post("/api/cluster/groups/"+id+"/join",{});
  document.getElementById("jmsg").textContent=ok?"합쳤습니다":j.error;load()}
-const STAGE_KO={bets:"시계 신호(BETS)",compare:"모델 비교",dating:"본 분석",done:"완료",stopped:"중단"};
 const BSTAGE_KO={psss:"경로/스테핑스톤",mcmc:"일반 체인",gss:"일반화 스테핑스톤"};
-function planBox(s){const ps=s.plans||[];if(!ps.length&&!(s.bets||[]).length)return"";
+// The plans themselves are drawn by the shared panel at the top of the page (the sub-servers show the same one); what is left
+// here is the detail only the owner sees: every analysis of a BETS or model-comparison run, one chip each.
+function planBox(s){if(!(s.bets||[]).length)return"";
  const b=[];
- for(const p of ps){
-  const gid=(p.groups||{})[p.stage], g=(s.bets||[]).concat(s.groups||[]).find(x=>x.id===gid);
-  const n=g?(g.done+"/"+(g.expected||g.parts||"?")):"—";
-  const steps=["bets","compare","dating"].map(st=>{
-    const cur=p.stage===st, done=["bets","compare","dating"].indexOf(p.stage)>["bets","compare","dating"].indexOf(st)||p.stage==="done";
-    return '<span class="cst '+(done?"done":(cur?"running":"queued"))+'" style="margin-right:5px">'+STAGE_KO[st]+'</span>'}).join("→ ");
-  let extra="";
-  if(p.stage==="stopped")extra='<div style="color:#b2182b;margin-top:4px">'+esc(p.stopped_because||"중단됨")+'</div>';
-  else if(p.chosen)extra='<div class="mut" style="margin-top:4px">선택된 모형 <b>'+esc(p.chosen.clock)+' · '+esc(p.chosen.tree_prior)+'</b>'+(p.chosen.runner_up?' (2위 '+esc(p.chosen.runner_up)+', 로그 BF '+(p.chosen.log_bf_over_runner_up||0).toFixed(1)+')':'')+'</div>';
-  const last=(p.log||[]).slice(-1)[0]||"";
-  b.push('<div style="border:1px solid var(--line);border-radius:8px;padding:9px 11px;margin:0 0 8px;background:#fbfbfd">'
-   +'<b>분석 계획 '+esc(p.name)+'</b> <span class="mut">유전체 '+p.n_tips+'개 · 치환 모형 '+esc((p.model||{}).model||"?")+' · 격자 '+((p.grid||[]).length)+'조합 · 사슬 '+p.chains+'개</span>'
-   +'<div style="margin:6px 0 2px">'+steps+' <span class="mut">현재 단계 작업 '+n+'</span></div>'+extra
-   +'<div class="mut" style="font-size:12px;margin-top:4px">'+esc(last)+'</div></div>')}
  for(const g of (s.bets||[])){
   const cells=(g.jobs||[]).map(j=>'<span class="cst '+j.state+'" style="margin:0 4px 4px 0;display:inline-block">'+esc(j.tag||"")+' · '+(BSTAGE_KO[j.stage]||j.stage)+(j.state==="running"&&j.pct?" "+Math.round(j.pct)+"%":"")+'</span>').join("");
   let st='<span class="mut">'+g.done+'/'+(g.expected||"?")+' 완료</span>';
@@ -133,15 +124,6 @@ async function load(){if(busy)return;busy=true;try{const s=await (await fetch("/
  const pend=(s.requests||[]).filter(r=>r.state==="pending");REQ=Object.fromEntries(pend.map(r=>[r.id,r]));
  const keep={};document.querySelectorAll("#rt input[type=checkbox]").forEach(x=>keep[x.id]=x.checked);
  document.querySelector("#rt tbody").innerHTML=pend.map(r=>{const i=r.info||{};return '<tr><td><b>'+esc(r.name)+'</b><br><span class="mut">'+esc(i.platform||"")+'</span></td><td class="nw">'+esc(r.ip)+'</td><td class="nw">'+ago(r.created)+'</td><td>'+envPill(i.env)+'<br><span class="mut" style="font-size:12px">'+envChecks(i.env)+'</span></td><td class="mut">'+(i.cpus||"?")+'코어 · '+gb(i.mem_total)+'<br>'+res(i.metrics)+'</td><td class="nw"><label><input type="checkbox" id="rp-'+r.id+'"'+(keep["rp-"+r.id]?" checked":"")+'> 허용</label></td><td class="nw"><button onclick="approve(\''+r.id+'\')">승인</button> <button onclick="reject(\''+r.id+'\')">거절</button></td></tr>'}).join("")||'<tr><td colspan="7" class="mut">승인을 기다리는 요청이 없습니다.</td></tr>';
- const T=s.totals||{};
- const gb=b=>b?(b>=1099511627776?(b/1099511627776).toFixed(1)+" TB":Math.round(b/1073741824)+" GB"):"-";
- document.getElementById("tot").innerHTML=T.nodes?('<b>클러스터 합계</b> &nbsp; 서버 '+T.nodes+'대 · 작업 '+T.jobs+'개 &nbsp;|&nbsp; 코어 <b>'+T.cpus_busy+'</b> 사용 / '+T.cpus+' (여유 '+T.cpus_free+')'
-  +(T.mem_total?' &nbsp;|&nbsp; 메모리 <b>'+gb(T.mem_used)+'</b> / '+gb(T.mem_total)+' ('+T.mem_pct+'%)':'')
-  +' &nbsp;|&nbsp; 디스크 여유 '+gb(T.disk_free)
-  +((T.no_memory&&T.no_memory.length)?' <span style="color:#b26b00">· 메모리를 보고하지 않는 서버: '+esc(T.no_memory.join(", "))+'</span>':'')
-  +((T.build&&T.build.commit)?'<br>코드 <code>'+esc(T.build.version)+' · '+esc(T.build.commit)+'</code>'+(T.build.dirty?' <span style="color:#b26b00">(커밋되지 않은 변경 있음)</span>':''):'')
-  +((T.other_code&&T.other_code.length)?' <span style="color:var(--bad)">· 다른 코드를 쓰는 서버: '+esc(T.other_code.join(", "))+'</span>':'')
-  +((T.no_build&&T.no_build.length)?' <span style="color:#b26b00">· 코드를 알 수 없는 서버: '+esc(T.no_build.join(", "))+'</span>':'')):"";
  const nr=[];for(const n of s.nodes){const c=n.caps||{};nr.push('<tr class="nr" data-id="'+n.id+'" style="cursor:pointer"><td><span class="cst '+(n.online?(n.paused?"off":"on"):"bad")+'">'+(n.online?(n.paused?"정지":"연결"):"끊김")+'</span></td><td><b>'+esc(n.name)+'</b><br><span class="mut">'+esc(c.host||"")+'</span>'+(c.netdata&&c.netdata.ok?' <a href="http://'+esc(c.ip)+':'+(c.netdata.port||19999)+'" target="_blank" onclick="event.stopPropagation()" style="font-size:12px">Netdata ↗</a>':'')+'</td><td>'+envPill(c.env)+'<br><span class="mut">'+esc(c.tools&&c.tools.beast?"BEAST "+c.tools.beast:"")+'</span></td><td class="mut">'+res(n.metrics)+'</td><td class="nw">'+ago(n.last_seen)+'</td><td>'+((n.running_jobs&&n.running_jobs.length)?n.running_jobs.map(j=>esc(j.label)+prog(j.pct,j.msg,j.claimed)+stale(j)).join('<div style="height:6px"></div>')+(n.cpus_free!=null?'<div class="mut" style="font-size:12px">코어 '+n.cpus_busy+' 사용 · '+n.cpus_free+' 여유</div>':''):'<span class="mut">'+(n.paused?"정지됨":"없음")+'</span>')+'</td><td class="nw">'+(n.allow_private?"허용":"-")+'</td><td class="nw">'+(n.metrics&&n.metrics.shell?'<button onclick="event.stopPropagation();window.open(\'/cluster/shell/'+n.id+'\',\'_blank\')">터미널</button> ':'')+'<button id="rc-'+n.id+'" onclick="event.stopPropagation();recheck(\''+n.id+'\')">환경 다시 점검</button> <button onclick="event.stopPropagation();revoke(\''+n.id+'\')">폐기</button></td></tr>');
   if(openN.has(n.id))nr.push('<tr><td colspan="8" style="padding:0">'+envDetail(n)+'</td></tr>')}
  setTimeout(()=>{for(const id of openN){const el=document.getElementById("hist-"+id);if(el&&HC[id])miniCharts(el,HC[id]);if(!HC[id]||Date.now()-(HC[id]._at||0)>30000)loadHist(id)}},0);
@@ -162,6 +144,7 @@ async function ndLoad(){const j=await (await fetch("/api/cluster/netdata")).json
  +'<div>'+(j.streaming||[]).map(x=>esc(x.name)+': '+(x.streams?'<span style="color:var(--ok)">보내는 중</span>':'<span class="mut">아직 안 보냄</span>')).join(" · ")+'</div>'
  +'<div style="font-size:12px;margin-top:4px">설정 변경은 root 권한이 필요해 이 앱이 하지 않습니다. 스트리밍이 되면 서브서버에 직접 닿지 않아도 기록 그래프가 메인 Netdata에서 그려집니다.</div>'}
 document.getElementById("ndd").addEventListener("toggle",e=>{if(e.target.open)ndLoad()});
-load();setInterval(load,5000);
+async function loadOv(){try{renderCluster(document.getElementById("ov"),await (await fetch("/api/cluster/overview")).json())}catch(e){}}
+load();loadOv();setInterval(load,5000);setInterval(loadOv,5000);
 </script>
 {% endblock %}

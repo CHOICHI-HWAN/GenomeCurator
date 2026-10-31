@@ -935,7 +935,11 @@ def parse_bets_settings(raw: dict | None) -> dict:
     out["compare"] = bool(s.get("compare"))
     out["name"] = re.sub(r"[^A-Za-z0-9_.\-]", "_", str(s.get("name") or ""))[:40]     # its own folder `bets/<name>/`, so that two estimations can run side by side
     out["tip_names"] = [str(x) for x in (s.get("tip_names") or [])]        # the exact genomes to use; empty means draw a subsample of n_tips
-    if not 10 <= out["n_tips"] <= 300:
+    if out["tip_names"]:
+        # The record has to say what ran. With the genomes named, n_tips was left at its default and the stored settings said
+        # "60 genomes" for a 166-genome run. The cap is on the size of a subsample to draw, not on a list the caller chose.
+        out["n_tips"] = len(out["tip_names"])
+    elif not 10 <= out["n_tips"] <= 300:
         raise ValueError("표본 유전체 수는 10~300입니다.")
     if out["initial_chain"] < 10000 or out["step_chain"] < 1000 or not 4 <= out["path_steps"] <= 500:
         raise ValueError("초기 체인은 10,000 이상, 단계당 체인은 1,000 이상, 경로 단계는 4~500이어야 합니다 (신뢰할 만한 추정은 단계 50 이상, 단계당 250,000 이상).")
@@ -1095,7 +1099,10 @@ def bets_summary(s: dict, screens: dict[str, dict[str, str | Path]], n_tips: int
     """The result of a BETS run from the screen output of its analyses: `screens` is {model tag: {"psss"|"gss": the BEAST screen log}}.
     Every marginal likelihood BEAST reports is in that text, so the same function serves a run in this process and one on the cluster."""
     tags = [m["tag"] for m in _models(s)]
-    res: dict = {"settings": s, "seconds": seconds, "n_tips": n_tips, "span_years": span_years, **{t: {} for t in tags}}
+    # A cluster run has no count to hand in (the analyses ran on other machines), and `0 genomes` in the record is worse than
+    # nothing: the settings know how many went in, so fall back to them.
+    res: dict = {"settings": s, "seconds": seconds, "n_tips": n_tips or len(s.get("tip_names") or []) or int(s.get("n_tips") or 0),
+                 "span_years": span_years, **{t: {} for t in tags}}
     for tag in tags:
         for kind, path in (screens.get(tag) or {}).items():
             if not path or not Path(path).is_file():

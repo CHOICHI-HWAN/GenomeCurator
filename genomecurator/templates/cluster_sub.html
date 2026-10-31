@@ -28,6 +28,9 @@ pre{margin:8px 0 0;max-height:210px;overflow:auto;background:var(--bg);border:1p
   <div class="row mut" style="gap:18px"><span>수행 <b id="je">-</b></span><span>남은 시간 <b id="jr">-</b></span><span>완료 예상 <b id="jf">-</b></span></div><div class="mut" id="jm"></div></div>
  <div id="hist" style="display:none;margin-top:12px"><div class="mut" style="margin-bottom:4px">최근 작업</div><div id="hl"></div></div></div>
 
+<div class="card"><div class="row"><h2 style="margin:0">클러스터 전체</h2><span class="mut">메인 서버의 화면과 같은 현황입니다 — 이 서버의 작업만이 아니라 분석 전체가 어디까지 왔는지 보입니다.</span></div>
+ <div id="ov" style="margin-top:10px" class="mut">불러오는 중…</div></div>
+
 <div class="card"><h2>자원 사용</h2><div class="meters">
  <div class="m"><div class="row" style="justify-content:space-between"><span>CPU</span><b id="cpu">-</b></div><div class="bar"><i id="cpub" style="width:0"></i></div><div class="mut" id="cpux"></div></div>
  <div class="m"><div class="row" style="justify-content:space-between"><span>메모리</span><b id="mem">-</b></div><div class="bar"><i id="memb" style="width:0"></i></div><div class="mut" id="memx"></div></div>
@@ -60,6 +63,7 @@ pre{margin:8px 0 0;max-height:210px;overflow:auto;background:var(--bg);border:1p
 <div class="mut" id="ver"></div>
 </main>
 <script src="/static/gc/minichart.js"></script>
+<script src="/static/gc/clusterview.js"></script>
 <script>
 const $=id=>document.getElementById(id);
 const esc=s=>String(s==null?"":s).replace(/[&<>"]/g,c=>({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;"}[c]));
@@ -110,5 +114,6 @@ async function load(){let j;try{j=await (await fetch("/api/cluster/sub")).json()
  $("shl").textContent=(j.shell_sessions||[]).length?"지금 접속 중: "+j.shell_sessions.map(x=>x.from+" ("+x.since.replace("T"," ")+"부터)").join(", "):"";
  $("ver").textContent="GenomeCurator "+(j.version||"")}
 async function hist(){try{const h=await (await fetch("/api/cluster/sub/history?minutes="+$("hr").value)).json();miniCharts($("hc"),h)}catch(e){$("hc").textContent="기록을 불러오지 못했습니다."}}
-load();hist();setInterval(load,3000);setInterval(hist,30000);
+async function overview(){try{renderCluster($("ov"),await (await fetch("/api/cluster/sub/overview")).json())}catch(e){$("ov").textContent="클러스터 현황을 불러오지 못했습니다."}}
+load();hist();overview();setInterval(load,3000);setInterval(hist,30000);setInterval(overview,5000);
 </script></body></html>

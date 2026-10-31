@@ -59,6 +59,11 @@ class Main:
         with self._open(method, path, data, {"Content-Type": "application/json"}, len(data)) as r:
             return json.loads(r.read() or b"{}")
 
+    def get(self, path: str) -> dict:
+        """A reading call — no request body, which a GET should not carry."""
+        with self._open("GET", path) as r:
+            return json.loads(r.read() or b"{}")
+
     def download(self, path: str, dest: Path) -> None:
         with self._open("GET", path) as r, open(dest, "wb") as f:
             shutil.copyfileobj(r, f, 1 << 20)
@@ -623,6 +628,31 @@ def sub_status() -> dict:
             **live}
 
 
+_overview: dict = {"at": 0.0, "v": None}
+
+
+def cluster_overview(max_age: float = 5.0) -> dict:
+    """What the whole cluster is doing, read from the main server with this machine's own worker key.
+
+    The sub-server page could show only this one machine, because the main server refuses its pages to other machines - so from
+    the machine actually doing the work there was no way to see whether the analysis was moving or where the other chains were.
+    The worker key it already has is enough to ask, and the answer carries nothing private (`cluster.overview`). Cached for a
+    few seconds so a page left open does not ask the main server on every tick."""
+    cfg = load_config()
+    if not cfg.get("main") or not cfg.get("key"):
+        return {"ok": False, "error": "this machine is not a sub-server of a main server yet"}
+    if _overview["v"] and time.time() - _overview["at"] < max_age:
+        return _overview["v"]
+    try:
+        v = {"ok": True, **Main(cfg["main"], cfg["key"], timeout=20).get("/api/cluster/w/overview")}
+    except Gone as ex:
+        v = {"ok": False, "error": f"the main server refused this machine's key ({ex})"}
+    except Exception as ex:
+        v = {"ok": False, "error": f"could not reach the main server at {cfg['main']}: {ex}"}
+    _overview.update(at=time.time(), v=v)
+    return v
+
+
 def _start_worker(cfg: dict) -> None:
     if not IN_PROCESS:
         if _worker_pid() is None:              # one worker per data folder; a running one reads worker.json by itself
@@ -811,6 +841,11 @@ def _points_here(url: str | None, port: str) -> bool:
         except OSError:
             continue
     return False
+
+
+def main_is_here() -> bool:
+    """Is the main server this very machine? Then its own page reads the cluster from the database instead of asking over HTTP."""
+    return _points_here(load_config().get("main"), os.environ.get("GC_SERVE_PORT") or "8000")
 
 
 def main_worker_autostart() -> None:

@@ -614,8 +614,9 @@ def test_the_cluster_pages_scripts_parse(tmp_path, monkeypatch):
         r = subprocess.run(["node", "--check", str(f)], capture_output=True, text=True)
         assert r.returncode == 0, f"{path}: {r.stderr[:400]}"
     from pathlib import Path
-    r = subprocess.run(["node", "--check", str(Path(web.__file__).parent / "static" / "gc" / "minichart.js")], capture_output=True, text=True)
-    assert r.returncode == 0, r.stderr
+    for name in ("minichart.js", "clusterview.js"):
+        r = subprocess.run(["node", "--check", str(Path(web.__file__).parent / "static" / "gc" / name)], capture_output=True, text=True)
+        assert r.returncode == 0, f"{name}: {r.stderr}"
 
 
 def test_netdata_streaming_guide_names_the_link_address_and_who_streams(tmp_path, monkeypatch):
@@ -1124,3 +1125,54 @@ def test_the_cluster_total_separates_cores_in_use_from_threads_asked_for(tmp_pat
     assert t["cpus_used"] == round(0.18 * 64 + 9.6, 1) == 21.1                 # cpu_pct where there is one, load where there is not
     assert t["cpu_pct"] == round(100 * 21.1 / 88, 1)
     assert t["cpus_used"] < t["threads_asked"] < t["cpus"] + t["threads_asked"]
+
+
+def test_every_machine_sees_the_same_cluster_without_seeing_the_owners_cluster(tmp_path, monkeypatch):
+    """The shared panel: a sub-server reads the whole cluster with its own worker key, and that answer carries no addresses,
+    no keys and no data folders - it is what both pages draw."""
+    c = _env(tmp_path, monkeypatch)
+    from fastapi.testclient import TestClient
+    from genomecurator import web
+    n1, n2 = c.create_node("mine"), c.create_node("other")
+    cl = TestClient(web.create_app(scheduler=False))
+    c.hello(c.authenticate(n1["key"]), {"cpus": 8, "ip": "10.1.2.3", "host": "mine.local", "metrics": {"cpu_pct": 11.0, "mem_total": 2 ** 34, "mem_used": 2 ** 33}})
+    remote = TestClient(web.create_app(scheduler=False), client=("192.168.0.9", 5000))
+    assert remote.get("/api/cluster/w/overview").status_code == 403                    # a key is needed
+    ov = remote.get("/api/cluster/w/overview", headers={"Authorization": "Bearer " + n1["key"]}).json()
+    assert [x["name"] for x in ov["nodes"]] == ["mine", "other"] and ov["you"] == "mine"
+    assert [x["you"] for x in ov["nodes"]] == [True, False]                            # the asking machine knows itself in the picture
+    assert ov["totals"]["cpus"] == 8 and ov["nodes"][0]["metrics"]["mem_total"] == 2 ** 34
+    flat = json.dumps(ov)
+    assert "10.1.2.3" not in flat and n1["key"] not in flat and n2["key"] not in flat and "key_sha" not in flat
+    assert cl.get("/api/cluster/overview").json()["nodes"][0]["name"] == "mine"         # the main server's own page: the same answer
+    assert remote.get("/static/gc/clusterview.js").status_code == 200                   # the page's own script reaches the sub-server page
+
+
+def test_a_sub_server_shows_the_cluster_through_its_own_page(tmp_path, monkeypatch):
+    """On the sub-server the page asks its own server, which fetches the picture from the main server with the stored key."""
+    c = _env(tmp_path, monkeypatch)
+    from fastapi.testclient import TestClient
+    from genomecurator import clusterworker, web
+    node = c.create_node("sub1")
+    app = web.create_app(scheduler=False)
+    cl = TestClient(app)
+    main = TestClient(web.create_app(scheduler=False))
+
+    class _Main:                                              # the sub-server reaches the main server over HTTP; here that is the test client
+        def __init__(self, base, key, timeout=60):
+            self.key = key
+
+        def get(self, path):
+            r = main.get(path, headers={"Authorization": "Bearer " + self.key})
+            if r.status_code != 200:
+                raise clusterworker.Gone(str(r.status_code))
+            return r.json()
+    monkeypatch.setattr(clusterworker, "Main", _Main)
+    clusterworker._overview.update(at=0.0, v=None)
+    clusterworker.save_config({"main": "http://10.9.9.9:8000", "key": node["key"], "enabled": True})
+    ov = cl.get("/api/cluster/sub/overview").json()
+    assert ov["ok"] and ov["you"] == "sub1" and [x["name"] for x in ov["nodes"]] == ["sub1"]
+    clusterworker._overview.update(at=0.0, v=None)
+    clusterworker.save_config({"main": "http://10.9.9.9:8000", "key": "no-longer-a-key", "enabled": True})
+    bad = cl.get("/api/cluster/sub/overview").json()
+    assert bad["ok"] is False and "거부" in bad["error"] or "refused" in bad["error"]

@@ -202,7 +202,9 @@ def create_app(scheduler: bool = True) -> FastAPI:
         host = request.client.host if request.client else ""
         path = request.url.path
         if not _is_self(request) and os.environ.get("GC_ALLOW_REMOTE_UI") != "1" and not path.startswith("/api/cluster/w/"):
-            sub = path == "/cluster/sub" or path.startswith("/api/cluster/sub")
+            # `/static/gc/` goes with the sub-server page: it is the page's own scripts (charts, the shared cluster panel) and
+            # holds no data, so without them a sub-server page opened from another machine on the network renders half-drawn.
+            sub = path == "/cluster/sub" or path.startswith("/api/cluster/sub") or path.startswith("/static/gc/")
             lan_ok = _is_lan(host) and os.environ.get("GC_SUB_PAGE_LAN") != "0"
             if sub and lan_ok:
                 pass
@@ -1927,6 +1929,11 @@ def create_app(scheduler: bool = True) -> FastAPI:
     def cluster_state():
         return cluster.state()
 
+    @app.get("/api/cluster/overview")
+    def cluster_overview_here():
+        """The shared panel's data for this (main) server's own page — the same answer the sub-servers get."""
+        return cluster.overview()
+
     @app.get("/api/cluster/job/{jid}")
     def cluster_job_get(jid: str):
         j = cluster.get_job(jid)
@@ -2005,6 +2012,18 @@ def create_app(scheduler: bool = True) -> FastAPI:
         if time.time() - _nd_cache["at"] > 30:
             _nd_cache["v"], _nd_cache["at"] = netdata.probe(), time.time()
         return _nd_cache["v"]
+
+    @app.get("/api/cluster/sub/overview")
+    async def cluster_sub_overview():
+        """The whole cluster as this machine's own page shows it: fetched from the main server with this machine's worker key.
+        On the main server itself the same page answers from the database directly, since there is nothing to ask."""
+        from . import clusterworker
+        from starlette.concurrency import run_in_threadpool
+        cfg = clusterworker.load_config()
+        if clusterworker.main_is_here():
+            node = cluster.authenticate(cfg.get("key")) if cfg.get("key") else None
+            return {"ok": True, "here": True, **cluster.overview(node)}
+        return await run_in_threadpool(clusterworker.cluster_overview)
 
     @app.get("/api/cluster/sub/history")
     def cluster_sub_history(minutes: int = 60):
@@ -2152,7 +2171,7 @@ def create_app(scheduler: bool = True) -> FastAPI:
 
     @app.get("/static/gc/{name}")
     def gc_static(name: str):
-        if name not in ("minichart.js", "venn.js"):
+        if name not in ("minichart.js", "venn.js", "clusterview.js"):
             return JSONResponse({"error": "not found"}, 404)
         return FileResponse(Path(__file__).parent / "static" / "gc" / name, media_type="application/javascript", headers={"Cache-Control": "max-age=3600"})
 
@@ -2263,6 +2282,14 @@ def create_app(scheduler: bool = True) -> FastAPI:
             return e
         from . import clusterworker
         return clusterworker.sub_shell(bool((await request.json()).get("on")))
+
+    @app.get("/api/cluster/w/overview")
+    def cluster_w_overview(request: Request):
+        """The cluster as a whole, read-only, for a sub-server to show on its own page (see `cluster.overview`)."""
+        n = _worker(request)
+        if not n:
+            return JSONResponse({"error": "unknown worker key"}, 403)
+        return cluster.overview(n)
 
     @app.post("/api/cluster/w/sync")
     async def cluster_w_sync(request: Request):
