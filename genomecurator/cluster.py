@@ -27,7 +27,7 @@ from .db import audit_now, connect
 _log = log.get("cluster")
 LEASE = int(os.environ.get("GC_CLUSTER_LEASE", "600"))          # grace: seconds without a heartbeat before a running job is taken as failed there and handed out again
 STALE = int(os.environ.get("GC_CLUSTER_STALE", "90"))
-RESERVE_CPUS = int(os.environ.get("GC_CLUSTER_RESERVE_CPUS", "4"))   # cores left free on every worker, so the machine stays usable
+RESERVE_CPUS = int(os.environ.get("GC_CLUSTER_RESERVE_CPUS", "1"))   # these are dedicated analysis machines: one core is kept so the box stays answerable, the rest is for work
 DEFAULT_THREADS = 8                                              # assumed when a job or a worker does not say           # seconds without a heartbeat before a running job is shown as "not answering" (grace starts)
 LOG_MAX = 300
 # the only commands a worker runs; {x} are filled from the job's spec by the worker, never from free text
@@ -157,6 +157,31 @@ def list_nodes() -> list[dict]:
         env = r["caps"].get("env") or {}
         r["env_ok"] = env.get("ok")
     return rows
+
+
+def totals(nodes: list[dict] | None = None) -> dict:
+    """What the cluster as a whole has and is using, over the workers that are online. The page showed each machine on its own,
+    so there was no answer to "how much is the cluster doing"; this is that answer. A machine that reports no memory is counted
+    in `no_memory` instead of being silently left out of the sums."""
+    ns = [n for n in (nodes if nodes is not None else list_nodes()) if n.get("online") and not n.get("paused")]
+    t: dict = {"nodes": len(ns), "offline": len([n for n in (nodes or []) if not n.get("online")]) or None,
+               "cpus": 0, "cpus_busy": 0, "cpus_free": 0, "mem_total": 0, "mem_used": 0, "disk_free": 0,
+               "jobs": 0, "no_memory": []}
+    for n in ns:
+        m, c = n.get("metrics") or {}, n.get("caps") or {}
+        t["cpus"] += int(c.get("cpus") or m.get("cpus") or 0)
+        t["cpus_busy"] += int(n.get("cpus_busy") or 0)
+        t["cpus_free"] += int(n.get("cpus_free") or 0)
+        t["jobs"] += len(n.get("running_jobs") or [])
+        t["disk_free"] += int(m.get("disk_free") or 0)
+        if m.get("mem_total"):
+            t["mem_total"] += int(m["mem_total"])
+            t["mem_used"] += int(m.get("mem_used") or 0)
+        else:
+            t["no_memory"].append(n.get("name"))
+    t["mem_pct"] = round(100.0 * t["mem_used"] / t["mem_total"], 1) if t["mem_total"] else None
+    t["cpu_pct"] = round(100.0 * t["cpus_busy"] / t["cpus"], 1) if t["cpus"] else None
+    return t
 
 
 def local_node() -> dict | None:
@@ -679,6 +704,30 @@ def _requeue_node(nid: str, why: str) -> None:
         con.close()
 
 
+IDLE_PCT = float(os.environ.get("GC_CLUSTER_IDLE_PCT", "85"))    # below this a machine is not really working, whatever its core budget says
+EXTRA_MEM_GB = float(os.environ.get("GC_CLUSTER_EXTRA_MEM_GB", "8"))   # memory an extra job must still leave free (a BEAST heap is 4 GB)
+MAX_EXTRA = int(os.environ.get("GC_CLUSTER_MAX_EXTRA", "6"))     # at most this many jobs beyond what the core budget allows
+
+
+def _really_idle(metrics: dict, cpus: int, running: int) -> bool:
+    """Does this machine have room beyond its core budget?
+
+    The budget assumes a job uses the threads it asked for, and BEAST on a long alignment often does not - it waits on memory
+    bandwidth more than on cores - so a workstation can sit at a third of its CPU with its budget 'full'. When the worker's own
+    measurements say it is idle and has memory to spare, it may take one more. Memory is the gate that matters: an oversubscribed
+    CPU only makes each job slower, while an oversubscribed memory makes the machine swap or the job die. A machine that reports
+    no memory is not given extra work, because there is then nothing to check."""
+    if running >= max(1, (cpus - RESERVE_CPUS) // DEFAULT_THREADS) + MAX_EXTRA:
+        return False
+    busy = metrics.get("cpu_pct")
+    if busy is None:
+        busy = metrics.get("load_pct")
+    total, used = metrics.get("mem_total"), metrics.get("mem_used")
+    if busy is None or not total:
+        return False
+    return busy < IDLE_PCT and (total - (used or 0)) / 2 ** 30 >= EXTRA_MEM_GB
+
+
 def claim(node: dict, kinds: list[str] | None = None, metrics: dict | None = None) -> dict | None:
     """Give the worker the oldest queued job it may run (its kind is known to the worker; a private job only to a worker that accepts private genomes)."""
     reap()
@@ -694,7 +743,9 @@ def claim(node: dict, kinds: list[str] | None = None, metrics: dict | None = Non
         running = [json.loads(r[0] or "{}") for r in con.execute("SELECT spec_json FROM cluster_job WHERE state='running' AND node_id=?", (node["id"],))]
         used = sum(int(x.get("threads") or DEFAULT_THREADS) for x in running)
         free = (cpus - RESERVE_CPUS - used) if cpus else (0 if running else DEFAULT_THREADS)
-        if running and free < 1:
+        met = metrics if metrics is not None else json.loads(con.execute("SELECT metrics_json FROM cluster_node WHERE id=?", (node["id"],)).fetchone()[0] or "{}")
+        spare = _really_idle(met, cpus, len(running))
+        if running and free < 1 and not spare:
             con.commit()
             return None                     # this worker's cores are taken
         q = "SELECT * FROM cluster_job WHERE state='queued' AND kind IN (%s)" % ",".join("?" * len(kinds))
@@ -702,12 +753,12 @@ def claim(node: dict, kinds: list[str] | None = None, metrics: dict | None = Non
             q += " AND private=0"
         for j in con.execute(q + " ORDER BY created, rowid", kinds).fetchall():
             want = int((json.loads(j["spec_json"] or "{}")).get("threads") or DEFAULT_THREADS)
-            if running and want > free:
+            if running and want > free and not spare:
                 continue                    # it would oversubscribe this machine; another worker can take it
             n = con.execute("UPDATE cluster_job SET state='running', node_id=?, claimed=?, heartbeat=?, attempts=attempts+1, pct=0, msg='assigned' WHERE id=? AND state='queued'",
                             (node["id"], _now(), _now(), j["id"])).rowcount
             if n:
-                _addlog(con, j["id"], f"assigned to {node['name']}")
+                _addlog(con, j["id"], f"assigned to {node['name']}" + (" (beyond its core budget: the machine measured idle with memory to spare)" if running and want > free else ""))
                 con.commit()
                 return {"id": j["id"], "kind": j["kind"], "label": j["label"], "spec": json.loads(j["spec_json"] or "{}"), "inputs": json.loads(j["inputs_json"] or "[]"),
                         "outputs": KINDS[j["kind"]]["outputs"], "required": KINDS[j["kind"]]["required"], "lease": LEASE}
@@ -936,5 +987,6 @@ def state() -> dict:
         plans = beastplan.unfinished()
     except Exception:
         plans = []
-    return {"nodes": list_nodes(), "requests": list_requests(), "jobs": list_jobs(100), "groups": groups, "bets": bets,
+    ns = list_nodes()
+    return {"nodes": ns, "totals": totals(ns), "requests": list_requests(), "jobs": list_jobs(100), "groups": groups, "bets": bets,
             "plans": plans, "joining": _joining.locked(), "lease": LEASE, "stale": STALE, "now": _now()}

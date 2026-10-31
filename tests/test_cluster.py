@@ -36,11 +36,11 @@ def _env(tmp_path, monkeypatch):
     return cluster
 
 
-def _pkg(tmp_path, name="beast1", tips=("A", "B")):
+def _pkg(tmp_path, name="beast1", tips=("A", "B"), threads=1):
     d = tmp_path / "beast" / name
     d.mkdir(parents=True)
     (d / "beast.xml").write_text("<beast>toy</beast>", encoding="utf-8")
-    (d / "settings.json").write_text(json.dumps({"seed": 7, "threads": 1, "chain_length": 1000, "tag": name, "tip_names": list(tips)}), encoding="utf-8")
+    (d / "settings.json").write_text(json.dumps({"seed": 7, "threads": threads, "chain_length": 1000, "tag": name, "tip_names": list(tips)}), encoding="utf-8")
     return d
 
 
@@ -721,10 +721,10 @@ def test_a_worker_fills_its_cores_with_several_jobs(tmp_path, monkeypatch):
         (d / "settings.json").write_text(json.dumps({"seed": 1, "threads": 8, "chain_length": 1000, "tag": f"j{i}", "tip_names": []}))
         ids.append(c.submit_beast(d))
     got = [c.claim(n) for _ in range(4)]
-    assert [g["id"] for g in got if g] == ids[:3]            # 32 cores - 4 reserved = 28, three jobs of 8 threads fit
+    assert [g["id"] for g in got if g] == ids[:3]            # 32 cores - 1 reserved = 31; three jobs of 8 threads fit, a fourth does not
     assert got[3] is None and c.get_job(ids[3])["state"] == "queued"
     node = c.list_nodes()[0]
-    assert len(node["running_jobs"]) == 3 and node["cpus_busy"] == 24 and node["cpus_free"] == 4
+    assert len(node["running_jobs"]) == 3 and node["cpus_busy"] == 24 and node["cpus_free"] == 32 - c.RESERVE_CPUS - 24
     small = c.authenticate(c.create_node("small")["key"])
     c.hello(small, {"kinds": ["beast"], "cpus": 8})
     assert c.claim(small)["id"] == ids[3]                     # the last one goes to the other worker
@@ -1038,3 +1038,50 @@ def test_a_plan_with_a_signal_goes_on_to_compare_every_combination(tmp_path, mon
     p = beastplan.advance(cr, "p")
     assert p["stage"] == "compare" and calls[1]["compare"] is True
     assert calls[1]["subst_model"] == "hky" and calls[1]["site_rates"] == "inv" and calls[1]["tip_names"] == calls[0]["tip_names"]
+
+
+# ---- the main server looks at what a machine is actually doing, not only at what its jobs asked for
+def test_a_machine_measured_idle_takes_more_than_its_core_budget(tmp_path, monkeypatch):
+    c = _env(tmp_path, monkeypatch)
+    GB = 2 ** 30
+    idle = {"cpu_pct": 12.0, "mem_total": 256 * GB, "mem_used": 20 * GB}
+    n = c.authenticate(c.create_node("big")["key"])
+    c.hello(n, {"kinds": ["beast"], "cpus": 16})                               # 12 cores after the reserve, so one 12-thread job fills it
+    ids = [c.submit_beast(_pkg(tmp_path, f"p{i}", threads=12)) for i in range(4)]
+    got = [c.claim(n, metrics=idle) for _ in ids]
+    assert all(g for g in got), "an idle machine with memory to spare should take all four"
+    assert "beyond its core budget" in json.dumps(c.get_job(ids[1])["log"], ensure_ascii=False)
+    assert c.claim(n, metrics=idle) is None                                    # nothing left in the queue
+
+
+def test_a_busy_or_full_machine_keeps_its_core_budget(tmp_path, monkeypatch):
+    c = _env(tmp_path, monkeypatch)
+    GB = 2 ** 30
+    for metrics, why in (({"cpu_pct": 92.0, "mem_total": 256 * GB, "mem_used": 20 * GB}, "busy"),
+                         ({"cpu_pct": 10.0, "mem_total": 256 * GB, "mem_used": 253 * GB}, "no memory left"),
+                         ({"cpu_pct": 10.0}, "says nothing about memory")):
+        name = "w-" + why.replace(" ", "")
+        n = c.authenticate(c.create_node(name)["key"])
+        c.hello(n, {"kinds": ["beast"], "cpus": 16})
+        a, b = _pkg(tmp_path, name + "a", threads=12), _pkg(tmp_path, name + "b", threads=12)
+        c.submit_beast(a); c.submit_beast(b)
+        assert c.claim(n, metrics=metrics), why
+        assert c.claim(n, metrics=metrics) is None, f"{why}: should not go past the budget"
+        for j in c.list_jobs():                                                # leave the queue clean for the next case
+            if j["state"] in ("queued", "running"):
+                c.cancel(j["id"])
+
+
+def test_the_cluster_total_is_reported_and_says_who_reports_no_memory(tmp_path, monkeypatch):
+    c = _env(tmp_path, monkeypatch)
+    GB = 2 ** 30
+    a = c.authenticate(c.create_node("linux")["key"])
+    b = c.authenticate(c.create_node("mac")["key"])
+    c.hello(a, {"kinds": ["beast"], "cpus": 64})
+    c.hello(b, {"kinds": ["beast"], "cpus": 24})
+    c.claim(a, metrics={"cpu_pct": 20.0, "cpus": 64, "mem_total": 256 * GB, "mem_used": 64 * GB, "disk_free": 4 * GB})
+    c.claim(b, metrics={"load_pct": 30.0, "cpus": 24, "disk_free": 6 * GB})    # macOS without /proc: no memory
+    t = c.totals()
+    assert t["nodes"] == 2 and t["cpus"] == 88 and t["disk_free"] == 10 * GB
+    assert t["mem_total"] == 256 * GB and t["no_memory"] == ["mac"]            # named, not silently dropped
+    assert t["mem_pct"] == 25.0

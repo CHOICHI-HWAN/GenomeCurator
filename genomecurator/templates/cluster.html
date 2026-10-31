@@ -9,6 +9,7 @@
 
 <h3>서브서버</h3>
 <div class="mut" style="margin-bottom:6px">줄을 누르면 그 서브서버의 분석 환경(점검 결과, 도구 버전, OS, 자원)이 펼쳐집니다. <b>터미널</b> 버튼은 서브서버가 자기 화면에서 웹 터미널을 허용했을 때만 나타납니다.</div>
+<div id="tot" class="mut" style="margin:0 0 8px"></div>
 <table id="nt"><thead><tr><th class="nw">연결</th><th>이름</th><th>분석 환경</th><th>자원</th><th class="nw">마지막 연락</th><th style="width:24%">실행 중인 작업</th><th class="nw">비공개</th><th></th></tr></thead><tbody></tbody></table>
 <details style="margin:10px 0"><summary class="mut">명령줄 워커용: 메인에서 직접 키 만들기</summary>
 <div style="display:flex;gap:8px;align-items:center;margin:10px 0;flex-wrap:wrap">
@@ -105,7 +106,9 @@ async function revoke(id){if(!confirm("이 서브서버를 폐기합니다. 실�
 async function recheck(id){await post("/api/cluster/nodes/"+id+"/recheck");const b=document.getElementById("rc-"+id);if(b)b.textContent="점검 요청함"}
 async function cancel(id){await post("/api/cluster/jobs/"+id+"/cancel");load()}
 const gb=b=>b==null?"-":(b/2**30).toFixed(b>=2**40?0:1)+" GB";
-const res=m=>m&&m.ts?'CPU '+(m.cpu_pct==null?"-":Math.round(m.cpu_pct))+'% · 메모리 '+(m.mem_total?Math.round(100*m.mem_used/m.mem_total)+"%":"-")+' · 디스크 여유 '+gb(m.disk_free):'<span class="mut">-</span>';
+// a machine without /proc (macOS) cannot report a CPU share cheaply; it reports the load instead, and is labelled as such
+const res=m=>m&&m.ts?(m.cpu_pct!=null?'CPU '+Math.round(m.cpu_pct)+'%':(m.load_pct!=null?'부하 '+m.load1+' / '+m.cpus+'코어 ('+Math.round(m.load_pct)+'%)':'CPU -'))
+ +' · 메모리 '+(m.mem_total?Math.round(100*m.mem_used/m.mem_total)+"% ("+gb(m.mem_total-m.mem_used)+" 여유)":"보고 없음")+' · 디스크 여유 '+gb(m.disk_free):'<span class="mut">-</span>';
 const envPill=e=>!e||e.ok==null?'<span class="cst off">보고 없음</span>':e.ok?'<span class="cst ok">정상</span>':'<span class="cst bad">이상</span>';
 const envChecks=e=>(e&&e.checks||[]).map(c=>(c.ok?"✓ ":"✗ ")+esc(c.name)+": "+esc(c.detail)).join("<br>");
 const ago=t=>{if(!t)return"-";const s=Math.round((Date.now()-new Date(t))/1000);return s<90?s+"초 전":s<5400?Math.round(s/60)+"분 전":Math.round(s/3600)+"시간 전"};
@@ -130,6 +133,12 @@ async function load(){if(busy)return;busy=true;try{const s=await (await fetch("/
  const pend=(s.requests||[]).filter(r=>r.state==="pending");REQ=Object.fromEntries(pend.map(r=>[r.id,r]));
  const keep={};document.querySelectorAll("#rt input[type=checkbox]").forEach(x=>keep[x.id]=x.checked);
  document.querySelector("#rt tbody").innerHTML=pend.map(r=>{const i=r.info||{};return '<tr><td><b>'+esc(r.name)+'</b><br><span class="mut">'+esc(i.platform||"")+'</span></td><td class="nw">'+esc(r.ip)+'</td><td class="nw">'+ago(r.created)+'</td><td>'+envPill(i.env)+'<br><span class="mut" style="font-size:12px">'+envChecks(i.env)+'</span></td><td class="mut">'+(i.cpus||"?")+'코어 · '+gb(i.mem_total)+'<br>'+res(i.metrics)+'</td><td class="nw"><label><input type="checkbox" id="rp-'+r.id+'"'+(keep["rp-"+r.id]?" checked":"")+'> 허용</label></td><td class="nw"><button onclick="approve(\''+r.id+'\')">승인</button> <button onclick="reject(\''+r.id+'\')">거절</button></td></tr>'}).join("")||'<tr><td colspan="7" class="mut">승인을 기다리는 요청이 없습니다.</td></tr>';
+ const T=s.totals||{};
+ const gb=b=>b?(b>=1099511627776?(b/1099511627776).toFixed(1)+" TB":Math.round(b/1073741824)+" GB"):"-";
+ document.getElementById("tot").innerHTML=T.nodes?('<b>클러스터 합계</b> &nbsp; 서버 '+T.nodes+'대 · 작업 '+T.jobs+'개 &nbsp;|&nbsp; 코어 <b>'+T.cpus_busy+'</b> 사용 / '+T.cpus+' (여유 '+T.cpus_free+')'
+  +(T.mem_total?' &nbsp;|&nbsp; 메모리 <b>'+gb(T.mem_used)+'</b> / '+gb(T.mem_total)+' ('+T.mem_pct+'%)':'')
+  +' &nbsp;|&nbsp; 디스크 여유 '+gb(T.disk_free)
+  +((T.no_memory&&T.no_memory.length)?' <span style="color:#b26b00">· 메모리를 보고하지 않는 서버: '+esc(T.no_memory.join(", "))+'</span>':'')):"";
  const nr=[];for(const n of s.nodes){const c=n.caps||{};nr.push('<tr class="nr" data-id="'+n.id+'" style="cursor:pointer"><td><span class="cst '+(n.online?(n.paused?"off":"on"):"bad")+'">'+(n.online?(n.paused?"정지":"연결"):"끊김")+'</span></td><td><b>'+esc(n.name)+'</b><br><span class="mut">'+esc(c.host||"")+'</span>'+(c.netdata&&c.netdata.ok?' <a href="http://'+esc(c.ip)+':'+(c.netdata.port||19999)+'" target="_blank" onclick="event.stopPropagation()" style="font-size:12px">Netdata ↗</a>':'')+'</td><td>'+envPill(c.env)+'<br><span class="mut">'+esc(c.tools&&c.tools.beast?"BEAST "+c.tools.beast:"")+'</span></td><td class="mut">'+res(n.metrics)+'</td><td class="nw">'+ago(n.last_seen)+'</td><td>'+((n.running_jobs&&n.running_jobs.length)?n.running_jobs.map(j=>esc(j.label)+prog(j.pct,j.msg,j.claimed)+stale(j)).join('<div style="height:6px"></div>')+(n.cpus_free!=null?'<div class="mut" style="font-size:12px">코어 '+n.cpus_busy+' 사용 · '+n.cpus_free+' 여유</div>':''):'<span class="mut">'+(n.paused?"정지됨":"없음")+'</span>')+'</td><td class="nw">'+(n.allow_private?"허용":"-")+'</td><td class="nw">'+(n.metrics&&n.metrics.shell?'<button onclick="event.stopPropagation();window.open(\'/cluster/shell/'+n.id+'\',\'_blank\')">터미널</button> ':'')+'<button id="rc-'+n.id+'" onclick="event.stopPropagation();recheck(\''+n.id+'\')">환경 다시 점검</button> <button onclick="event.stopPropagation();revoke(\''+n.id+'\')">폐기</button></td></tr>');
   if(openN.has(n.id))nr.push('<tr><td colspan="8" style="padding:0">'+envDetail(n)+'</td></tr>')}
  setTimeout(()=>{for(const id of openN){const el=document.getElementById("hist-"+id);if(el&&HC[id])miniCharts(el,HC[id]);if(!HC[id]||Date.now()-(HC[id]._at||0)>30000)loadHist(id)}},0);
