@@ -4141,3 +4141,22 @@ def test_modelfinder_choice_is_read_from_the_iqtree_report(tmp_path):
     f.write_text("nothing here\n", encoding="utf-8")
     with pytest.raises(ValueError):
         beastprep.modelfinder_choice(f)
+
+
+def test_the_gss_working_prior_counts_its_burnin_in_logged_rows():
+    """BEAST counts a reference prior's `burnin` in the rows of the log it reads, not in MCMC states. Passing states
+    (initial_chain // 2 = 10,000,000 against a 1,001-row log) left the working prior fitted on the whole chain including its
+    burn-in, and its density at the starting value came out -Inf: 'the initial likelihood is zero', every time."""
+    import random
+    from genomecurator import beastprep
+    rng = random.Random(5)
+    names = [f"s{i}" for i in range(12)]
+    seqs = {n: "".join(rng.choice("ACGT") for _ in range(80)) for n in names}
+    dates = {n: 2024 + i / 10 for i, n in enumerate(names)}
+    s = beastprep.parse_bets_settings({"initial_chain": 20_000_000, "step_chain": 250_000, "path_steps": 50})
+    x = beastprep.build_xml(seqs, dates, {}, {**s, "chain_length": beastprep.GSS_BURN, "samples": 100}, 1e-5, "beast",
+                            proper=True, fixed_freq=True,
+                            gss={"log": "prior.log", "burnin": beastprep.GSS_PRIOR_SAMPLES // 2,
+                                 "chain_length": s["step_chain"], "path_steps": s["path_steps"], "alpha": 0.3})
+    assert 'burnin="500"' in x and 'burnin="10000000"' not in x
+    assert beastprep.GSS_PRIOR_SAMPLES // 2 < beastprep.GSS_PRIOR_SAMPLES          # half the rows, which is what the chain logs

@@ -910,6 +910,7 @@ BETS_DEFAULTS = {"n_tips": 60, "clock": "relaxed", "tree_prior": "exponential", 
 ESTIMATORS = ("both", "gss", "ps_ss")
 _MLE_RE = {"ps": re.compile(r"log marginal likelihood \(using path sampling\)[^=]*=\s*(-?[0-9.eE+-]+)"), "ss": re.compile(r"log marginal likelihood \(using stepping stone sampling\)[^=]*=\s*(-?[0-9.eE+-]+)"),
            "gss": re.compile(r"log marginal likelihood \(using generalized stepping stone sampling\)[^=]*=\s*(-?[0-9.eE+-]+)")}
+GSS_PRIOR_SAMPLES = 1000  # rows the ordinary chain logs; the working prior's `burnin` below is counted in these rows, not in states
 GSS_BURN = 2000           # states of the ordinary chain run before the path begins: kept short so that the chain stays where it started (the middle of the earlier posterior, inside the working prior)
 GSS_PARAMS = tuple(dict.fromkeys(                         # every parameter any model may have: a GSS chain must start at the middle of
     ("kappa",) + GTR_RATES + ("alpha", "pInv")             # the earlier posterior for all of them, since a start outside the working
@@ -1028,7 +1029,7 @@ def bets_prepare(clock_run: dict, settings: dict | None = None) -> dict:
     out = {}
     for m in _models(s):
         tag, dates = m["tag"], (real if m["dated"] else same)
-        ms = {**s, "chain_length": s["initial_chain"], "samples": 1000, "clock": m["clock"], "tree_prior": m["tree_prior"]}
+        ms = {**s, "chain_length": s["initial_chain"], "samples": GSS_PRIOR_SAMPLES, "clock": m["clock"], "tree_prior": m["tree_prior"]}
         base = _root(clock_run, s) / tag
         if s["estimator"] in ("both", "ps_ss"):
             (base / "psss").mkdir(parents=True, exist_ok=True)
@@ -1055,7 +1056,7 @@ def gss_xml(clock_run: dict, tag: str, s: dict) -> str:
         raise RuntimeError(f"일반 체인에서 {', '.join(flat)} 값이 변하지 않았습니다 — 체인이 너무 짧거나 섞이지 않아 작업 사전분포를 만들 수 없습니다. 초기 체인을 늘려 다시 실행하세요.")
     ms = {**s, "chain_length": GSS_BURN, "samples": 100, "clock": m["clock"], "tree_prior": m["tree_prior"]}
     return build_xml(seqs, dates, {}, ms, rate0, "gss", proper=True, fixed_freq=True, init=init,
-                     gss={"log": "beast.log", "burnin": s["initial_chain"] // 2, "chain_length": s["step_chain"], "path_steps": s["path_steps"], "alpha": 0.3})
+                     gss={"log": "beast.log", "burnin": GSS_PRIOR_SAMPLES // 2, "chain_length": s["step_chain"], "path_steps": s["path_steps"], "alpha": 0.3})
 
 
 def bets_gss_template(clock_run: dict, tag: str, s: dict) -> str:
@@ -1071,7 +1072,7 @@ def bets_gss_template(clock_run: dict, tag: str, s: dict) -> str:
     dates = real if m["dated"] else {k: max(real.values()) for k in real}
     ms = {**s, "chain_length": GSS_BURN, "samples": 100, "clock": m["clock"], "tree_prior": m["tree_prior"]}
     return build_xml(seqs, dates, {}, ms, rate0, "beast", proper=True, fixed_freq=True,
-                     gss={"log": "prior.log", "burnin": s["initial_chain"] // 2, "chain_length": s["step_chain"], "path_steps": s["path_steps"], "alpha": 0.3})
+                     gss={"log": "prior.log", "burnin": GSS_PRIOR_SAMPLES // 2, "chain_length": s["step_chain"], "path_steps": s["path_steps"], "alpha": 0.3})
 
 
 def bets_gss_start(template: str, mcmc_log: str | Path, burnin: float = 0.5) -> str:
