@@ -4107,3 +4107,37 @@ def test_beast_xml_can_use_gtr_as_well_as_hky(tmp_path, monkeypatch):
     assert "kappa" not in made["gtr"] and made["gtr"].count('idref="ac"') >= 3   # operator, prior and log
     assert "<HKYModel" in made["hky"] and "<gtrModel" not in made["hky"] and "kappa" in made["hky"]
     assert beastprep.parse_settings({"subst_model": "nonsense"})["subst_model"] == "hky"
+
+
+def test_bets_uses_the_same_substitution_model_as_the_dating_analysis(tmp_path):
+    import random
+    """It used to drop subst_model and site_rates, so every BETS and model-comparison analysis silently ran HKY+gamma
+    whatever the dating analysis used: the clock and the tree prior were then compared under a different model."""
+    from genomecurator import beastprep
+    s = beastprep.parse_bets_settings({"subst_model": "gtr", "site_rates": "inv"})
+    assert s["subst_model"] == "gtr" and s["site_rates"] == "inv"
+    assert beastprep.parse_bets_settings({})["subst_model"] == "hky"                     # the default is unchanged
+    rng = random.Random(3)
+    names = [f"s{i}" for i in range(10)]
+    seqs = {n: "".join(rng.choice("ACGT") for _ in range(90)) for n in names}
+    dates = {n: 2024 + i / 10 for i, n in enumerate(names)}
+    x = beastprep.build_xml(seqs, dates, {}, {**s, "chain_length": 10000, "samples": 100}, 1e-5, "beast", proper=True, fixed_freq=True)
+    assert "<gtrModel" in x and "pInv" in x and "alpha" not in x                         # GTR + invariant sites, no gamma
+
+
+def test_modelfinder_choice_is_read_from_the_iqtree_report(tmp_path):
+    import pytest
+    from genomecurator import beastprep
+    f = tmp_path / "x.iqtree"
+    f.write_text("Input data: 166 sequences\n\nBest-fit model according to BIC: HKY+F+I\n", encoding="utf-8")
+    c = beastprep.modelfinder_choice(f)
+    assert (c["model"], c["subst_model"], c["site_rates"], c["exact"]) == ("HKY+F+I", "hky", "inv", True)
+    f.write_text("Best-fit model according to BIC: GTR+F+I+G4\n", encoding="utf-8")
+    c = beastprep.modelfinder_choice(f)
+    assert (c["subst_model"], c["site_rates"], c["exact"]) == ("gtr", "gamma_inv", True)
+    f.write_text("Best-fit model according to BIC: TIM2+F+R3\n", encoding="utf-8")       # a family BEAST has no element for
+    c = beastprep.modelfinder_choice(f)
+    assert c["subst_model"] == "gtr" and c["site_rates"] == "gamma" and not c["exact"] and "TIM2" in c["note"]
+    f.write_text("nothing here\n", encoding="utf-8")
+    with pytest.raises(ValueError):
+        beastprep.modelfinder_choice(f)

@@ -880,6 +880,10 @@ def parse_bets_settings(raw: dict | None) -> dict:
     except (TypeError, ValueError):
         raise ValueError("BETS 설정의 숫자가 올바르지 않습니다.")
     out["clock"], out["tree_prior"], out["estimator"] = str(s["clock"]), str(s["tree_prior"]), str(s["estimator"])
+    # the substitution model has to be the one the dating analysis uses, or the clock and tree prior are compared under a
+    # different model than the one the answer comes from. It used to be dropped here and silently fell back to HKY + gamma.
+    out["subst_model"] = str(s.get("subst_model") or "hky").lower() if str(s.get("subst_model") or "hky").lower() in SUBST_MODELS else "hky"
+    out["site_rates"] = str(s.get("site_rates") or "gamma") if str(s.get("site_rates") or "gamma") in ("gamma", "inv", "gamma_inv") else "gamma"
     out["compare"] = bool(s.get("compare"))
     out["name"] = re.sub(r"[^A-Za-z0-9_.\-]", "_", str(s.get("name") or ""))[:40]     # its own folder `bets/<name>/`, so that two estimations can run side by side
     if not 10 <= out["n_tips"] <= 300:
@@ -889,6 +893,37 @@ def parse_bets_settings(raw: dict | None) -> dict:
     if out["clock"] not in CLOCKS or out["tree_prior"] not in PRIORS or out["estimator"] not in ESTIMATORS:
         raise ValueError(f"시계는 {', '.join(CLOCKS)}, 트리 사전분포는 {', '.join(PRIORS)}, 추정기는 {', '.join(ESTIMATORS)} 중 하나입니다.")
     return out
+
+
+MF_GTR_LIKE = ("GTR", "SYM", "TIM", "TVM")               # families with six exchange rates: GTR is the one we write
+MF_HKY_LIKE = ("HKY", "TN", "TPM", "K2P", "K80", "K3P", "JC", "F81", "TNe", "TIMe", "TVMe")
+
+
+def modelfinder_choice(iqtree_file: str | Path) -> dict:
+    """What ModelFinder chose, as BEAST settings. IQ-TREE searches a wider set of models than BEAST writes, so the family is mapped
+    to the nearest one we have (six exchange rates -> GTR, otherwise HKY) and `exact` says whether the mapping lost anything.
+    -> {"model", "subst_model", "site_rates", "exact", "note"}"""
+    txt = Path(iqtree_file).read_text(encoding="utf-8", errors="replace")
+    m = re.search(r"^Best-fit model according to \w+:\s*(\S+)", txt, re.M) or re.search(r"^Model of substitution:\s*(\S+)", txt, re.M)
+    if not m:
+        raise ValueError(f"{Path(iqtree_file).name}에 ModelFinder가 고른 모형이 없습니다.")
+    name = m[1]
+    parts = name.split("+")
+    base = parts[0]
+    sm = "gtr" if any(base.upper().startswith(x) for x in MF_GTR_LIKE) else "hky"
+    has_g, has_i, has_r = any(p.startswith("G") for p in parts[1:]), "I" in parts[1:], any(p.startswith("R") for p in parts[1:])
+    sr = "gamma_inv" if (has_g and has_i) else ("inv" if has_i else "gamma")
+    notes = []
+    if sm == "hky" and not base.upper().startswith("HKY"):
+        notes.append(f"{base}는 BEAST 쪽에 없어 가장 가까운 HKY로 적었습니다")
+    if sm == "gtr" and not base.upper().startswith("GTR"):
+        notes.append(f"{base}는 BEAST 쪽에 없어 가장 가까운 GTR로 적었습니다")
+    if has_r:
+        notes.append("자유 비율(+R)은 BEAST 쪽에 없어 감마로 적었습니다")
+    if not has_g and not has_i:
+        notes.append("자리 간 변이가 없는 모형이지만 BEAST 설정에는 감마가 기본이라 감마로 적었습니다")
+    return {"model": name, "subst_model": sm, "site_rates": sr, "exact": not notes,
+            "note": "; ".join(notes) or f"{name}을 그대로 옮겼습니다", "source": str(iqtree_file)}
 
 
 def bets_folder(clock_run: dict) -> Path:
