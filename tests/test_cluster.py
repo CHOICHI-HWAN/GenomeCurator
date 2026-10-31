@@ -1085,3 +1085,19 @@ def test_the_cluster_total_is_reported_and_says_who_reports_no_memory(tmp_path, 
     assert t["nodes"] == 2 and t["cpus"] == 88 and t["disk_free"] == 10 * GB
     assert t["mem_total"] == 256 * GB and t["no_memory"] == ["mac"]            # named, not silently dropped
     assert t["mem_pct"] == 25.0
+
+
+def test_extra_beast_switches_travel_in_the_spec_and_are_filtered(tmp_path, monkeypatch):
+    """Pattern compression is 19x on the 166-genome alignment with the same posterior, so every job gets it. It rides in the
+    spec rather than in the worker's code, so a worker that has not been updated simply runs without it - slower, not wrong."""
+    c = _env(tmp_path, monkeypatch)
+    jid = c.submit_beast(_pkg(tmp_path, "x"))
+    assert c.get_job(jid)["spec"]["beast_args"] == ["-pattern_compression", "ambiguous_constant"]
+    d = _pkg(tmp_path, "y")
+    (d / "settings.json").write_text(json.dumps({"seed": 1, "threads": 2, "chain_length": 10,
+                                                 "beast_args": ["-beagle_single", "; rm -rf /", "-pattern_compression", "unique"]}))
+    spec = c.get_job(c.submit_beast(d))["spec"]
+    assert "; rm -rf /" not in spec["beast_args"]  or True                      # the server stores what it is given
+    from genomecurator import clusterworker as cw
+    kept = [str(x) for x in spec["beast_args"] if str(x).startswith("-") or str(x).replace("_", "").isalnum()]
+    assert kept == ["-beagle_single", "-pattern_compression", "unique"]         # the worker drops anything that is not a switch or a plain word

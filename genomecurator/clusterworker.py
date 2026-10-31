@@ -232,7 +232,9 @@ class Worker:
         if job["kind"] != "beast" or not self.beast:
             return self._fail(jd, jid, f"this worker cannot run {job['kind']} jobs")
         spec = job["spec"]
-        cmd = [self.beast, "-overwrite", "-seed", str(int(spec.get("seed", 1)))] + (["-threads", str(int(spec["threads"]))] if spec.get("threads") else []) + ["beast.xml"]
+        extra = [str(x) for x in (spec.get("beast_args") or []) if str(x).startswith("-") or str(x).replace("_", "").isalnum()]
+        cmd = ([self.beast, "-overwrite", "-seed", str(int(spec.get("seed", 1)))]
+               + (["-threads", str(int(spec["threads"]))] if spec.get("threads") else []) + extra + ["beast.xml"])
         env = os.environ.copy()
         try:
             from . import beastprep, nextstrain
