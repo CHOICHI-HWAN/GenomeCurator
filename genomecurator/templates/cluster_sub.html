@@ -56,6 +56,10 @@ pre{margin:8px 0 0;max-height:210px;overflow:auto;background:var(--bg);border:1p
  <div class="mut" style="margin-top:8px">허용하면 <b>승인한 메인 서버</b>가 브라우저에서 이 서버의 셸을 열 수 있습니다(이 프로그램을 띄운 사용자 권한). 접속마다 메인이 만든 1분짜리 일회용 토큰을 확인하며, 접속 기록이 양쪽 서버에 남습니다(입력 내용은 기록하지 않음). 기본은 꺼짐입니다.</div>
  <div id="shl" class="mut" style="margin-top:6px"></div></div>
 
+<div class="card"><div class="row"><h2 style="margin:0">코드 업데이트</h2><span id="cus" class="pill off">꺼짐</span><span style="flex:1"></span><button class="g" id="cub" onclick="toggleCode()">허용</button></div>
+ <div class="mut" style="margin-top:8px">허용하면 이 서버가 <b>메인 서버의 코드</b>를 받아 그 코드로 작업합니다. 메인이 가진 커밋과 다를 때만, <b>작업이 하나도 돌고 있지 않을 때</b> 받아서 스스로 다시 시작합니다(분석이 끊기지 않습니다). 커밋된 코드만 오고, SHA-256을 확인한 뒤 커밋 이름의 폴더에 풀어 두므로 되돌리는 것은 이전 폴더를 가리키는 일입니다. 기본은 꺼짐입니다 — 남이 보낸 코드를 실행하는 것은 웹 터미널과 같은 권한이라, 같은 방식으로 이 컴퓨터에서 직접 켭니다.</div>
+ <div id="cul" class="mut" style="margin-top:6px"></div></div>
+
 <div class="card"><h2>환경 설치</h2>
  <div class="row"><span id="bs" class="pill off">확인 중</span><span id="bx" class="mut"></span><button id="inst" onclick="install()" style="display:none">BEAST 설치하기</button></div>
  <div class="mut" style="margin-top:8px">BEAST 작업을 처리하려면 BEAST 10과 BEAGLE 라이브러리가 필요합니다. <b>설치하기</b>는 이 서버에 conda 환경 <code>gc-beast</code>를 만듭니다(mamba 또는 conda 필요, 몇 분 걸리며 인터넷 접속이 필요합니다).</div>
@@ -76,6 +80,7 @@ async function requestJoin(){$("se").textContent="";$("on").disabled=true;const 
 async function activateKey(){const [ok,j]=await post("/api/cluster/sub/activate",{main:$("sm").value,key:$("sk").value});$("se").textContent=ok?"":j.error;if(ok)$("sk").value="";load()}
 const JS={pending:["warn","승인 대기 중 — 메인 서버의 클러스터 화면에서 승인해 주세요"],approved:["on","승인됨"],rejected:["err","메인 서버가 요청을 거절했습니다"],unknown:["err","메인 서버에 이 요청이 없습니다(만료되었을 수 있음). 다시 요청하세요"],withdrawn:["off","요청을 취소했습니다"],delivered:["err","이 요청의 키는 이미 전달되었습니다. 다시 요청하세요"]};
 let SHELL=false;async function toggleShell(){if(!SHELL&&!confirm("메인 서버가 이 서버의 셸을 열 수 있도록 허용합니다. 직접 연결된 신뢰하는 망에서만 켜세요. 계속할까요?"))return;await post("/api/cluster/sub/shell",{on:!SHELL});load()}
+let CODEUP=false;async function toggleCode(){if(!CODEUP&&!confirm("메인 서버가 보내는 코드를 이 서버에서 실행하도록 허용합니다. 신뢰하는 메인 서버에서만 켜세요. 계속할까요?"))return;await post("/api/cluster/sub/code",{on:!CODEUP});load()}
 async function pause(){if(!confirm("정지합니다. 실행 중인 작업은 멈추고 메인으로 돌려보내며, 재개할 때까지 새 작업을 받지 않습니다."))return;await post("/api/cluster/sub/pause");load()}
 async function resume(){await post("/api/cluster/sub/resume");load()}
 async function deactivate(){await post("/api/cluster/sub/deactivate",{});load()}
@@ -112,6 +117,18 @@ async function load(){let j;try{j=await (await fetch("/api/cluster/sub")).json()
  const nd=j.netdata||{};$("nds").innerHTML=nd.ok?'Netdata '+esc(nd.version||"")+' · <a href="http://'+location.hostname+':'+(nd.port||19999)+'" target="_blank" style="color:var(--acc)">대시보드 ↗</a>'+(nd.claimed?' · <span class="warn">Netdata Cloud에 연결되어 있습니다</span>':''):'Netdata 없음 (기록 그래프는 Netdata가 있을 때만)';
  SHELL=!!j.shell;$("shs").className="pill "+(j.shell?"on":"off");$("shs").textContent=!j.shell_supported?"이 OS에서는 지원하지 않음":j.shell?"허용됨":"꺼짐";$("shb").textContent=j.shell?"끄기":"허용";$("shb").disabled=!j.shell_supported;
  $("shl").textContent=(j.shell_sessions||[]).length?"지금 접속 중: "+j.shell_sessions.map(x=>x.from+" ("+x.since.replace("T"," ")+"부터)").join(", "):"";
+ const cu=j.code||{};CODEUP=!!cu.allowed;
+ $("cus").className="pill "+(cu.allowed?"on":"off");$("cus").textContent=cu.allowed?"허용됨":"꺼짐";
+ $("cub").textContent=cu.allowed?"끄기":"허용";$("cub").disabled=!!cu.fixed;
+ const L=cu.last||{},bits=[];
+ bits.push("지금 쓰는 코드 <b>"+esc((cu.app||{}).version||"?")+" · "+esc((cu.app||{}).commit||"알 수 없음")+"</b>"+((cu.app||{}).from?" ("+esc(cu.app.from)+")":""));
+ if(cu.dir)bits.push("메인에서 받은 코드로 실행 중: <code>"+esc(cu.dir.split("/").pop())+"</code>"+(cu.at?" · "+esc(cu.at.replace("T"," ")):""));
+ if(L.main)bits.push("메인 서버의 코드 <b>"+esc(L.main)+"</b>"+(L.same?" (같음)":""));
+ if(L.updated)bits.push('<span class="on">새 코드를 받았습니다 — 다시 시작합니다</span>');
+ if(L.blocked)bits.push('<span class="warn">'+esc(L.blocked)+"</span>");
+ if(L.error)bits.push('<span class="err">'+esc(L.error)+"</span>");
+ if(cu.fixed)bits.push('<span class="mut">GC_CODE_UPDATE 환경변수로 정해져 있어 이 화면에서는 바꿀 수 없습니다</span>');
+ $("cul").innerHTML=bits.join("<br>");
  $("ver").textContent="GenomeCurator "+(j.version||"")}
 async function hist(){try{const h=await (await fetch("/api/cluster/sub/history?minutes="+$("hr").value)).json();miniCharts($("hc"),h)}catch(e){$("hc").textContent="기록을 불러오지 못했습니다."}}
 async function overview(){try{renderCluster($("ov"),await (await fetch("/api/cluster/sub/overview")).json())}catch(e){$("ov").textContent="클러스터 현황을 불러오지 못했습니다."}}

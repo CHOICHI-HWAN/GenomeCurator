@@ -26,6 +26,16 @@ def build() -> dict:
         c = git("rev-parse", "--short=10", "HEAD")
         _build = {"version": __version__, "commit": c or None,
                   "dirty": bool(git("status", "--porcelain", "--untracked-files=no")) if c else None}
+        if not c:
+            # Code the main server sent (codedist) is unpacked from an archive, so it is not a checkout and git can say
+            # nothing about it. The commit it was sent as travels with it in `BUILD`, or this copy would be exactly the
+            # anonymous code the distribution exists to replace.
+            try:
+                b = (Path(__file__).resolve().parent / "BUILD").read_text(encoding="utf-8").strip().split()
+                if b:
+                    _build = {"version": __version__, "commit": b[0][:40], "dirty": False, "from": "main server"}
+            except OSError:
+                pass
     return dict(_build)
 # Bumped when the database layout changes in a way older code cannot read. Today every change is an additive migration
 # (db.migrate), so it stays 1; it is recorded in the database and in backups so a newer data folder is never opened blindly.

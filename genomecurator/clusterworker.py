@@ -110,6 +110,7 @@ def find_beast(explicit: str | None = None) -> str | None:
 
 MIN_FREE_GB = float(os.environ.get("GC_WORKER_MIN_FREE_GB", "10"))
 ENV_EVERY = 600                                  # seconds between environment checks while the worker runs
+CODE_EVERY = 300                                 # seconds between asking the main server what code it has (only while idle)
 
 
 def env_check(beast: str | None, workdir: str | Path) -> dict:
@@ -176,6 +177,9 @@ class Worker:
         self.jobs: dict[str, dict] = {}          # jobs running here right now: id -> {label, pct, msg, since}
         self.history: list[dict] = []            # the last jobs this worker ran (shown on its page)
         self.paused = threading.Event()          # Stop button of the sub-server page: give running jobs back, take no new work
+        self.update_code = threading.Event()     # the person allowed this machine to run the code the main server sends (codedist)
+        self.restart_on: Path | None = None      # set when newer code is unpacked and ready: the folder to come back on
+        self.code_note: dict = {}                # what happened the last time the code was looked at (shown on the page)
         self.work.mkdir(parents=True, exist_ok=True)
 
     def metrics(self) -> dict:
@@ -185,7 +189,41 @@ class Worker:
             m = {}
         m["paused"] = self.paused.is_set()
         m["shell"] = bool(load_config().get("shell"))
+        m["code_update"] = self.update_code.is_set()      # the main server's page says which machines will follow its code
         return m
+
+    # ---- the code this worker runs (codedist)
+    def check_code(self) -> dict:
+        """Ask the main server what code it has and, if this machine was allowed to follow it, fetch and unpack it.
+
+        Called only when nothing is running here: an update never kills an analysis. Unpacking does not switch anything by
+        itself - `restart_on` is set and the worker comes back on that folder (`run_from_config`), so a machine that is busy
+        simply updates later. Every failure is recorded and swallowed: a worker that cannot update must go on working."""
+        from . import build, codedist
+        mine = build().get("commit")
+        try:
+            m = self.main.get("/api/cluster/w/code")
+        except Exception as ex:
+            self.code_note = {"at": time.strftime("%Y-%m-%dT%H:%M:%S"), "error": f"메인 서버의 코드를 물어보지 못했습니다: {str(ex)[:120]}"}
+            return self.code_note
+        note = {"at": time.strftime("%Y-%m-%dT%H:%M:%S"), "mine": mine, "main": m.get("commit"), "version": m.get("version")}
+        if not m.get("ok"):
+            note["error"] = m.get("error") or "메인 서버가 코드를 내주지 못합니다"
+        elif not m.get("commit") or m["commit"] == mine:
+            note["same"] = True
+        elif not self.update_code.is_set():
+            note["blocked"] = "이 서버는 자동 코드 업데이트를 허용하지 않았습니다"
+        else:
+            try:
+                d = codedist.fetch(self.main, m["commit"], m["sha256"], self.work.parent / "code", m.get("version"))
+                self.restart_on = d
+                note["updated"] = str(d)
+                _log.info("new code %s unpacked in %s; restarting on it", m["commit"], d)
+            except Exception as ex:
+                note["error"] = str(ex)[:200]
+                _log.warning("the code of %s could not be taken: %s", m.get("commit"), ex)
+        self.code_note = note
+        return note
 
     def _set(self, state: str, job: str | None = None, error: str | None = None) -> None:
         """The state of the worker itself; each job keeps its own entry in `self.jobs`."""
@@ -394,7 +432,7 @@ class Worker:
     def serve(self) -> None:
         caps = capabilities(self.beast)
         _log.info("worker ready: %s", caps)
-        known, env_at = False, 0.0
+        known, env_at, code_at = False, 0.0, 0.0
         threads: list[threading.Thread] = []
         while not self.stop.is_set():
             threads = [t for t in threads if t.is_alive()]
@@ -444,6 +482,15 @@ class Worker:
                     continue
                 if not self.jobs and self.status["state"] != "idle":
                     self._set("idle")
+                # Between jobs, and only then, see whether the main server has newer code. Doing it here and not on a timer of
+                # its own is the whole safety of it: there is nothing running to interrupt.
+                if not self.jobs and not threads and time.time() - code_at > CODE_EVERY:
+                    code_at = time.time()
+                    self.check_code()
+                    if self.restart_on:
+                        self._set("updating")
+                        self.stop.set()
+                        break
             except Gone as e:
                 _log.error("the main server refused this worker (%s); check the key", e)
                 self._set("refused", error="the main server did not accept this worker (revoked or unknown key)")
@@ -527,7 +574,7 @@ def _spawn_worker() -> int:
     from . import config
     log = config.DATA_DIR / "cluster" / "worker.log"
     log.parent.mkdir(parents=True, exist_ok=True)
-    env = dict(os.environ, GC_DATA_DIR=str(config.DATA_DIR))
+    env = _worker_env()
     with open(log, "a") as lf:
         p = subprocess.Popen([sys.executable, "-m", "genomecurator", "worker", "--from-config"], stdout=lf, stderr=subprocess.STDOUT, stdin=subprocess.DEVNULL,
                              env=env, close_fds=True, **({"start_new_session": True} if os.name == "posix" else {}))
@@ -535,17 +582,41 @@ def _spawn_worker() -> int:
     return p.pid
 
 
+def _worker_env() -> dict:
+    """The environment a worker process starts in. When this machine has taken code from its main server, that code comes
+    first on the path, so whoever starts the worker - this app, a restart, the person - starts the same code."""
+    from . import config
+    env = dict(os.environ, GC_DATA_DIR=str(config.DATA_DIR))
+    d = load_config().get("code_dir")
+    if d and (Path(d) / "genomecurator" / "__init__.py").is_file():
+        env["PYTHONPATH"] = d + ((os.pathsep + env["PYTHONPATH"]) if env.get("PYTHONPATH") else "")
+    return env
+
+
 def _apply_config(w: "Worker", cfg: dict, key: str) -> None:
-    """What the app changed in worker.json while this process runs: switched off (or another key) stops it, Stop/Resume pauses it."""
+    """What the app changed in worker.json while this process runs: switched off (or another key) stops it, Stop/Resume pauses it,
+    and the code-update switch is followed without a restart (it is read here, not at startup)."""
     if not cfg.get("enabled") or cfg.get("key") != key:
         w.stop.set()
     (w.paused.set if cfg.get("paused") else w.paused.clear)()
+    (w.update_code.set if code_update_allowed(cfg) else w.update_code.clear)()
+
+
+def code_update_allowed(cfg: dict | None = None) -> bool:
+    """Does this machine run the code its main server sends? Off unless the person switched it on here - running code someone
+    else hands you is the power the web terminal gives, and it is granted the same way. `GC_CODE_UPDATE` decides it for a
+    worker started from the command line, where there is no page to switch anything on."""
+    env = os.environ.get("GC_CODE_UPDATE")
+    if env is not None:
+        return env == "1"
+    return bool((load_config() if cfg is None else cfg).get("code_update"))
 
 
 def _write_status(w: "Worker") -> None:
     try:
         jobs = [dict(v) for v in list(w.jobs.values())]
-        data = {"pid": os.getpid(), "at": time.strftime("%Y-%m-%dT%H:%M:%S"), "status": dict(w.status), "jobs": jobs, "history": list(w.history), "beast": w.beast}
+        data = {"pid": os.getpid(), "at": time.strftime("%Y-%m-%dT%H:%M:%S"), "status": dict(w.status), "jobs": jobs, "history": list(w.history),
+                "beast": w.beast, "code": dict(w.code_note)}
         _status_path().parent.mkdir(parents=True, exist_ok=True)
         tmp = _status_path().with_suffix(".tmp")
         tmp.write_text(json.dumps(data, default=str))
@@ -580,16 +651,42 @@ def run_from_config() -> int:
             _write_status(w)
             w.stop.wait(3)
     threading.Thread(target=tick, daemon=True, name="worker-config").start()
-    try:
-        w.serve()
-    finally:
+    def done() -> None:
         try:
             if _pid_path().read_text().strip() == str(os.getpid()):
                 _pid_path().unlink()
         except OSError:
             pass
         _status_path().unlink(missing_ok=True)
+    try:
+        w.serve()
+    except BaseException:
+        done()
+        raise
+    if w.restart_on:
+        # Not `done()`: the PID stays this process's across the exec, and removing the files would let the app think no
+        # worker runs and start a second one in the gap.
+        return _restart_on_new_code(w.restart_on)
+    done()
     return 0
+
+
+def _restart_on_new_code(code_dir: Path) -> int:
+    """Come back on the code the main server sent, in this same process (`exec`), so the PID the app watches does not change
+    and nothing can start a second worker in the gap. The folder is written to worker.json first: if the exec fails, or the
+    machine is restarted later, whoever starts the worker next starts the same code (`_worker_env`)."""
+    import sys
+    cfg = load_config()
+    cfg.update({"code_dir": str(code_dir), "code_at": time.strftime("%Y-%m-%dT%H:%M:%S")})
+    save_config(cfg)
+    env = _worker_env()
+    _log.info("restarting on the code in %s", code_dir)
+    try:
+        os.execve(sys.executable, [sys.executable, "-m", "genomecurator", "worker", "--from-config"], env)
+    except OSError as ex:
+        _log.error("could not restart on the new code (%s); the next start will use it", ex)
+        return 1
+    return 0        # never reached
 
 
 def _workdir() -> Path:
@@ -769,6 +866,33 @@ def sub_shell(on: bool) -> dict:
     from .db import audit_now
     audit_now("cluster_shell", f"web terminal for the main server {'allowed' if on else 'not allowed'} on this server")
     return sub_status()
+
+
+def sub_code_update(on: bool) -> dict:
+    """Allow (or stop allowing) this machine to run the code its main server sends (codedist). Off by default. Switching it
+    off leaves the code already taken in place - this says what happens next, not what happened."""
+    cfg = load_config()
+    cfg["code_update"] = bool(on)
+    save_config(cfg)
+    from .db import audit_now
+    audit_now("cluster_code", f"code updates from the main server {'allowed' if on else 'not allowed'} on this server")
+    return sub_status()
+
+
+def code_state() -> dict:
+    """What code this machine's worker runs and what it would follow: for the sub-server page."""
+    from . import build
+    cfg = load_config()
+    w = _sub["worker"]
+    st = {}
+    if not (IN_PROCESS or w):
+        try:
+            st = json.loads(_status_path().read_text()).get("code") or {}
+        except (OSError, ValueError):
+            st = {}
+    return {"allowed": code_update_allowed(cfg), "fixed": os.environ.get("GC_CODE_UPDATE") is not None,
+            "dir": cfg.get("code_dir"), "at": cfg.get("code_at"), "app": build(),
+            "last": (w.code_note if w else st)}
 
 
 def sub_pause(on: bool) -> dict:

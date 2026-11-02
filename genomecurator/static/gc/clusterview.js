@@ -84,8 +84,11 @@
       + (p.log || []).map(l => '<div class="gcv-mut" style="font-size:12px">' + esc(l) + '</div>').join("") + '</div>';
   }
 
-  function machine(n) {
+  function machine(n, mine) {
     const m = n.metrics || {};
+    // Code is only worth a line when it is not the code this server is running: same commit, nothing to say.
+    const code = (mine && n.code === mine) ? "" : '<div class="gcv-mut">코드 ' + (n.code ? '<b>' + esc(n.code) + '</b>' : '<span style="color:var(--gwarn)">알 수 없음</span>')
+      + ' · ' + (n.follows_code ? '자동 업데이트 <span style="color:var(--gok)">허용</span>' : '<span style="color:var(--gwarn)">직접 올려야 함</span>') + '</div>';
     const cpu = m.cpu_pct != null ? m.cpu_pct : (m.load1 != null && m.cpus ? 100 * m.load1 / m.cpus : null);
     const mem = m.mem_total ? 100 * m.mem_used / m.mem_total : null;
     return '<div class="gcv-m' + (n.you ? " you" : "") + '"><div><span class="gcv-dot ' + (n.online ? (n.paused ? "off" : "") : "bad") + '"></span><b>' + esc(n.name) + '</b>'
@@ -94,7 +97,7 @@
       + (n.cpus ? ' · ' + n.cpus + '코어' + (n.cpus_free != null ? ' (여유 ' + n.cpus_free + ')' : "") : "") + '</div>'
       + (cpu != null ? bar(cpu) + '<div class="gcv-mut">' + (m.cpu_pct != null ? "CPU " + Math.round(cpu) + "%" : "부하 " + m.load1 + " / " + m.cpus + "코어") + '</div>' : "")
       + (mem != null ? bar(mem) + '<div class="gcv-mut">메모리 ' + gb(m.mem_used) + ' / ' + gb(m.mem_total) + '</div>' : '<div class="gcv-mut">메모리 보고 없음</div>')
-      + '</div>';
+      + code + '</div>';
   }
 
   function job(j) {
@@ -118,7 +121,7 @@
     const plans = ov.plans || [], jobs = ov.jobs || [];
     el.innerHTML = '<div class="gcv">' + cards(ov.totals || {})
       + (plans.length ? '<h4>분석 계획</h4>' + plans.map(planBox).join("") : "")
-      + '<h4>서버</h4><div class="gcv-mach">' + (ov.nodes || []).map(machine).join("") + '</div>'
+      + '<h4>서버</h4><div class="gcv-mach">' + (ov.nodes || []).map(n => machine(n, ((ov.totals || {}).build || {}).commit)).join("") + '</div>'
       + '<h4>실행 중인 작업 ' + jobs.filter(j => j.state === "running").length + '개'
       + (jobs.some(j => j.state === "queued") ? ' <span class="gcv-mut">· 대기 ' + jobs.filter(j => j.state === "queued").length + '개</span>' : "") + '</h4>'
       + '<div class="gcv-box" style="padding:4px 12px">' + (jobs.length ? jobs.map(job).join("") : '<div class="gcv-j gcv-mut">작업이 없습니다.</div>') + '</div>'

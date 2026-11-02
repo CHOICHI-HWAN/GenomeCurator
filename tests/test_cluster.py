@@ -1,5 +1,6 @@
 """Cluster: queue rules, checksums, requeue on a silent worker, privacy routing, and a real worker against a real server (with a stand-in for BEAST)."""
 import json
+import os
 import socket
 import stat
 import threading
@@ -1176,3 +1177,97 @@ def test_a_sub_server_shows_the_cluster_through_its_own_page(tmp_path, monkeypat
     clusterworker.save_config({"main": "http://10.9.9.9:8000", "key": "no-longer-a-key", "enabled": True})
     bad = cl.get("/api/cluster/sub/overview").json()
     assert bad["ok"] is False and "거부" in bad["error"] or "refused" in bad["error"]
+
+
+def test_the_main_server_packs_only_committed_code_and_a_worker_checks_it_before_running_it(tmp_path, monkeypatch):
+    """Code distribution: the bundle is the package at HEAD, nothing else travels, and a worker refuses anything that does
+    not match the SHA-256 the main server declared or that cannot be unpacked safely."""
+    import tarfile
+    from genomecurator import codedist
+    c = _env(tmp_path, monkeypatch)
+    from fastapi.testclient import TestClient
+    from genomecurator import web
+    node = c.create_node("n1")
+    cl = TestClient(web.create_app(scheduler=False), client=("192.168.0.7", 5000))
+    assert cl.get("/api/cluster/w/code").status_code == 403
+    m = cl.get("/api/cluster/w/code", headers={"Authorization": "Bearer " + node["key"]}).json()
+    assert m["ok"] and m["commit"] and m["sha256"] and m["size"] > 1000
+    r = cl.get("/api/cluster/w/code/bundle", headers={"Authorization": "Bearer " + node["key"]})
+    assert r.status_code == 200
+    got = tmp_path / "b.tar.gz"
+    got.write_bytes(r.content)
+    assert codedist.sha256(got) == m["sha256"]
+    with tarfile.open(got) as t:
+        names = t.getnames()
+    assert names and all(n == "genomecurator" or n.startswith("genomecurator/") for n in names)
+    assert "genomecurator/web.py" in names and not any(n.endswith(".db") or n.startswith("data/") for n in names)
+    d = codedist.unpack(got, tmp_path / "code" / m["commit"], m["commit"])
+    assert (d / "genomecurator" / "__init__.py").is_file()
+    assert (d / "genomecurator" / "BUILD").read_text().strip() == m["commit"]     # an unpacked tree can still say what it is
+
+    bad = tmp_path / "bad.tar.gz"                                                  # a bundle that reaches outside itself
+    with tarfile.open(bad, "w:gz") as t:
+        t.add(__file__, arcname="../escaped.py")
+    with pytest.raises(ValueError, match="outside itself"):
+        codedist.unpack(bad, tmp_path / "code" / "bad", "bad")
+    assert not (tmp_path / "escaped.py").exists() and not (tmp_path / "code" / "bad").exists()
+
+    other = tmp_path / "other.tar.gz"                                              # a bundle that is not the package
+    with tarfile.open(other, "w:gz") as t:
+        t.add(__file__, arcname="elsewhere/thing.py")
+    with pytest.raises(ValueError, match="not the package"):
+        codedist.unpack(other, tmp_path / "code" / "other", "other")
+
+
+def test_a_worker_takes_new_code_only_when_it_is_allowed_and_idle(tmp_path, monkeypatch):
+    """The switch decides, and an update never interrupts an analysis: the check happens between jobs and sets the folder to
+    come back on instead of swapping anything underneath a running chain."""
+    from pathlib import Path
+    from genomecurator import clusterworker
+    c = _env(tmp_path, monkeypatch)
+    node = c.create_node("n1")
+    w = clusterworker.Worker("http://main.invalid", node["key"], tmp_path / "work")
+
+    calls = {"n": 0}
+
+    class _Main:
+        def get(self, path):
+            calls["n"] += 1
+            return {"ok": True, "commit": "beefbeef12", "version": "9.9.9", "sha256": "0" * 64, "size": 10}
+
+        def download(self, path, dest):
+            Path(dest).write_bytes(b"not the bundle it declared")
+    w.main = _Main()
+
+    note = w.check_code()                                     # not allowed: it asks, and stops there
+    assert note["blocked"] and not w.restart_on and calls["n"] == 1
+    w.update_code.set()
+    note = w.check_code()                                     # allowed, but the bundle does not match the declared checksum
+    assert "does not match" in note["error"] and not w.restart_on
+    assert not (tmp_path / "work").parent.joinpath("code", "beefbeef12").exists()
+
+    monkeypatch.setattr(clusterworker, "build", lambda: {"version": "9.9.9", "commit": "beefbeef12", "dirty": False}, raising=False)
+    import genomecurator
+    monkeypatch.setattr(genomecurator, "build", lambda: {"version": "9.9.9", "commit": "beefbeef12", "dirty": False})
+    assert w.check_code()["same"]                             # the same commit is not an update
+
+    cfg = {"main": "http://main.invalid", "key": node["key"], "enabled": True}
+    clusterworker.save_config(cfg)
+    assert clusterworker.code_update_allowed(cfg) is False    # off unless switched on here
+    clusterworker.sub_code_update(True)
+    assert clusterworker.code_update_allowed() is True
+    monkeypatch.setenv("GC_CODE_UPDATE", "0")                 # a command-line worker is decided by its environment
+    assert clusterworker.code_update_allowed() is False
+
+
+def test_code_the_main_server_sent_is_what_the_worker_starts_on(tmp_path, monkeypatch):
+    """What is unpacked is not enough: whoever starts the worker next - the app, a restart, the person - must start that code."""
+    from genomecurator import clusterworker
+    _env(tmp_path, monkeypatch)
+    d = tmp_path / "code" / "abc1234567"
+    (d / "genomecurator").mkdir(parents=True)
+    (d / "genomecurator" / "__init__.py").write_text("")
+    clusterworker.save_config({"main": "http://m", "key": "k", "enabled": True, "code_dir": str(d)})
+    assert clusterworker._worker_env()["PYTHONPATH"].split(os.pathsep)[0] == str(d)
+    clusterworker.save_config({"main": "http://m", "key": "k", "enabled": True, "code_dir": str(tmp_path / "gone")})
+    assert str(tmp_path / "gone") not in clusterworker._worker_env().get("PYTHONPATH", "")   # a folder that is not there is not a path

@@ -2003,7 +2003,8 @@ def create_app(scheduler: bool = True) -> FastAPI:
         from . import clusterworker, sysinfo
         import socket
         return {**clusterworker.sub_status(), "metrics": sysinfo.snapshot(config.DATA_DIR), "install": clusterworker.install_state(), "env": clusterworker.local_env(),
-                "netdata": _local_netdata(), "version": __version__, "host": socket.gethostname(), "workers_here": len(cluster.list_nodes())}
+                "netdata": _local_netdata(), "version": __version__, "host": socket.gethostname(), "workers_here": len(cluster.list_nodes()),
+                "code": clusterworker.code_state()}
 
     _nd_cache: dict = {"at": 0.0, "v": None}
 
@@ -2282,6 +2283,36 @@ def create_app(scheduler: bool = True) -> FastAPI:
             return e
         from . import clusterworker
         return clusterworker.sub_shell(bool((await request.json()).get("on")))
+
+    @app.post("/api/cluster/sub/code")
+    async def cluster_sub_code(request: Request):
+        """Allow (or stop allowing) this machine to run the code its main server sends. Granted here, on the machine that grants it."""
+        if (e := _sub_admin(request)):
+            return e
+        from . import clusterworker
+        return clusterworker.sub_code_update(bool((await request.json()).get("on")))
+
+    @app.get("/api/cluster/w/code")
+    def cluster_w_code(request: Request):
+        """What code this main server would hand out: the commit, the version and the SHA-256 of the bundle (see codedist)."""
+        if not _worker(request):
+            return JSONResponse({"error": "unknown worker key"}, 403)
+        from . import codedist
+        return codedist.manifest()
+
+    @app.get("/api/cluster/w/code/bundle")
+    def cluster_w_code_bundle(request: Request):
+        """The package at this server's HEAD as one tar.gz. Only committed code travels; the worker checks the SHA-256."""
+        n = _worker(request)
+        if not n:
+            return JSONResponse({"error": "unknown worker key"}, 403)
+        from . import codedist
+        try:
+            m = codedist.bundle()
+        except Exception as ex:
+            return JSONResponse({"error": str(ex)[:200]}, 409)
+        audit_now("cluster_code", f"{n['name']} took the code of {m['commit']}")
+        return FileResponse(codedist.bundle_path(m["commit"]), media_type="application/gzip", filename=f"genomecurator-{m['commit']}.tar.gz")
 
     @app.get("/api/cluster/w/overview")
     def cluster_w_overview(request: Request):

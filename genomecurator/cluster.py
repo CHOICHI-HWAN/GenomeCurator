@@ -1057,6 +1057,7 @@ def overview(node: dict | None = None) -> dict:
         return {"name": n["name"], "online": n["online"], "paused": n["paused"], "you": n["id"] == me,
                 "cpus": (n.get("caps") or {}).get("cpus") or m.get("cpus"), "cpus_busy": n.get("cpus_busy"), "cpus_free": n.get("cpus_free"),
                 "jobs": len(n.get("running_jobs") or []), "env_ok": n.get("env_ok"), "last_seen": n.get("last_seen"),
+                "code": ((n.get("caps") or {}).get("build") or {}).get("commit"), "follows_code": m.get("code_update"),
                 "metrics": {k: m.get(k) for k in ("cpu_pct", "load1", "cpus", "mem_total", "mem_used", "mem_pct", "disk_free")}}
 
     def plan(p: dict) -> dict:
