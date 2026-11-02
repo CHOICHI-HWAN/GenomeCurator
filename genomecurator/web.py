@@ -2163,6 +2163,14 @@ def create_app(scheduler: bool = True) -> FastAPI:
             return e
         return {"ok": cluster.decide_request(rid, False)}
 
+    @app.post("/api/cluster/nodes/{nid}/hold")
+    async def cluster_node_hold(request: Request, nid: str):
+        """Send this sub-server nothing for now (or let it work again). Running jobs are left alone."""
+        if (e := _cluster_admin(request)):
+            return e
+        on = bool((await request.json()).get("on"))
+        return {"ok": cluster.set_hold(nid, on), "hold": on}
+
     @app.post("/api/cluster/nodes/{nid}/recheck")
     def cluster_node_recheck(request: Request, nid: str):
         if (e := _cluster_admin(request)):

@@ -191,6 +191,10 @@ def migrate(con: sqlite3.Connection) -> None:
         con.execute("ALTER TABLE cluster_node ADD COLUMN metrics_json TEXT")
     if ncols and "recheck" not in ncols:
         con.execute("ALTER TABLE cluster_node ADD COLUMN recheck INTEGER DEFAULT 0")
+    if ncols and "hold" not in ncols:
+        # the owner's switch for "send this machine nothing for now" - a worker on old code, a machine wanted back for other
+        # work. Pausing was only ever possible on the worker's own page, which is no use when the reason is visible here.
+        con.execute("ALTER TABLE cluster_node ADD COLUMN hold INTEGER DEFAULT 0")
     wcols = {r[1] for r in con.execute("PRAGMA table_info(watchlist)")}
     if "pathoplexus_organism" not in wcols:
         con.execute("ALTER TABLE watchlist ADD COLUMN pathoplexus_organism TEXT")

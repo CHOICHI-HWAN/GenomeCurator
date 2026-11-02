@@ -908,6 +908,15 @@ def parse_bets_settings(raw: dict | None) -> dict:
     out["compare"] = bool(s.get("compare"))
     out["name"] = re.sub(r"[^A-Za-z0-9_.\-]", "_", str(s.get("name") or ""))[:40]     # its own folder `bets/<name>/`, so that two estimations can run side by side
     out["tip_names"] = [str(x) for x in (s.get("tip_names") or [])]        # the exact genomes to use; empty means draw a subsample of n_tips
+    # The clock prior was not carried here, so a comparison always ran under the vague default while the dating analysis ran
+    # under its own informative one - the models were ranked in a rate regime the final analysis never visits. Passing it
+    # makes the two comparable; leaving it out keeps the vague default, which is the neutral choice for a Bayes factor.
+    rp = s.get("rate_prior")
+    if rp:
+        try:
+            out["rate_prior"] = [float(rp[0]), float(rp[1])]
+        except (TypeError, ValueError, IndexError):
+            raise ValueError("rate_prior는 [로그평균, 로그표준편차] 두 숫자입니다.")
     if out["tip_names"]:
         # The record has to say what ran. With the genomes named, n_tips was left at its default and the stored settings said
         # "60 genomes" for a 166-genome run. The cap is on the size of a subsample to draw, not on a list the caller chose.

@@ -148,6 +148,7 @@ def list_nodes() -> list[dict]:
         r["caps"] = json.loads(r.pop("caps_json") or "{}")
         r["metrics"] = json.loads(r.pop("metrics_json", None) or "{}")
         r["paused"] = bool(r["metrics"].get("paused"))
+        r["hold"] = bool(r.get("hold"))
         r["online"] = _online(r["last_seen"])
         jobs_here = busy.get(r["id"]) or []
         r["running"] = jobs_here[0] if jobs_here else None     # kept for older pages
@@ -760,6 +761,9 @@ def claim(node: dict, kinds: list[str] | None = None, metrics: dict | None = Non
         if not kinds:
             con.commit()
             return None
+        if con.execute("SELECT IFNULL(hold, 0) FROM cluster_node WHERE id=?", (node["id"],)).fetchone()[0]:
+            con.commit()
+            return None                     # held by the owner: it keeps reporting in, it just gets nothing to run
         caps = json.loads(con.execute("SELECT caps_json FROM cluster_node WHERE id=?", (node["id"],)).fetchone()[0] or "{}")
         cpus = int(caps.get("cpus") or 0)
         running = [json.loads(r[0] or "{}") for r in con.execute("SELECT spec_json FROM cluster_job WHERE state='running' AND node_id=?", (node["id"],))]
@@ -786,6 +790,20 @@ def claim(node: dict, kinds: list[str] | None = None, metrics: dict | None = Non
                         "outputs": KINDS[j["kind"]]["outputs"], "required": KINDS[j["kind"]]["required"], "lease": LEASE}
         con.commit()
         return None
+    finally:
+        con.close()
+
+
+def set_hold(nid: str, on: bool) -> bool:
+    """Hold a sub-server (or let it work again). A held worker still reports in and still shows its load; it is simply given
+    no new jobs. Jobs already running on it are left alone - stopping those is the worker's own Stop button."""
+    con = connect()
+    try:
+        cur = con.execute("UPDATE cluster_node SET hold=? WHERE id=? AND revoked=0", (1 if on else 0, nid))
+        con.commit()
+        if cur.rowcount:
+            audit_now("cluster_node", f"{nid} {'held: no new jobs' if on else 'released: takes jobs again'}")
+        return bool(cur.rowcount)
     finally:
         con.close()
 

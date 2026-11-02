@@ -1277,3 +1277,21 @@ def test_the_working_prior_is_built_from_enough_samples_to_hold_a_path():
     when the chain stepped outside the range those samples covered. The chain length is unchanged; only the logging is."""
     from genomecurator import beastprep
     assert beastprep.GSS_PRIOR_SAMPLES >= 5000
+
+
+def test_a_held_sub_server_reports_in_but_is_given_no_work(tmp_path, monkeypatch):
+    """The owner needs to stop feeding a machine from the machine they administer - a worker on old code, say. Pausing was
+    only possible on the worker's own page, which is no use when the reason is visible on the main server."""
+    c = _env(tmp_path, monkeypatch)
+    node = c.create_node("n1")
+    n = c.authenticate(node["key"])
+    c.hello(n, {"cpus": 8, "kinds": ["beast"]})
+    c.submit_beast(_pkg(tmp_path, "j1"), "job one")
+    assert c.claim(n, ["beast"])["label"] == "job one"             # takes work normally
+    c.submit_beast(_pkg(tmp_path, "j2"), "job two")
+    assert c.set_hold(node["id"], True) is True
+    assert c.claim(n, ["beast"]) is None                           # held: nothing handed out
+    assert [x["name"] for x in c.list_nodes() if x["hold"]] == ["n1"]
+    assert len([j for j in c.list_jobs(10) if j["state"] == "running"]) == 1   # the job already running is left alone
+    assert c.set_hold(node["id"], False) is True
+    assert c.claim(n, ["beast"])["label"] == "job two"             # released
