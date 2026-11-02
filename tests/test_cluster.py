@@ -1295,3 +1295,37 @@ def test_a_held_sub_server_reports_in_but_is_given_no_work(tmp_path, monkeypatch
     assert len([j for j in c.list_jobs(10) if j["state"] == "running"]) == 1   # the job already running is left alone
     assert c.set_hold(node["id"], False) is True
     assert c.claim(n, ["beast"])["label"] == "job two"             # released
+
+
+def test_progress_counts_the_marginal_likelihood_run_and_not_just_the_chain(tmp_path):
+    """A marginal likelihood job is a chain and then 100 path steps of 500,000 - two and a half times the chain again, written
+    to beast.mle.log. Counting only beast.log parked the bar at the end of the chain, and a Mac sat there for hours looking
+    stuck when it was barely a third of the way through."""
+    from genomecurator.clusterworker import Worker
+    jd = tmp_path / "job"
+    run = jd / "run"
+    run.mkdir(parents=True)
+    run.joinpath("beast.xml").write_text('<marginalLikelihoodEstimator id="MLE" chainLength="500000" pathSteps="100" alpha="0.3">')
+    w = Worker.__new__(Worker)
+    w._mle = {}
+    assert w._mle_plan(jd) == (100, 500000)
+
+    def chain(n):
+        run.joinpath("beast.log").write_text("state\tposterior\n" + "".join(f"{i}\t-1.0\n" for i in range(0, n + 1, 1_000_000)))
+
+    def steps(n):
+        run.joinpath("beast.mle.log").write_text("# written by BEAST\npathLikelihood\tsample\n" + "".join(f"{i / 100:.5f}\t-2.5e5\n" for i in range(n)))
+
+    chain(10_000_000)
+    assert w._progress(jd, 20_000_000)[0] == 14.3                  # half the chain is a seventh of the work
+    chain(20_000_000)
+    assert w._progress(jd, 20_000_000)[0] == 28.6                  # the chain is done and the longer half has not started
+    steps(50)
+    assert w._progress(jd, 20_000_000) == (64.3, "한계우도 50/100단계 (45,000,000/70,000,000 states)")
+    steps(100)
+    assert w._progress(jd, 20_000_000)[0] == 100.0
+
+    run.joinpath("beast.xml").write_text("<beast/>")               # an ordinary chain still reaches 100 on its own
+    run.joinpath("beast.mle.log").unlink()
+    w._mle = {}
+    assert w._progress(jd, 20_000_000) == (100.0, "20,000,000/20,000,000 states")

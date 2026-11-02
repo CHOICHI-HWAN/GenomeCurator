@@ -200,6 +200,7 @@ class Worker:
         self.status = {"state": "starting", "job": None, "error": None, "since": time.strftime("%Y-%m-%dT%H:%M:%S")}
         self.jobs: dict[str, dict] = {}          # jobs running here right now: id -> {label, pct, msg, since}
         self.history: list[dict] = []            # the last jobs this worker ran (shown on its page)
+        self._mle: dict[Path, tuple[int, int]] = {}   # job dir -> (path steps, states per step) of its marginal likelihood run, parsed once
         self.paused = threading.Event()          # Stop button of the sub-server page: give running jobs back, take no new work
         self.update_code = threading.Event()     # the person allowed this machine to run the code the main server sends (codedist)
         self.restart_on: Path | None = None      # set when newer code is unpacked and ready: the folder to come back on
@@ -266,14 +267,46 @@ class Worker:
         p.write_text(json.dumps(st))
         return st
 
+    def _mle_plan(self, jd: Path) -> tuple[int, int]:
+        """(path steps, states per step) of the marginal likelihood run that follows the chain, read from the XML. (0, 0) when there is none."""
+        import re
+        if self._mle.get(jd) is None:
+            steps = each = 0
+            try:
+                m = re.search(r'<marginalLikelihoodEstimator[^>]*chainLength="(\d+)"[^>]*pathSteps="(\d+)"', (jd / "run" / "beast.xml").read_text(encoding="utf-8", errors="replace"))
+                if m:
+                    each, steps = int(m.group(1)), int(m.group(2))
+            except OSError:
+                pass
+            self._mle[jd] = (steps, each)
+        return self._mle[jd]
+
     def _progress(self, jd: Path, chain: int) -> tuple[float | None, str | None]:
         try:
             last = (jd / "run" / "beast.log").read_text(encoding="utf-8").strip().splitlines()[-1].split("\t")[0]
-            if chain:
-                return round(98 * min(float(last) / chain, 1.0), 1), f"{int(float(last)):,}/{chain:,} states"
-        except (OSError, ValueError, IndexError):
-            pass
-        return None, None
+        except (OSError, IndexError):
+            return None, None
+        if not chain:
+            return None, None
+        try:
+            done = float(last)
+        except ValueError:
+            return None, None
+        # the marginal likelihood run that follows the chain is the longer half of the work (100 x 500,000 against a 20,000,000
+        # chain), and it writes beast.mle.log, not beast.log. Counting the chain alone parks the bar at the end of the chain and
+        # leaves the rest invisible - it looked stuck for hours on the Mac. Count both, by state.
+        steps, each = self._mle_plan(jd)
+        if not steps:
+            return round(100 * min(done / chain, 1.0), 1), f"{int(done):,}/{chain:,} states"
+        total = chain + steps * each
+        if done >= chain:
+            try:
+                rows = sum(1 for ln in (jd / "run" / "beast.mle.log").read_text(encoding="utf-8", errors="replace").splitlines() if ln[:1].isdigit())
+            except OSError:
+                rows = 0
+            done = chain + min(rows, steps) * each
+            return round(100 * done / total, 1), f"한계우도 {min(rows, steps)}/{steps}단계 ({int(done):,}/{total:,} states)"
+        return round(100 * done / total, 1), f"본 체인 {int(done):,}/{chain:,} states (뒤에 한계우도 {steps}단계가 더 있습니다)"
 
     def run_job(self, job: dict) -> None:
         jid = job["id"]
