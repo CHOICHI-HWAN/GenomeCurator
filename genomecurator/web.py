@@ -264,8 +264,22 @@ def create_app(scheduler: bool = True) -> FastAPI:
                 _alert_cache.update(t=time.time(), v=None, tl=None)
         return _alert_cache["v"]
 
+    def _build_tag() -> str:
+        """What the page's scripts are named after. They are cached for an hour, so an updated page went on running the old
+        script until the cache ran out; naming the URL after the code makes the browser fetch it the moment the code changes."""
+        from . import build
+        b = build()
+        tag = str(b.get("commit") or b.get("version"))
+        if b.get("dirty") or not b.get("commit"):
+            # Uncommitted work keeps the same commit across every edit, so there the newest script decides the name.
+            try:
+                tag += "-" + str(int(max(p.stat().st_mtime for p in (Path(__file__).parent / "static" / "gc").glob("*.js"))))
+            except (OSError, ValueError):
+                pass
+        return tag
+
     def render(request, name, **ctx):
-        resp = T.TemplateResponse(request, name, {"badge": pending_count(), "schema_alert": schema_alert(), "traffic": _alert_cache.get("tl"), "app_version": __version__, "stale_code": code_is_newer_than_server(), "watch": ctx.get("watch") or request.cookies.get("gc_watch", ""), **ctx})
+        resp = T.TemplateResponse(request, name, {"badge": pending_count(), "schema_alert": schema_alert(), "traffic": _alert_cache.get("tl"), "app_version": __version__, "stale_code": code_is_newer_than_server(), "build_tag": _build_tag(), "watch": ctx.get("watch") or request.cookies.get("gc_watch", ""), **ctx})
         if ctx.get("watch"):
             resp.set_cookie("gc_watch", str(ctx["watch"]), max_age=86400 * 365, samesite="lax")
         return resp
@@ -1996,7 +2010,7 @@ def create_app(scheduler: bool = True) -> FastAPI:
 
     @app.get("/cluster/sub")
     def cluster_sub_page(request: Request):
-        return T.TemplateResponse(request, "cluster_sub.html", {"app_version": __version__, "lease": cluster.LEASE})
+        return T.TemplateResponse(request, "cluster_sub.html", {"app_version": __version__, "lease": cluster.LEASE, "build_tag": _build_tag()})
 
     @app.get("/api/cluster/sub")
     def cluster_sub_status():

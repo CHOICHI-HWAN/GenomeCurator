@@ -66,8 +66,8 @@ pre{margin:8px 0 0;max-height:210px;overflow:auto;background:var(--bg);border:1p
  <pre id="il" style="display:none"></pre></div>
 <div class="mut" id="ver"></div>
 </main>
-<script src="/static/gc/minichart.js"></script>
-<script src="/static/gc/clusterview.js"></script>
+<script src="/static/gc/minichart.js?v={{ build_tag }}"></script>
+<script src="/static/gc/clusterview.js?v={{ build_tag }}"></script>
 <script>
 const $=id=>document.getElementById(id);
 const esc=s=>String(s==null?"":s).replace(/[&<>"]/g,c=>({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;"}[c]));

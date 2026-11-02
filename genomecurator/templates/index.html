@@ -131,7 +131,7 @@ async function delChangeset(id){
 document.querySelectorAll('.dcs').forEach(b=>b.onclick=()=>delChangeset(b.dataset.id));
 </script>
 {% include "_intake.html" %}<script>ihMini(WATCHES)</script>
-<script src="/static/gc/venn.js"></script>
+<script src="/static/gc/venn.js?v={{ build_tag }}"></script>
 <script>
 (function(){const N={ncbi:"NCBI",bvbrc:"BV-BRC",pathoplexus:"Pathoplexus"},f=n=>(n||0).toLocaleString("ko-KR");
  document.querySelectorAll(".venn[data-watch]").forEach(async el=>{

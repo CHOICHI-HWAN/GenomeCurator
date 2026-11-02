@@ -46,8 +46,8 @@
 .jl2{max-height:220px;overflow:auto;font:12px/1.5 Consolas,Menlo,monospace;background:var(--stripe);padding:6px 10px;border-radius:4px}
 .envd{background:var(--stripe);padding:10px 14px}.envd table{margin:0}.envd td{padding:2px 10px 2px 0;border:0;vertical-align:top}
 </style>
-<script src="/static/gc/minichart.js"></script>
-<script src="/static/gc/clusterview.js"></script>
+<script src="/static/gc/minichart.js?v={{ build_tag }}"></script>
+<script src="/static/gc/clusterview.js?v={{ build_tag }}"></script>
 <script>
 const ST={queued:"대기",running:"실행 중",done:"완료",error:"오류",cancelled:"취소"};
 const esc=s=>String(s==null?"":s).replace(/[&<>"']/g,c=>({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;","'":"&#39;"}[c]));
