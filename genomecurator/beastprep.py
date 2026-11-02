@@ -882,7 +882,10 @@ BETS_DEFAULTS = {"n_tips": 60, "clock": "relaxed", "tree_prior": "exponential", 
 ESTIMATORS = ("both", "gss", "ps_ss")
 _MLE_RE = {"ps": re.compile(r"log marginal likelihood \(using path sampling\)[^=]*=\s*(-?[0-9.eE+-]+)"), "ss": re.compile(r"log marginal likelihood \(using stepping stone sampling\)[^=]*=\s*(-?[0-9.eE+-]+)"),
            "gss": re.compile(r"log marginal likelihood \(using generalized stepping stone sampling\)[^=]*=\s*(-?[0-9.eE+-]+)")}
-GSS_PRIOR_SAMPLES = 1000  # rows the ordinary chain logs; the working prior's `burnin` below is counted in these rows, not in states
+GSS_PRIOR_SAMPLES = 5000  # rows the ordinary chain logs; the working prior's `burnin` below is counted in these rows, not in states.
+# 1,000 rows (500 after burn-in) made a working prior whose KDE was too ragged to hold a path: on the 250-genome set three
+# of twelve models died when the generalized stepping-stone chain stepped outside the range those few samples covered.
+# More rows cost only logging - the chain length is unchanged - and give the KDE a support the path can stay inside.
 GSS_BURN = 2000           # states of the ordinary chain run before the path begins: kept short so that the chain stays where it started (the middle of the earlier posterior, inside the working prior)
 GSS_PARAMS = tuple(dict.fromkeys(                         # every parameter any model may have: a GSS chain must start at the middle of
     ("kappa",) + GTR_RATES + ("alpha", "pInv")             # the earlier posterior for all of them, since a start outside the working

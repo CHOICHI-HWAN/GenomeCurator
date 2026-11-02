@@ -222,9 +222,26 @@ def _num(v):
         return None
 
 
+
+def _raise_csv_field_limit() -> None:
+    """Let a CSV field be as large as this platform allows (csv rejects a limit C cannot hold, so step down until one sticks)."""
+    import sys
+    limit = sys.maxsize
+    while True:
+        try:
+            csv.field_size_limit(limit)
+            return
+        except OverflowError:
+            limit //= 2
+
+
 def parse_nextclade_tsv(path: Path) -> dict[str, dict]:
     """{accession: {status, score, clade, lineage, calls, metrics, error}}. The columns between `seqName` and `qc.overallScore`
     are the dataset's own classifications (clade, lineage, outbreak, ...)."""
+    # Nextclade writes one field per genome holding every private mutation it found, and on a divergent genome that field runs
+    # past Python's default 128 KiB limit for a CSV field. The reader then raises in the middle of a batch and the whole QC run
+    # stops with thousands of genomes still unchecked, which is how a silent gap in the curated data gets made.
+    _raise_csv_field_limit()
     out = {}
     with open(path, encoding="utf-8", newline="") as f:
         rd = csv.DictReader(f, delimiter="\t")

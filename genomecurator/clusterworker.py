@@ -168,6 +168,30 @@ def _end(proc: subprocess.Popen, grace: float = 30) -> None:
         proc.wait(10)
 
 
+
+# BEAST's last words are often not its reason. A marginal-likelihood run whose chain dies leaves an empty .mle.log, and the
+# only thing printed at the end is the analysis element failing to read it ("no sample is found") - which sends you looking
+# at file formats when the chain stopped thousands of lines earlier. These are the causes worth naming when we see them.
+def beast_failure(text: str) -> str:
+    """The reason a BEAST run stopped, read out of its screen output; "" when nothing recognisable is there."""
+    import re
+    if "OutOfMemoryError" in text:
+        return "out of memory (give the job more heap, or fewer threads per machine)"
+    inf = re.findall(r"(\w*(?:KDE|ReferencePrior))\(([\w.]+)\)\s*=\s*-Inf", text)   # BEAST prints these comma-separated, not one per line
+    if inf and "Total = -Infinity" in text:
+        who = ", ".join(sorted({f"{k}({v})" for k, v in inf}))
+        where = "generalized stepping-stone" if "MarginalLikelihoodEstimator" in text else "the chain"
+        return (f"{where} stopped: the working prior gave zero density ({who}), so the state had likelihood -Infinity. "
+                "The working prior is a KDE over the ordinary chain's samples; the path left the range those samples cover.")
+    if "Total = -Infinity" in text:
+        return "the chain reached a state with likelihood -Infinity and stopped"
+    if "Incorrect file format, no sample is found" in text:
+        return ("the marginal-likelihood log holds no samples - the estimation run stopped before writing any "
+                "(look above this line in beast.screen.log for the state that failed)")
+    m = re.search(r"^Error in input BEAST XML file.*?(?=\n\n|\Z)", text, re.S | re.M)
+    return m.group(0).strip()[:300] if m else ""
+
+
 class Worker:
     def __init__(self, base: str, key: str, workdir: str | Path, beast: str | None = None, poll: float = 10.0, beat: float = 20.0, retry: float = 15.0):
         self.main, self.work = Main(base, key), Path(workdir)
@@ -324,8 +348,10 @@ class Worker:
         if self.stop.is_set():
             return                                  # stopped on request: the job is left to the lease of the main server
         if proc.returncode != 0:
-            tail = "".join(open(jd / "run" / "beast.screen.log", encoding="utf-8").readlines()[-6:])[-300:]
-            return self._fail(jd, jid, f"BEAST exited with code {proc.returncode}: {tail.strip()}")
+            text = (jd / "run" / "beast.screen.log").read_text(encoding="utf-8", errors="replace")
+            tail = "".join(text.splitlines(keepends=True)[-6:])[-300:]
+            why = beast_failure(text)
+            return self._fail(jd, jid, f"BEAST exited with code {proc.returncode}: {why or tail.strip()}")
         outs = [{"name": n, "sha256": sha256(jd / "run" / n), "bytes": (jd / "run" / n).stat().st_size} for n in KINDS["beast"]["outputs"] if (jd / "run" / n).is_file()]
         self._state(jd, phase="finished", outputs=outs, seconds=round(time.time() - t0))
         self._job_state(jid, outcome="done")

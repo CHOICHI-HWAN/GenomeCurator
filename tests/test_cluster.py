@@ -1247,3 +1247,33 @@ def test_code_the_main_server_sent_is_what_the_worker_starts_on(tmp_path, monkey
     assert clusterworker._worker_env()["PYTHONPATH"].split(os.pathsep)[0] == str(d)
     clusterworker.save_config({"main": "http://m", "key": "k", "enabled": True, "code_dir": str(tmp_path / "gone")})
     assert str(tmp_path / "gone") not in clusterworker._worker_env().get("PYTHONPATH", "")   # a folder that is not there is not a path
+
+
+def test_a_beast_run_that_dies_is_reported_by_its_cause_not_its_last_line():
+    """BEAST's last words are often not its reason: a marginal-likelihood chain that dies leaves an empty .mle.log and the
+    only thing printed at the end is the analysis element failing to read it, which sends the reader after file formats."""
+    from genomecurator import clusterworker
+    real = ("Total = -258523.3:\n"
+            "TransformedNormalKDE(kappa)=-3.8364,\n"
+            "TransformedNormalKDE(clock.rate)=-Inf,\n"
+            "Total = -Infinity\n"
+            "\tat dr.inference.markovchain.MarkovChain.runChain(Unknown Source)\n"
+            "\tat dr.inference.mcmc.MarginalLikelihoodEstimator.integrate(Unknown Source)\n"
+            "Error parsing '<generalizedSteppingStoneSamplingAnalysis>' element with id, 'null':\n"
+            "Incorrect file format, no sample is found !\n")
+    why = clusterworker.beast_failure(real)
+    assert "working prior" in why and "clock.rate" in why and "stepping-stone" in why
+    assert "file format" not in why                      # the symptom must not be what gets reported
+    assert "out of memory" in clusterworker.beast_failure("java.lang.OutOfMemoryError: Java heap space")
+    # with nothing better to go on, the empty log is still named as the thing to look past
+    only = clusterworker.beast_failure("Incorrect file format, no sample is found !")
+    assert "no samples" in only and "beast.screen.log" in only
+    assert clusterworker.beast_failure("Total = -Infinity") == "the chain reached a state with likelihood -Infinity and stopped"
+    assert clusterworker.beast_failure("all fine here") == ""
+
+
+def test_the_working_prior_is_built_from_enough_samples_to_hold_a_path():
+    """500 post-burn-in rows made a KDE too ragged to hold a generalized stepping-stone path: three of twelve models died
+    when the chain stepped outside the range those samples covered. The chain length is unchanged; only the logging is."""
+    from genomecurator import beastprep
+    assert beastprep.GSS_PRIOR_SAMPLES >= 5000
