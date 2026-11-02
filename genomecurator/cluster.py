@@ -389,16 +389,13 @@ def submit_beast(folder: str | Path, label: str = "", max_attempts: int = 3, pri
 
 
 # ------------------------------------------------------------------------------------------------ one analysis over several machines
-# A chain cannot be cut in two: each state follows from the one before. What is handed out in parallel is several shorter chains of the
-# same analysis under different seeds, which hold together as many usable samples as the one long chain (beastprep.split_plan explains
-# the arithmetic). When the last part comes back the main server joins them with LogCombiner, after checking that the chains agree.
-def submit_beast_split(folder: str | Path, parts: int, label: str = "", max_attempts: int = 3, seed0: int = 1, mode: str = "replicate") -> dict:
-    """Run the prepared BEAST package in `folder` on several machines at once and join the results into `<folder>-combined`.
-
-    `mode="replicate"` (the default) gives every machine the analysis at its **full** length under its own seed; `mode="split"`
-    divides one total between them. Measured on the 170-genome BDBV analysis, splitting a 50-million-state total four ways did not
-    reproduce the undivided answer (the deep nodes and the clock rate came out wider and shifted, R-hat 1.07) while one undivided
-    20-million-state chain did, so splitting is offered but is not the default. -> {"group", "jobs", "parts", "out", "mode"}"""
+# A chain cannot be cut in two: each state follows from the one before. What is handed out in parallel is the SAME analysis at its
+# full length under a different seed on every machine. Dividing one total between them used to be offered as well; it is gone,
+# because it did not reproduce the undivided answer (beastprep, above the chain-length helpers, has the measurement). When the last
+# chain comes back the main server joins them with LogCombiner, after checking that they agree.
+def submit_beast_split(folder: str | Path, parts: int, label: str = "", max_attempts: int = 3, seed0: int = 1) -> dict:
+    """Run the prepared BEAST package in `folder` on `parts` machines at once, each at the analysis's full length under its own
+    seed, and join the results into `<folder>-combined`. -> {"group", "jobs", "parts", "out", "mode"}"""
     from . import beastprep
     d = Path(folder).resolve()
     try:
@@ -407,16 +404,14 @@ def submit_beast_split(folder: str | Path, parts: int, label: str = "", max_atte
         raise ValueError("the BEAST folder must be inside the data folder")
     gid = uuid.uuid4().hex[:8]
     out = d.parent / f"{d.name}-combined"
-    if mode not in ("replicate", "split"):
-        raise ValueError("mode는 replicate 또는 split입니다.")
-    dirs = beastprep.write_split(d, parts, seed0, mode)
+    dirs = beastprep.write_split(d, parts, seed0)
     base = label or f"BEAST {json.loads((d / 'settings.json').read_text(encoding='utf-8')).get('tag') or d.name}"
     jobs = []
     for i, pd in enumerate(dirs, 1):
         jobs.append(submit_beast(pd, f"{base} [{i}/{parts}]", max_attempts,
-                                 group={"id": gid, "part": i, "parts": parts, "out": str(out), "source": str(d), "mode": mode}))
-    audit_now("cluster_job", f"{d.name}: {parts} chains over the cluster, mode {mode} (group {gid})")
-    return {"group": gid, "jobs": jobs, "parts": [str(p) for p in dirs], "out": str(out), "mode": mode}
+                                 group={"id": gid, "part": i, "parts": parts, "out": str(out), "source": str(d), "mode": "replicate"}))
+    audit_now("cluster_job", f"{d.name}: {parts} full-length chains over the cluster (group {gid})")
+    return {"group": gid, "jobs": jobs, "parts": [str(p) for p in dirs], "out": str(out), "mode": "replicate"}
 
 
 def _groups(rows: list[dict], kind: str = "split") -> dict[str, dict]:

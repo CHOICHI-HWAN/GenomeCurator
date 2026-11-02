@@ -144,7 +144,7 @@ def advance(clock_run: dict, name: str) -> dict:
         ds = dict(p["dating_settings"], clock=clock_m, tree_prior=tree_m, tag=f"plan-{beastprep._safe(name)}-dating")
         beastprep.prepare(clock_run, ds)                                   # the dating package, under the model the comparison chose
         d = beastprep.folder(clock_run, ds["tag"])
-        ng = cluster.submit_beast_split(d, p["chains"], f"plan {name}: dating under {best}", mode="replicate")
+        ng = cluster.submit_beast_split(d, p["chains"], f"plan {name}: dating under {best}")
         p["groups"]["dating"] = ng["group"]
         p["dating_settings"] = ds
         p["dating_out"] = ng["out"]

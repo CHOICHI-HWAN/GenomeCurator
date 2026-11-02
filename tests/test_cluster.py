@@ -868,45 +868,23 @@ def _split_pkg(tmp_path, name="whole", chain=1_000_000, samples=1000):
     return d
 
 
-def test_split_keeps_the_same_number_of_samples_and_the_same_logging_interval():
+def test_dividing_one_total_between_machines_is_gone(tmp_path, monkeypatch):
+    """It is gone because it gave a different answer, not because it was unused: on the 170-genome BDBV analysis four chains of
+    12.5 million (50 million in all) moved the root and doubled the clock-rate interval against a converged 2 x 50-million
+    reference, while one undivided 20-million chain reproduced it (private/notes/split_vs_whole.md). Several machines now run the
+    analysis at its full length under different seeds, and nothing in the XML changes."""
     from genomecurator import beastprep
-    whole = {"chain_length": 30_000_000, "samples": 10_000, "seed": 1, "tag": "x"}
-    plan = beastprep.split_plan(whole, 4)
-    every = whole["chain_length"] // whole["samples"]
-    assert [p["seed"] for p in plan] == [1, 2, 3, 4] and {p["tag"] for p in plan} == {"x-p1", "x-p2", "x-p3", "x-p4"}
-    assert all(p["chain_length"] // p["samples"] == every for p in plan)        # the joined log stays evenly spaced
-    assert sum(p["samples"] for p in plan) == whole["samples"]                  # and holds as many samples as the one long chain
-    assert sum(p["chain_length"] for p in plan) == whole["chain_length"]
-    with pytest.raises(ValueError):
-        beastprep.split_plan(whole, 1)
-    with pytest.raises(ValueError):
-        beastprep.split_plan(whole, 400)                                        # pieces too short to be worth running
-
-
-def test_a_piece_may_not_be_shorter_than_the_burn_in_the_analysis_was_given():
-    """Finding the posterior takes an absolute number of states, not a share of the chain, so the burn-in the analyst chose is the
-    floor for a piece: at most 1/burn-in pieces, and a longer chain is what buys more of them."""
-    from genomecurator import beastprep
-    whole = {"chain_length": 50_000_000, "samples": 10_000, "seed": 1, "tag": "x"}
-    most = int(1 / beastprep.SPLIT_BURNIN)
-    assert beastprep.split_plan(whole, most)[0]["chain_length"] == int(50_000_000 * beastprep.SPLIT_BURNIN)
-    with pytest.raises(ValueError, match="번인"):
-        beastprep.split_plan(whole, most + 1)
-    bigger = dict(whole, chain_length=200_000_000, samples=40_000)              # a longer chain, the same number of pieces allowed
-    assert beastprep.split_plan(bigger, most)[0]["chain_length"] == 20_000_000
-
-
-def test_split_writes_one_folder_per_part_with_only_the_chain_length_changed(tmp_path, monkeypatch):
-    from genomecurator import beastprep
+    assert not hasattr(beastprep, "split_plan") and not hasattr(beastprep, "SPLIT_BURNIN")
     d = _split_pkg(tmp_path)
     made = beastprep.write_split(d, 4)
-    assert [p.name for p in made] == ["whole-p1", "whole-p2", "whole-p3", "whole-p4"]
-    for i, p in enumerate(made, 1):
-        xml = (p / "beast.xml").read_text()
-        assert 'chainLength="250000"' in xml and 'logEvery="1000"' in xml       # the interval is untouched
-        s = json.loads((p / "settings.json").read_text())
-        assert s["seed"] == i and s["part"] == i and s["parts"] == 4 and s["split_of"] == "whole" and s["split_total"] == 1_000_000
-        assert (p / "dates.tsv").is_file()
+    assert [p.name for p in made] == ["whole-r1", "whole-r2", "whole-r3", "whole-r4"]
+    whole = (d / "beast.xml").read_text()
+    for i, q in enumerate(made, 1):
+        assert (q / "beast.xml").read_text() == whole                           # the full length on every machine, untouched
+        s = json.loads((q / "settings.json").read_text())
+        assert s["seed"] == i and s["part"] == i and s["parts"] == 4 and s["split_of"] == "whole"
+        assert s["chain_length"] == 1_000_000 and s["split_mode"] == "replicate"
+        assert (q / "dates.tsv").is_file()
 
 
 def test_a_split_job_group_is_joined_only_when_every_part_is_back(tmp_path, monkeypatch):
@@ -967,21 +945,19 @@ def test_replicates_keep_the_full_chain_length_and_only_change_the_seed(tmp_path
         beastprep.replicate_plan(whole, 1)
 
 
-def test_the_cluster_runs_whole_chains_unless_splitting_is_asked_for(tmp_path, monkeypatch):
+def test_the_cluster_runs_whole_chains_on_every_machine(tmp_path, monkeypatch):
     from pathlib import Path
     c = _env(tmp_path, monkeypatch)
     monkeypatch.setattr(c, "join_group", lambda gid: {"group": gid, "joined": True})
     d = _split_pkg(tmp_path, "whole", chain=1_000_000, samples=1000)
-    g = c.submit_beast_split(d, 3)                                             # no mode given
+    g = c.submit_beast_split(d, 3)
     assert g["mode"] == "replicate"
     for i, p in enumerate(g["parts"], 1):
         s = json.loads((Path(p) / "settings.json").read_text())
         assert s["chain_length"] == 1_000_000 and s["seed"] == i               # full length on every machine
         assert 'chainLength="1000000"' in (Path(p) / "beast.xml").read_text()
-    g2 = c.submit_beast_split(d, 2, mode="split")
-    assert g2["mode"] == "split" and 'chainLength="500000"' in (Path(g2["parts"][0]) / "beast.xml").read_text()
-    with pytest.raises(ValueError):
-        c.submit_beast_split(d, 2, mode="nonsense")
+    with pytest.raises(TypeError):
+        c.submit_beast_split(d, 2, mode="split")                               # the divided mode is not there to ask for
 
 
 # ---- a whole analysis as one plan: same genomes, same alignment, same substitution model at every step

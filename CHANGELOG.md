@@ -13,6 +13,17 @@ re-pinned (the full list with licences is in [docs/DEPENDENCIES.md](docs/DEPENDE
 
 ## [Unreleased]
 
+### Added
+- **Every machine sees the same cluster.** The main server's page and each sub-server's own page (`/cluster/sub`) now draw one shared panel: the whole cluster's machines, analysis plans with their stage and progress, and every running job, with the machine you are sitting at marked. A sub-server reads it with the worker key it already has; the answer carries names, progress and load and leaves out addresses, keys, pending join requests, data folders and job specifications. A stage's bar counts how far its analyses are, not only how many have finished.
+- **The main server can be the source of the code, for the machines that allow it.** It publishes the package at its HEAD as one tar.gz with its SHA-256 (`git archive`, so only committed code travels); a worker that was allowed to follow it checks the digest, unpacks into a folder named after the commit and comes back on it in the same process. Off until switched on **on the worker's own machine** (`GC_CODE_UPDATE=1` for a command-line worker), done only between jobs so no analysis is interrupted, and refused if the unpacked tree cannot import itself or does not report the commit it was sent as. An unpacked bundle carries a `BUILD` file so code that is no longer a checkout can still say which commit it is.
+
+### Changed
+- **Dividing one analysis between machines is gone; several machines run it whole.** The arithmetic was right - n chains of S/n states discard as many states and leave as many samples as one chain of S - and the answer was wrong. On the 170-genome BDBV analysis, measured against a converged 2 x 50-million-state reference, four chains of 12.5 million put the root at 2001.27 (reference 2000.86) with the interval reaching 2007.75 (reference 2003.05), doubled the upper limit of the clock rate (6.75 to 14.45 x 10^-4) and left R-hat at 1.071, while a single undivided chain of 20 million - less than half the computing - reproduced the reference on every quantity. What a chain needs is its own mixing time, not a share of a total. The cluster now runs the analysis at its full length under a different seed on every machine, which costs the same wall clock, yields n times the samples and lets the chains be compared before they are joined. Old divided runs are still readable and are marked as such on the page.
+- Page scripts are named after the code they belong to, so a changed script reaches an open browser instead of waiting out its one-hour cache.
+
+### Fixed
+- A BETS or model-comparison run whose genomes are named records that number, instead of the default subsample size it never used.
+
 ## [0.3.0] - 2026-10-31
 
 ### Added

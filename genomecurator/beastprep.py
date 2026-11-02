@@ -682,43 +682,17 @@ def combine_runs(clock_run: dict, tags: list[str], out_tag: str, burnin: float =
 
 
 # ------------------------------------------------------------------------------------------------ one analysis over several machines
-# A single MCMC chain cannot be split: every state depends on the one before it. What can be split is the number of chains. Several
-# shorter chains with different seeds, each discarding its own burn-in, leave exactly as many usable samples as one long chain of the
-# same total length (n chains of S/n states discard n x burnin x S/n = burnin x S states, the same as the long chain), and they run at
-# the same time on different machines. The price is statistical, not arithmetical: each short chain has to reach the posterior within
-# its own burn-in, and that is what `chain_agreement` checks before the parts are joined.
-SPLIT_BURNIN = 0.1                                             # the share of each chain that is thrown away, here and in the joining
-
-
-def split_plan(settings: dict, parts: int, seed0: int = 1) -> list[dict]:
-    """Settings for `parts` chains that together hold as many post-burn-in samples as the one chain `settings` describes, each logged
-    at the same interval (so the joined log is evenly spaced) and each with its own seed.
-
-    What splitting does not change: the number of states thrown away (n chains of S/n discard n x b x S/n = b x S, as the one chain of
-    S does) and the number of samples that remain. What it does change is how long each chain has to find the posterior. Reaching the
-    posterior takes an absolute number of states, not a share of the chain, so a piece must not be shorter than the burn-in the whole
-    analysis was given: that burn-in is the analyst's own statement of how long this analysis needs. Hence at most 1/burn-in pieces."""
-    s = dict(settings)
-    if parts < 2:
-        raise ValueError("두 개 이상으로 나누어야 합니다.")
-    total, samples = int(s.get("chain_length") or 0), int(s.get("samples") or 0)
-    every = max(1, total // max(1, samples))                   # the logging interval of the whole analysis: every part keeps it
-    per = (total // parts // every) * every                    # a whole number of logged states per part
-    burn = int(total * SPLIT_BURNIN)
-    if per < burn:
-        raise ValueError(f"{parts}개로 나누면 한 조각이 {per:,}상태로, 이 분석이 번인으로 잡은 {burn:,}상태보다 짧습니다. "
-                         f"조각은 각자 번인 안에 수렴해야 하므로 최대 {int(1 / SPLIT_BURNIN)}개까지만 나눌 수 있습니다. "
-                         f"더 나누려면 전체 사슬을 늘리세요.")
-    if per < every * 100:
-        raise ValueError(f"{parts}개로 나누면 한 조각이 너무 짧습니다(조각당 표본 {per // every}개). 사슬을 늘리거나 조각 수를 줄이세요.")
-    out = []
-    for i in range(parts):
-        p = dict(s, chain_length=per, samples=per // every, seed=seed0 + i, tag=f"{s.get('tag', 'run')}-p{i + 1}",
-                 split_of=s.get("tag", "run"), part=i + 1, parts=parts, split_total=total)
-        out.append(p)
-    return out
-
-
+# A single MCMC chain cannot be split: every state depends on the one before it. For a while this module also offered to divide one
+# total between the machines - n chains of S/n states, which discard exactly as many states as one chain of S and leave exactly as
+# many samples. The arithmetic is right and the answer was wrong. Measured on the 170-genome BDBV analysis against a converged
+# 2 x 50-million-state reference: four chains of 12.5 million (50 million in all) put the root at 2001.27 with the interval reaching
+# to 2007.75 where the reference ends at 2003.05, doubled the upper limit of the clock rate (6.75 -> 14.45 x 10^-4) and left R-hat at
+# 1.071, while a single undivided chain of 20 million - less than half the computing - reproduced the reference on every quantity.
+# What a chain needs is not a share of some total but its own mixing time, and the posterior of a deep node has a long tail that a
+# short chain never crosses; four such chains settle in four different places and joining them gives a wide, shifted mixture.
+# So splitting a total is gone (private/notes/split_vs_whole.md). Several machines run the analysis at its FULL length under
+# different seeds: the wall clock is that of one chain, the result holds n times the samples, and the chains can be compared with
+# `chain_agreement` before they are joined.
 def replicate_plan(settings: dict, copies: int, seed0: int = 1) -> list[dict]:
     """`copies` chains of the same analysis at its **full** length, differing only in the seed.
 
@@ -733,22 +707,18 @@ def replicate_plan(settings: dict, copies: int, seed0: int = 1) -> list[dict]:
                  parts=copies, split_mode="replicate") for i in range(copies)]
 
 
-def write_split(src: str | Path, parts: int, seed0: int = 1, mode: str = "split") -> list[Path]:
-    """Write `parts` sibling folders of a prepared BEAST package: shorter chains of the same analysis (`mode="split"`), or the same
-    analysis at full length under different seeds (`mode="replicate"`). Only the chain length changes in the XML, and only when it
-    is split (the logging interval stays as it was, and the seed is given to BEAST on the command line). -> the folders."""
+def write_split(src: str | Path, parts: int, seed0: int = 1) -> list[Path]:
+    """Write `parts` sibling folders of a prepared BEAST package: the same analysis at its full length, differing only in the seed
+    (given to BEAST on the command line). Nothing in the XML changes. -> the folders."""
     d = Path(src)
     xml = (d / "beast.xml").read_text(encoding="utf-8")
     s = json.loads((d / "settings.json").read_text(encoding="utf-8"))
-    plan = replicate_plan(s, parts, seed0) if mode == "replicate" else split_plan(s, parts, seed0)
+    plan = replicate_plan(s, parts, seed0)
     made = []
     for p in plan:
         pd = d.parent / _safe(p["tag"])
         pd.mkdir(parents=True, exist_ok=True)
-        got = re.subn(r'(<mcmc\b[^>]*\bchainLength=")\d+(")', lambda m: f'{m[1]}{p["chain_length"]}{m[2]}', xml, count=1)
-        if not got[1]:
-            raise ValueError("beast.xml에서 chainLength를 찾지 못했습니다.")
-        (pd / "beast.xml").write_text(got[0], encoding="utf-8")
+        (pd / "beast.xml").write_text(xml, encoding="utf-8")
         (pd / "settings.json").write_text(json.dumps(p, ensure_ascii=False, indent=1), encoding="utf-8")
         for f in ("dates.tsv", "alignment.fasta", "subsample.tsv"):
             if (d / f).exists():
