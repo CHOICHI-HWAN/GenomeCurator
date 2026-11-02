@@ -149,6 +149,7 @@ def list_nodes() -> list[dict]:
         r["metrics"] = json.loads(r.pop("metrics_json", None) or "{}")
         r["paused"] = bool(r["metrics"].get("paused"))
         r["hold"] = bool(r.get("hold"))
+        r["priority"] = int(r["priority"]) if r.get("priority") is not None else 2
         r["online"] = _online(r["last_seen"])
         jobs_here = busy.get(r["id"]) or []
         r["running"] = jobs_here[0] if jobs_here else None     # kept for older pages
@@ -378,8 +379,8 @@ def submit_beast(folder: str | Path, label: str = "", max_attempts: int = 3, pri
         spec["group"] = dict(group)
     con = connect()
     try:
-        con.execute("INSERT INTO cluster_job(id,kind,label,state,created,max_attempts,private,spec_json,inputs_json,target_dir,log_json) VALUES(?,?,?,?,?,?,?,?,?,?,?)",
-                    (jid, "beast", label or f"BEAST {st.get('tag') or d.name}", "queued", _now(), max_attempts, int(bool(private)), json.dumps(spec),
+        con.execute("INSERT INTO cluster_job(id,kind,label,state,created,queued,max_attempts,private,spec_json,inputs_json,target_dir,log_json) VALUES(?,?,?,?,?,?,?,?,?,?,?,?)",
+                    (jid, "beast", label or f"BEAST {st.get('tag') or d.name}", "queued", _now(), _now(), max_attempts, int(bool(private)), json.dumps(spec),
                      json.dumps(inputs), str(d), "[]"))
         _addlog(con, jid, "queued" + (" (private genomes: only workers that accept them)" if private else ""))
         con.commit()
@@ -706,14 +707,14 @@ def _release(con, jid: str, why: str, count: bool = True) -> None:
     if not j or j["state"] != "running":
         return
     if not count:
-        con.execute("UPDATE cluster_job SET state='queued', node_id=NULL, claimed=NULL, pct=0, msg=NULL, attempts=MAX(attempts-1,0) WHERE id=?", (jid,))
+        con.execute("UPDATE cluster_job SET state='queued', node_id=NULL, claimed=NULL, pct=0, msg=NULL, queued=?, attempts=MAX(attempts-1,0) WHERE id=?", (_now(), jid))
         _addlog(con, jid, f"back in the queue: {why} (not counted as an attempt)")
         return
     if j["attempts"] >= j["max_attempts"]:
         con.execute("UPDATE cluster_job SET state='error', finished=?, error=?, node_id=NULL WHERE id=?", (_now(), f"{why}; no attempts left", jid))
         _addlog(con, jid, f"failed: {why}; no attempts left")
     else:
-        con.execute("UPDATE cluster_job SET state='queued', node_id=NULL, claimed=NULL, pct=0, msg=NULL WHERE id=?", (jid,))
+        con.execute("UPDATE cluster_job SET state='queued', node_id=NULL, claimed=NULL, pct=0, msg=NULL, queued=? WHERE id=?", (_now(), jid))
         _addlog(con, jid, f"back in the queue: {why} (attempt {j['attempts']} of {j['max_attempts']})")
 
 
@@ -751,6 +752,38 @@ def _really_idle(metrics: dict, cpus: int, running: int) -> bool:
     return busy < IDLE_PCT and (total - (used or 0)) / 2 ** 30 >= EXTRA_MEM_GB
 
 
+FIRST_REFUSAL = int(os.environ.get("GC_CLUSTER_FIRST_REFUSAL", "120"))   # how long a job is kept for the machines ranked above the one asking, before anyone may take it
+
+
+def _waited(j) -> float:
+    """Seconds this job has been sitting in the queue (since it was submitted, or since a worker gave it back)."""
+    try:
+        return (datetime.now() - datetime.fromisoformat(j["queued"] or j["created"])).total_seconds()
+    except (ValueError, TypeError):
+        return FIRST_REFUSAL
+
+
+def _outranked(con, node: dict) -> bool:
+    """Is a machine the owner ranked above this one still free to take the job?
+
+    Workers pull, so when a job is queued nothing chooses between the machines - whoever polls first gets it. Priority is
+    therefore a right of first refusal: for the first FIRST_REFUSAL seconds a job is offered only to the machines ranked
+    above, and only while one of them could actually run it (online, not held, not full). After that anyone may take it, so
+    a machine that is ranked first but never claims - its kinds empty, its environment broken - cannot starve the rest."""
+    mine = node.get("priority")
+    mine = 2 if mine is None else int(mine)
+    for r in con.execute("SELECT id, caps_json, metrics_json, last_seen FROM cluster_node WHERE revoked=0 AND IFNULL(hold,0)=0 AND IFNULL(priority,2) < ?", (mine,)):
+        if r["id"] == node["id"] or not _online(r["last_seen"]):
+            continue
+        caps = json.loads(r["caps_json"] or "{}")
+        cpus = int(caps.get("cpus") or 0)
+        running = [json.loads(x[0] or "{}") for x in con.execute("SELECT spec_json FROM cluster_job WHERE state='running' AND node_id=?", (r["id"],))]
+        used = sum(int(x.get("threads") or DEFAULT_THREADS) for x in running)
+        if not running or (cpus - RESERVE_CPUS - used) >= 1 or _really_idle(json.loads(r["metrics_json"] or "{}"), cpus, len(running)):
+            return True
+    return False
+
+
 def claim(node: dict, kinds: list[str] | None = None, metrics: dict | None = None) -> dict | None:
     """Give the worker the oldest queued job it may run (its kind is known to the worker; a private job only to a worker that accepts private genomes)."""
     reap()
@@ -777,10 +810,15 @@ def claim(node: dict, kinds: list[str] | None = None, metrics: dict | None = Non
         q = "SELECT * FROM cluster_job WHERE state='queued' AND kind IN (%s)" % ",".join("?" * len(kinds))
         if not node["allow_private"]:
             q += " AND private=0"
+        outranked = None
         for j in con.execute(q + " ORDER BY created, rowid", kinds).fetchall():
             want = int((json.loads(j["spec_json"] or "{}")).get("threads") or DEFAULT_THREADS)
             if running and want > free and not spare:
                 continue                    # it would oversubscribe this machine; another worker can take it
+            if outranked is None:           # the same for every job in this pass, so it is worked out once
+                outranked = _outranked(con, node)
+            if outranked and _waited(j) < FIRST_REFUSAL:
+                continue                    # a machine the owner ranked above this one is free: leave it for them a little longer
             n = con.execute("UPDATE cluster_job SET state='running', node_id=?, claimed=?, heartbeat=?, attempts=attempts+1, pct=0, msg='assigned' WHERE id=? AND state='queued'",
                             (node["id"], _now(), _now(), j["id"])).rowcount
             if n:
@@ -803,6 +841,22 @@ def set_hold(nid: str, on: bool) -> bool:
         con.commit()
         if cur.rowcount:
             audit_now("cluster_node", f"{nid} {'held: no new jobs' if on else 'released: takes jobs again'}")
+        return bool(cur.rowcount)
+    finally:
+        con.close()
+
+
+def set_priority(nid: str, n: int) -> bool:
+    """The order the owner wants machines filled in: 1 first, then 2, then 3. A job is offered to the machines ranked above
+    for FIRST_REFUSAL seconds before anyone else may take it, so the fast machine gets the work while it has room and the
+    others pick up what is left over."""
+    n = max(1, min(9, int(n)))
+    con = connect()
+    try:
+        cur = con.execute("UPDATE cluster_node SET priority=? WHERE id=? AND revoked=0", (n, nid))
+        con.commit()
+        if cur.rowcount:
+            audit_now("cluster_node", f"{nid} priority {n}")
         return bool(cur.rowcount)
     finally:
         con.close()
@@ -1067,7 +1121,7 @@ def overview(node: dict | None = None) -> dict:
 
     def machine(n: dict) -> dict:
         m = n.get("metrics") or {}
-        return {"name": n["name"], "online": n["online"], "paused": n["paused"], "you": n["id"] == me,
+        return {"name": n["name"], "online": n["online"], "paused": n["paused"], "you": n["id"] == me, "hold": n.get("hold"), "priority": n.get("priority"),
                 "cpus": (n.get("caps") or {}).get("cpus") or m.get("cpus"), "cpus_busy": n.get("cpus_busy"), "cpus_free": n.get("cpus_free"),
                 "jobs": len(n.get("running_jobs") or []), "env_ok": n.get("env_ok"), "last_seen": n.get("last_seen"),
                 "code": ((n.get("caps") or {}).get("build") or {}).get("commit"), "follows_code": m.get("code_update"),

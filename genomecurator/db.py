@@ -68,7 +68,8 @@ CREATE TABLE IF NOT EXISTS cluster_node(
 CREATE TABLE IF NOT EXISTS cluster_job(
   id TEXT PRIMARY KEY, kind TEXT, label TEXT, state TEXT,  -- queued|running|received|done|error|cancelled
   node_id TEXT, created TEXT, claimed TEXT, finished TEXT, heartbeat TEXT, attempts INTEGER DEFAULT 0, max_attempts INTEGER DEFAULT 3,
-  pct REAL DEFAULT 0, msg TEXT, error TEXT, private INTEGER DEFAULT 0, spec_json TEXT, inputs_json TEXT, outputs_json TEXT, target_dir TEXT, log_json TEXT);
+  pct REAL DEFAULT 0, msg TEXT, error TEXT, private INTEGER DEFAULT 0, spec_json TEXT, inputs_json TEXT, outputs_json TEXT, target_dir TEXT, log_json TEXT,
+  queued TEXT);   -- when it last entered the queue (created, or when a worker gave it back): what the priority head start is measured from
 CREATE INDEX IF NOT EXISTS ix_cluster_job_state ON cluster_job(state, created);
 -- a server asking to join as a worker; the key is made only when an approved request is collected (so no key is ever stored in plain text)
 CREATE TABLE IF NOT EXISTS cluster_request(
@@ -195,6 +196,14 @@ def migrate(con: sqlite3.Connection) -> None:
         # the owner's switch for "send this machine nothing for now" - a worker on old code, a machine wanted back for other
         # work. Pausing was only ever possible on the worker's own page, which is no use when the reason is visible here.
         con.execute("ALTER TABLE cluster_node ADD COLUMN hold INTEGER DEFAULT 0")
+    if ncols and "priority" not in ncols:
+        # the order the owner wants machines filled in: 1 first, then 2, then 3. Workers pull, so nothing chooses between them
+        # at the moment a job is queued - this is what lets the fast machine get first refusal.
+        con.execute("ALTER TABLE cluster_node ADD COLUMN priority INTEGER DEFAULT 2")
+    jcols = {r[1] for r in con.execute("PRAGMA table_info(cluster_job)")}
+    if jcols and "queued" not in jcols:
+        con.execute("ALTER TABLE cluster_job ADD COLUMN queued TEXT")
+        con.execute("UPDATE cluster_job SET queued=created WHERE queued IS NULL")
     wcols = {r[1] for r in con.execute("PRAGMA table_info(watchlist)")}
     if "pathoplexus_organism" not in wcols:
         con.execute("ALTER TABLE watchlist ADD COLUMN pathoplexus_organism TEXT")

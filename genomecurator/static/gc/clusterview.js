@@ -93,7 +93,7 @@
     const mem = m.mem_total ? 100 * m.mem_used / m.mem_total : null;
     return '<div class="gcv-m' + (n.you ? " you" : "") + '"><div><span class="gcv-dot ' + (n.online ? (n.paused ? "off" : "") : "bad") + '"></span><b>' + esc(n.name) + '</b>'
       + (n.you ? '<span class="gcv-you">이 서버</span>' : "") + '</div>'
-      + '<div class="gcv-mut">' + (n.online ? (n.paused ? "정지됨" : "연결됨") : "끊김 · " + ago(n.last_seen)) + ' · 작업 ' + (n.jobs || 0) + '개'
+      + '<div class="gcv-mut">' + (n.online ? (n.hold ? "보류됨" : (n.paused ? "정지됨" : "연결됨")) : "끊김 · " + ago(n.last_seen)) + ' · ' + (n.priority || 2) + '순위 · 작업 ' + (n.jobs || 0) + '개'
       + (n.cpus ? ' · ' + n.cpus + '코어' + (n.cpus_free != null ? ' (여유 ' + n.cpus_free + ')' : "") : "") + '</div>'
       + (cpu != null ? bar(cpu) + '<div class="gcv-mut">' + (m.cpu_pct != null ? "CPU " + Math.round(cpu) + "%" : "부하 " + m.load1 + " / " + m.cpus + "코어") + '</div>' : "")
       + (mem != null ? bar(mem) + '<div class="gcv-mut">메모리 ' + gb(m.mem_used) + ' / ' + gb(m.mem_total) + '</div>' : '<div class="gcv-mut">메모리 보고 없음</div>')

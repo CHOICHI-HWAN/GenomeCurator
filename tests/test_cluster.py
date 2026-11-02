@@ -1329,3 +1329,57 @@ def test_progress_counts_the_marginal_likelihood_run_and_not_just_the_chain(tmp_
     run.joinpath("beast.mle.log").unlink()
     w._mle = {}
     assert w._progress(jd, 20_000_000) == (100.0, "20,000,000/20,000,000 states")
+
+
+def test_the_machine_ranked_first_gets_first_refusal(tmp_path, monkeypatch):
+    """Workers pull, so whoever polls first takes the job and a slow machine can grab work meant for the fast one. The owner
+    ranks the machines; for a short while a job is only offered to the ones ranked above."""
+    c = _env(tmp_path, monkeypatch)
+    fast, slow = c.create_node("fast"), c.create_node("slow")
+    nf, ns = c.authenticate(fast["key"]), c.authenticate(slow["key"])
+    c.hello(nf, {"cpus": 2, "kinds": ["beast"]})              # the fast one has room for a single job, so the second must go elsewhere
+    c.hello(ns, {"cpus": 8, "kinds": ["beast"]})
+    assert c.set_priority(fast["id"], 1) is True
+    assert c.set_priority(slow["id"], 3) is True
+    nf, ns = c.authenticate(fast["key"]), c.authenticate(slow["key"])        # pick the new ranks up
+
+    c.submit_beast(_pkg(tmp_path, "j1"), "job one")
+    assert c.claim(ns, ["beast"]) is None                                    # the slow one waits: the fast one is free
+    assert c.claim(nf, ["beast"])["label"] == "job one"                      # and the fast one takes it
+
+    c.submit_beast(_pkg(tmp_path, "j2"), "job two")
+    assert c.claim(ns, ["beast"])["label"] == "job two"                      # the fast one is now full, so the slow one may
+
+    # a machine ranked first that never claims must not starve the others
+    c.submit_beast(_pkg(tmp_path, "j3"), "job three")
+    monkeypatch.setattr(c, "FIRST_REFUSAL", 0)
+    assert c.claim(ns, ["beast"])["label"] == "job three"
+
+
+def test_first_refusal_is_measured_from_when_a_job_came_back_to_the_queue(tmp_path, monkeypatch):
+    """A job handed back by a worker is queued afresh. Measuring the head start from when it was first submitted would hand
+    every requeued job straight to whoever polls first - which is how the Mac's work kept landing on the wrong machine."""
+    c = _env(tmp_path, monkeypatch)
+    fast, slow = c.create_node("fast"), c.create_node("slow")
+    nf, ns = c.authenticate(fast["key"]), c.authenticate(slow["key"])
+    c.hello(nf, {"cpus": 8, "kinds": ["beast"]})
+    c.hello(ns, {"cpus": 8, "kinds": ["beast"]})
+    c.set_priority(fast["id"], 1)
+    c.set_priority(slow["id"], 3)
+    nf, ns = c.authenticate(fast["key"]), c.authenticate(slow["key"])
+
+    jid = c.submit_beast(_pkg(tmp_path, "j1"), "job one")
+    assert c.claim(ns, ["beast"]) is None
+    assert c.claim(nf, ["beast"])["id"] == jid
+    later = "2026-11-03T09:00:00"                                            # the clock has only second resolution
+    monkeypatch.setattr(c, "_now", lambda: later)
+    con = c.connect()                                                        # the fast machine gives it back
+    try:
+        c._release(con, jid, "testing", count=False)
+        con.commit()
+        row = con.execute("SELECT queued, created FROM cluster_job WHERE id=?", (jid,)).fetchone()
+    finally:
+        con.close()
+    assert row["queued"] == later > row["created"]                           # queued afresh, so the head start starts again
+    assert c.claim(ns, ["beast"]) is None                                    # still the fast machine's to refuse
+    assert c.claim(nf, ["beast"])["id"] == jid

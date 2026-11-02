@@ -2171,6 +2171,14 @@ def create_app(scheduler: bool = True) -> FastAPI:
         on = bool((await request.json()).get("on"))
         return {"ok": cluster.set_hold(nid, on), "hold": on}
 
+    @app.post("/api/cluster/nodes/{nid}/priority")
+    async def cluster_node_priority(request: Request, nid: str):
+        """The order machines are filled in: 1 first, then 2, then 3. A job waits for the machines ranked above it before anyone else may take it."""
+        if (e := _cluster_admin(request)):
+            return e
+        n = int((await request.json()).get("n") or 2)
+        return {"ok": cluster.set_priority(nid, n), "priority": max(1, min(9, n))}
+
     @app.post("/api/cluster/nodes/{nid}/recheck")
     def cluster_node_recheck(request: Request, nid: str):
         if (e := _cluster_admin(request)):
