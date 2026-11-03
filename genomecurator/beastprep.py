@@ -1238,9 +1238,14 @@ def run_bets(clock_run: dict, settings: dict | None = None, progress=None) -> di
 def compare_models(res: dict) -> dict:
     """Rank the models by marginal likelihood (GSS if there is one, else SS, else PS) and give each one's log Bayes factor against the best; the estimators' disagreement is reported per model.
     Kass & Raftery: a log BF of 1-3 is weak, 3-5 positive, over 5 strong evidence for the better model."""
-    # the estimator that covers the most models, preferring GSS. Requiring one that covers them all meant a single model
-    # that could not be estimated threw away the other eleven; the models it does not cover are named instead.
-    est = max(("gss", "ss", "ps"), key=lambda k: (sum(r.get(k) is not None for r in res.values()), -("gss", "ss", "ps").index(k)))
+    # Prefer the generalized stepping stone outright wherever it covers half the grid. Choosing on coverage alone once
+    # cost one model (relaxed-expansion lost its GSS) and handed the whole comparison to stepping stone, which walks all
+    # the way to the prior and does not survive that walk under logistic growth: strict-logistic came back 180 log units
+    # too high on SS and won a comparison it is sixth in. A model GSS cannot reach is named in `missing` instead.
+    ORDER = ("gss", "ss", "ps")
+    cov = {k: sum(r.get(k) is not None for r in res.values()) for k in ORDER}
+    enough = max(2, (len(res) + 1) // 2)
+    est = next((k for k in ORDER if cov[k] >= enough), None) or max(ORDER, key=lambda k: (cov[k], -ORDER.index(k)))
     covered = {t: r for t, r in res.items() if r.get(est) is not None}
     missing = sorted(set(res) - set(covered))
     if not covered:

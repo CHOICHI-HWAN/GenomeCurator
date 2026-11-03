@@ -4160,3 +4160,27 @@ def test_the_gss_working_prior_counts_its_burnin_in_logged_rows():
                                  "chain_length": s["step_chain"], "path_steps": s["path_steps"], "alpha": 0.3})
     assert f'burnin="{beastprep.GSS_PRIOR_SAMPLES // 2}"' in x and 'burnin="10000000"' not in x   # rows, not states
     assert beastprep.GSS_PRIOR_SAMPLES // 2 < beastprep.GSS_PRIOR_SAMPLES          # half the rows, which is what the chain logs
+
+
+def test_the_model_comparison_does_not_trade_the_reliable_estimator_for_one_more_model():
+    """Choosing the estimator that covers the most models handed a comparison to stepping stone because the generalized
+    stepping stone was missing for one of twelve. Stepping stone walks to the prior and does not survive that walk under
+    logistic growth: strict-logistic came back 180 log units too high and won a comparison it is sixth in."""
+    from genomecurator.beastprep import compare_models
+    res = {
+        "relaxed-logistic":   {"gss": -255918.69, "ss": -255874.84, "ps": -255866.97},
+        "relaxed-exponential": {"gss": -255922.03, "ss": -255897.56, "ps": -255887.89},
+        "strict-logistic":    {"gss": -255938.98, "ss": -255758.51, "ps": -255750.56},   # SS and PS are the broken ones
+        "strict-constant":    {"gss": -255963.24, "ss": -255963.33, "ps": -255956.72},
+        "relaxed-expansion":  {"ss": -255898.09, "ps": -255889.80},                      # no GSS: this one is set aside
+    }
+    out = compare_models(res)
+    assert out["estimator"] == "gss"
+    assert out["missing"] == ["relaxed-expansion"]
+    assert [r["model"] for r in out["ranking"]][:2] == ["relaxed-logistic", "relaxed-exponential"]
+    assert out["ranking"][0]["ml"] == -255918.69                       # the GSS value, not the flattering SS one
+    spread = {r["model"]: r["estimator_spread"] for r in out["ranking"]}
+    assert spread["strict-logistic"] > 100                             # the disagreement is still reported
+
+    only_ss = {k: {"ss": v["ss"]} for k, v in res.items()}             # with no GSS at all it still ranks on what it has
+    assert compare_models(only_ss)["estimator"] == "ss"
