@@ -1022,6 +1022,9 @@ def test_a_plan_with_a_signal_goes_on_to_compare_every_combination(tmp_path, mon
 
 # ---- the main server looks at what a machine is actually doing, not only at what its jobs asked for
 def test_a_machine_measured_idle_takes_more_than_its_core_budget(tmp_path, monkeypatch):
+    """It may go past its core budget, but not without limit. Taking every job on offer is what put nine chains and 108
+    threads on a 64-core machine while two others stood empty, and each chain then ran three times slower; the second
+    job here is the one beyond the budget, and the machine stops once its threads reach its cores."""
     c = _env(tmp_path, monkeypatch)
     GB = 2 ** 30
     idle = {"cpu_pct": 12.0, "mem_total": 256 * GB, "mem_used": 20 * GB}
@@ -1029,9 +1032,8 @@ def test_a_machine_measured_idle_takes_more_than_its_core_budget(tmp_path, monke
     c.hello(n, {"kinds": ["beast"], "cpus": 16})                               # 12 cores after the reserve, so one 12-thread job fills it
     ids = [c.submit_beast(_pkg(tmp_path, f"p{i}", threads=12)) for i in range(4)]
     got = [c.claim(n, metrics=idle) for _ in ids]
-    assert all(g for g in got), "an idle machine with memory to spare should take all four"
+    assert [g is not None for g in got] == [True, True, False, False], "one past the budget, then it stops"
     assert "beyond its core budget" in json.dumps(c.get_job(ids[1])["log"], ensure_ascii=False)
-    assert c.claim(n, metrics=idle) is None                                    # nothing left in the queue
 
 
 def test_a_busy_or_full_machine_keeps_its_core_budget(tmp_path, monkeypatch):
