@@ -1390,3 +1390,23 @@ def test_first_refusal_is_measured_from_when_a_job_came_back_to_the_queue(tmp_pa
     assert row["queued"] == later > row["created"]                           # queued afresh, so the head start starts again
     assert c.claim(ns, ["beast"]) is None                                    # still the fast machine's to refuse
     assert c.claim(nf, ["beast"])["id"] == jid
+
+
+def test_first_refusal_does_not_hold_work_for_a_machine_that_is_already_full(tmp_path, monkeypatch):
+    """The first-ranked machine may take work beyond its core budget when it measures idle, because BEAST often waits on
+    memory rather than cores. That allowance must not also hold jobs back from the other machines: together the two rules
+    put nine jobs onto one 64-core box while 56 cores stood idle on the other two."""
+    c = _env(tmp_path, monkeypatch)
+    fast, slow = c.create_node("fast"), c.create_node("slow")
+    nf, ns = c.authenticate(fast["key"]), c.authenticate(slow["key"])
+    idle = {"cpu_pct": 5.0, "mem_total": 200 * 2**30, "mem_used": 10 * 2**30}      # looks idle, with memory to spare
+    c.hello(nf, {"cpus": 2, "kinds": ["beast"], "metrics": idle})
+    c.hello(ns, {"cpus": 8, "kinds": ["beast"]})
+    c.set_priority(fast["id"], 1)
+    c.set_priority(slow["id"], 3)
+    nf, ns = c.authenticate(fast["key"]), c.authenticate(slow["key"])
+
+    c.submit_beast(_pkg(tmp_path, "j1"), "job one")
+    assert c.claim(nf, ["beast"], metrics=idle)["label"] == "job one"              # the fast one fills its budget
+    c.submit_beast(_pkg(tmp_path, "j2"), "job two")
+    assert c.claim(ns, ["beast"])["label"] == "job two"                            # and the second goes elsewhere at once

@@ -779,7 +779,7 @@ def _outranked(con, node: dict) -> bool:
         cpus = int(caps.get("cpus") or 0)
         running = [json.loads(x[0] or "{}") for x in con.execute("SELECT spec_json FROM cluster_job WHERE state='running' AND node_id=?", (r["id"],))]
         used = sum(int(x.get("threads") or DEFAULT_THREADS) for x in running)
-        if not running or (cpus - RESERVE_CPUS - used) >= 1 or _really_idle(json.loads(r["metrics_json"] or "{}"), cpus, len(running)):
+        if not running or (cpus - RESERVE_CPUS - used) >= 1:
             return True
     return False
 
