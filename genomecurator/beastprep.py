@@ -335,7 +335,13 @@ def build_xml(seqs: dict[str, str], dates: dict[str, float], groups: dict[str, l
                 # run almost unreachable, which is how the logistic analyses came back with an empty marginal-likelihood file.
                 w(f'\t\t\t<exponentialPrior mean="{max(0.5, round(max(dates.values()) - min(dates.values()), 3)):g}" offset="0.0"><parameter idref="{q}"/></exponentialPrior>')
             else:
-                w(f'\t\t\t<laplacePrior mean="0.0" scale="100.0"><parameter idref="{q}"/></laplacePrior>')
+                # The growth rate, per year. BEAUti's old default scale of 100 is far too wide for a lineage sampled over a
+                # couple of years: the chain reaches rates of several hundred, exp(r*t) overflows and the coalescent
+                # likelihood goes to -Infinity, which is how the logistic runs kept dying ("CoalescentLikelihood for
+                # demographic is -Infinity ... try using stronger priors on these", BEAST's own message). A scale of 10 puts
+                # 95% of the prior inside |r| < 30/year - a doubling time of eight days at the edge, well beyond anything an
+                # outbreak lineage sustains - so it constrains nothing the data could say, and the chain stays in range.
+                w(f'\t\t\t<laplacePrior mean="0.0" scale="{GROWTH_SCALE:g}"><parameter idref="{q}"/></laplacePrior>')
 
     w('\t\t\t<gmrfSkyGridLikelihood idref="skygrid"/>' if sky else '\t\t\t<coalescentLikelihood idref="coalescent"/>')
     w('\t\t</prior><likelihood id="likelihood"><treeDataLikelihood idref="treeLikelihood"/></likelihood></posterior>')
@@ -882,6 +888,7 @@ BETS_DEFAULTS = {"n_tips": 60, "clock": "relaxed", "tree_prior": "exponential", 
 ESTIMATORS = ("both", "gss", "ps_ss")
 _MLE_RE = {"ps": re.compile(r"log marginal likelihood \(using path sampling\)[^=]*=\s*(-?[0-9.eE+-]+)"), "ss": re.compile(r"log marginal likelihood \(using stepping stone sampling\)[^=]*=\s*(-?[0-9.eE+-]+)"),
            "gss": re.compile(r"log marginal likelihood \(using generalized stepping stone sampling\)[^=]*=\s*(-?[0-9.eE+-]+)")}
+GROWTH_SCALE = 10.0       # scale of the Laplace prior on a demographic growth rate, per year (see where it is written)
 GSS_PRIOR_SAMPLES = 5000  # rows the ordinary chain logs; the working prior's `burnin` below is counted in these rows, not in states.
 # 1,000 rows (500 after burn-in) made a working prior whose KDE was too ragged to hold a path: on the 250-genome set three
 # of twelve models died when the generalized stepping-stone chain stepped outside the range those few samples covered.

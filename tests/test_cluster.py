@@ -6,6 +6,8 @@ import stat
 import threading
 import time
 
+from datetime import datetime, timedelta
+
 import pytest
 
 from genomecurator import clusterworker as _cw
@@ -1371,7 +1373,12 @@ def test_first_refusal_is_measured_from_when_a_job_came_back_to_the_queue(tmp_pa
     jid = c.submit_beast(_pkg(tmp_path, "j1"), "job one")
     assert c.claim(ns, ["beast"]) is None
     assert c.claim(nf, ["beast"])["id"] == jid
-    later = "2026-11-03T09:00:00"                                            # the clock has only second resolution
+    con = c.connect()                                                        # the clock has only second resolution,
+    try:                                                                     # so the release is given a time a minute on
+        created = con.execute("SELECT created FROM cluster_job WHERE id=?", (jid,)).fetchone()["created"]
+    finally:
+        con.close()
+    later = (datetime.fromisoformat(created) + timedelta(minutes=1)).isoformat(timespec="seconds")
     monkeypatch.setattr(c, "_now", lambda: later)
     con = c.connect()                                                        # the fast machine gives it back
     try:
