@@ -1410,3 +1410,13 @@ def test_first_refusal_does_not_hold_work_for_a_machine_that_is_already_full(tmp
     assert c.claim(nf, ["beast"], metrics=idle)["label"] == "job one"              # the fast one fills its budget
     c.submit_beast(_pkg(tmp_path, "j2"), "job two")
     assert c.claim(ns, ["beast"])["label"] == "job two"                            # and the second goes elsewhere at once
+
+
+def test_a_machine_committed_past_its_cores_is_not_idle(tmp_path, monkeypatch):
+    """BEAST waits on memory more than on cores, so a machine running nine chains on 64 cores still measures about 20%
+    CPU. Taken as idle, it kept being handed more work while two other machines stood empty."""
+    from genomecurator import cluster as cl
+    idle = {"cpu_pct": 21.5, "mem_total": 256 * 2**30, "mem_used": 40 * 2**30}
+    assert cl._really_idle(idle, 64, 3, 36) is True            # room inside the cores: may take one more
+    assert cl._really_idle(idle, 64, 5, 60) is True
+    assert cl._really_idle(idle, 64, 6, 72) is False           # already past them: not idle, whatever the CPU says

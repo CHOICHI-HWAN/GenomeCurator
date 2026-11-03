@@ -733,7 +733,7 @@ EXTRA_MEM_GB = float(os.environ.get("GC_CLUSTER_EXTRA_MEM_GB", "8"))   # memory 
 MAX_EXTRA = int(os.environ.get("GC_CLUSTER_MAX_EXTRA", "6"))     # at most this many jobs beyond what the core budget allows
 
 
-def _really_idle(metrics: dict, cpus: int, running: int) -> bool:
+def _really_idle(metrics: dict, cpus: int, running: int, threads: int = 0) -> bool:
     """Does this machine have room beyond its core budget?
 
     The budget assumes a job uses the threads it asked for, and BEAST on a long alignment often does not - it waits on memory
@@ -742,6 +742,11 @@ def _really_idle(metrics: dict, cpus: int, running: int) -> bool:
     CPU only makes each job slower, while an oversubscribed memory makes the machine swap or the job die. A machine that reports
     no memory is not given extra work, because there is then nothing to check."""
     if running >= max(1, (cpus - RESERVE_CPUS) // DEFAULT_THREADS) + MAX_EXTRA:
+        return False
+    # A machine already committed to more threads than it has cores is not idle, whatever it measures. BEAST waits on
+    # memory bandwidth, so nine chains on 64 cores still reported 21% CPU and the machine kept being handed more while
+    # two others stood empty - and each chain then took three times as long as it had with three.
+    if threads and threads >= cpus:
         return False
     busy = metrics.get("cpu_pct")
     if busy is None:
@@ -803,7 +808,7 @@ def claim(node: dict, kinds: list[str] | None = None, metrics: dict | None = Non
         used = sum(int(x.get("threads") or DEFAULT_THREADS) for x in running)
         free = (cpus - RESERVE_CPUS - used) if cpus else (0 if running else DEFAULT_THREADS)
         met = metrics if metrics is not None else json.loads(con.execute("SELECT metrics_json FROM cluster_node WHERE id=?", (node["id"],)).fetchone()[0] or "{}")
-        spare = _really_idle(met, cpus, len(running))
+        spare = _really_idle(met, cpus, len(running), used)
         if running and free < 1 and not spare:
             con.commit()
             return None                     # this worker's cores are taken
