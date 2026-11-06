@@ -36,6 +36,58 @@ REPO = "https://github.com/nextstrain/mpox"
 RESERVED = {"inputs", "additional_inputs", "private_metadata", "private_sequences", "use_remote_files", "build_name", "auspice_name", "strain_id_field"}
 _viewer: subprocess.Popen | None = None
 
+# ------------------------------------------------------------------------------------------------ one workflow per virus
+# Each virus has its own Nextstrain repository, its own checkout and its own builds; the analyses differ far too much
+# between viruses to share one. A virus is matched by the first word of its watchlist taxon (genus), so a new member of a
+# genus already here needs no change. `layout` says where a build's defaults live:
+#   "per_build" - defaults/<build>/config.yaml, one folder per build          (nextstrain/mpox)
+#   "single"    - defaults/config.yaml holds every build and `builds:` chooses (nextstrain/ebola)
+# `species` is the input key the workflow splits its inputs by (ebola carries ebov / bdbv / sudv in one workflow).
+WORKFLOWS: dict[str, dict] = {
+    "mpox": {"repo": "https://github.com/nextstrain/mpox", "dir": "mpox", "layout": "per_build",
+             "genera": ("Orthopoxvirus",), "default_build": "mpxv", "builds": ("mpxv", "hmpxv1", "clade-i")},
+    "ebola": {"repo": "https://github.com/nextstrain/ebola", "dir": "ebola", "layout": "single",
+              "genera": ("Orthoebolavirus",), "default_build": "bdbv/drc-uganda-2026", "builds": (),
+              "species": {"bundibugyoense": "bdbv", "zairense": "ebov", "sudanense": "sudv"}},
+}
+DEFAULT_WORKFLOW = "mpox"
+
+
+def taxon_of(watch_id: int | None) -> str:
+    if not watch_id:
+        return ""
+    con = connect()
+    try:
+        r = con.execute("SELECT name, taxon FROM watchlist WHERE id=?", (watch_id,)).fetchone()
+        return (r["taxon"] or r["name"] or "") if r else ""
+    finally:
+        con.close()
+
+
+def workflow_for(watch_id: int | None = None, taxon: str = "") -> str:
+    """The workflow registered for this virus's genus, or "" when none is: a virus nobody has wired up must not quietly
+    borrow another virus's workflow, because the builds, the columns and the reference would all be the wrong ones."""
+    taxon = taxon or taxon_of(watch_id)
+    words = taxon.strip().split()
+    genus = words[0] if words else ""
+    return next((key for key, w in WORKFLOWS.items() if genus in w["genera"]), "")
+
+
+def workflow_key(watch_id: int | None = None, taxon: str = "") -> str:
+    """Like workflow_for, but falling back to the mpox workflow, for the paths that have always assumed it (reference files, clade definitions)."""
+    return workflow_for(watch_id, taxon) or DEFAULT_WORKFLOW
+
+
+def spec(wf: str | None = None) -> dict:
+    return WORKFLOWS[wf or DEFAULT_WORKFLOW]
+
+
+def species_of(wf: str | None = None, taxon: str = "") -> str:
+    """The workflow's own species key for this taxon (ebola: bdbv / ebov / sudv), or "" when the workflow has none."""
+    sp = spec(wf).get("species") or {}
+    words = (taxon or "").strip().split()
+    return sp.get(words[-1].lower(), "") if words else ""
+
 
 # ------------------------------------------------------------------------------------------------ places and tools
 def env_name() -> str:
@@ -46,12 +98,16 @@ def auspice_port() -> int:
     return int(os.environ.get("GC_AUSPICE_PORT", "4040"))
 
 
-def checkout_dir() -> Path:
-    return Path(os.environ.get("GC_NEXTSTRAIN_DIR") or (config.DATA_DIR / "nextstrain" / "mpox")).expanduser()
+def checkout_dir(wf: str | None = None) -> Path:
+    """Where this virus's workflow repository is checked out. `GC_NEXTSTRAIN_DIR_<KEY>` overrides one virus,
+    `GC_NEXTSTRAIN_DIR` the mpox one (it predates the per-virus workflows)."""
+    key = wf or DEFAULT_WORKFLOW
+    env = os.environ.get(f"GC_NEXTSTRAIN_DIR_{key.upper()}") or (os.environ.get("GC_NEXTSTRAIN_DIR") if key == DEFAULT_WORKFLOW else "")
+    return Path(env or (config.DATA_DIR / "nextstrain" / spec(key)["dir"])).expanduser()
 
 
-def workflow_dir() -> Path:
-    return checkout_dir() / "phylogenetic"
+def workflow_dir(wf: str | None = None) -> Path:
+    return checkout_dir(wf) / "phylogenetic"
 
 
 def auspice_dir() -> Path:
@@ -111,8 +167,8 @@ def tool_versions() -> dict:
             "nextclade": _version(["nextclade", "--version"]), "iqtree": _version(["iqtree", "--version"]).split(" built")[0], "auspice": _version(["auspice", "--version"])}
 
 
-def workflow_commit() -> str:
-    d = checkout_dir()
+def workflow_commit(wf: str | None = None) -> str:
+    d = checkout_dir(wf)
     if not (d / ".git").exists():
         return ""
     try:
@@ -121,40 +177,57 @@ def workflow_commit() -> str:
         return ""
 
 
-def status() -> dict:
+def builds_available(wf: str | None = None) -> list[str]:
+    """The builds the checkout actually offers: a folder per build, or the `builds:` list of the one defaults/config.yaml."""
+    d = workflow_dir(wf) / "defaults"
+    if not d.exists():
+        return []
+    if spec(wf)["layout"] == "single":
+        f = d / "config.yaml"
+        if not f.exists():
+            return []
+        cfg = _yaml().safe_load(f.read_text(encoding="utf-8")) or {}
+        return sorted(str(b) for b in (cfg.get("builds") or []))
+    return sorted(p.name for p in d.iterdir() if (p / "config.yaml").exists())
+
+
+def status(wf: str | None = None) -> dict:
+    key = wf or DEFAULT_WORKFLOW
     pre = env_prefix()
-    wf = workflow_dir()
+    d = workflow_dir(key)
     return {"env": {"name": env_name(), "ok": bool(pre), "prefix": str(pre) if pre else "",
                     "how": f"mamba env create -f nextstrain/environment.yml   (환경 이름 {env_name()})"},
-            "workflow": {"dir": str(checkout_dir()), "ok": (wf / "Snakefile").exists(), "commit": workflow_commit(), "repo": REPO,
-                         "builds": sorted(p.name for p in (wf / "defaults").iterdir() if (p / "config.yaml").exists()) if (wf / "defaults").exists() else []},
+            "workflow": {"dir": str(checkout_dir(key)), "ok": (d / "Snakefile").exists(), "commit": workflow_commit(key), "repo": spec(key)["repo"],
+                         "key": key, "builds": builds_available(key)},
             "viewer": viewer_status(), "docker": bool(shutil.which("docker"))}
 
 
-def clone_workflow(progress=None) -> dict:
-    """git clone --depth 1 of nextstrain/mpox into the checkout folder (or a fast-forward pull when it is there)."""
+def clone_workflow(progress=None, wf: str | None = None) -> dict:
+    """git clone --depth 1 of this virus's workflow repository into its own checkout folder (or a fast-forward pull when it is there)."""
     p = progress or (lambda *a: None)
-    d = checkout_dir()
+    key = wf or DEFAULT_WORKFLOW
+    repo = spec(key)["repo"]
+    d = checkout_dir(key)
     git = shutil.which("git") or str((env_prefix() or Path("/x")) / "bin" / "git")
     if (d / ".git").exists():
         p(20, "워크플로 저장소를 업데이트하는 중…")
         r = subprocess.run([git, "-C", str(d), "pull", "--ff-only"], capture_output=True, text=True, timeout=600)
     else:
         if d.exists() and any(d.iterdir()):
-            raise RuntimeError(f"{d} 이(가) 비어 있지 않습니다. 비우거나 GC_NEXTSTRAIN_DIR로 다른 위치를 정하세요.")
+            raise RuntimeError(f"{d} 이(가) 비어 있지 않습니다. 비우거나 GC_NEXTSTRAIN_DIR_{key.upper()}로 다른 위치를 정하세요.")
         d.parent.mkdir(parents=True, exist_ok=True)
-        p(20, f"{REPO} 를 받는 중…")
-        r = subprocess.run([git, "clone", "--depth", "1", REPO, str(d)], capture_output=True, text=True, timeout=900)
+        p(20, f"{repo} 를 받는 중…")
+        r = subprocess.run([git, "clone", "--depth", "1", repo, str(d)], capture_output=True, text=True, timeout=900)
     if r.returncode != 0:
         raise RuntimeError(f"git 실패: {(r.stderr or r.stdout).strip()[-300:]}")
     con = connect()
     try:
-        audit(con, "nextstrain_workflow", f"{REPO} @ {workflow_commit()} -> {d}")
+        audit(con, "nextstrain_workflow", f"{repo} @ {workflow_commit(key)} -> {d}")
         con.commit()
     finally:
         con.close()
-    p(100, f"워크플로 {workflow_commit()}")
-    return {"dir": str(d), "commit": workflow_commit()}
+    p(100, f"워크플로 {workflow_commit(key)}")
+    return {"dir": str(d), "commit": workflow_commit(key), "key": key}
 
 
 # ------------------------------------------------------------------------------------------------ the dataset's own settings
@@ -197,8 +270,22 @@ def _deep(a: dict, b: dict) -> dict:
     return out
 
 
-def default_config(build: str) -> dict:
-    f = workflow_dir() / "defaults" / (build or "mpxv") / "config.yaml"
+def defaults_config_path(build: str, wf: str | None = None) -> Path:
+    """The workflow's own config that must be passed before the overlay (the Snakefile loads it only when no config is given)."""
+    d = workflow_dir(wf) / "defaults"
+    return (d / "config.yaml") if spec(wf)["layout"] == "single" else (d / (build or spec(wf)["default_build"]) / "config.yaml")
+
+
+def auspice_stem(build: str, run_name: str, wf: str | None = None) -> str:
+    """What the workflow calls its Auspice output. The mpox workflow takes the run's name (`auspice_name`); the ebola one
+    names it after the build it was asked for (`auspice/ebola_<species>_<build>.json`) and has no such setting."""
+    if spec(wf)["layout"] != "single":
+        return run_name
+    return f"{spec(wf)['dir']}_{(build or spec(wf)['default_build']).replace('/', '_')}"
+
+
+def default_config(build: str, wf: str | None = None) -> dict:
+    f = defaults_config_path(build, wf)
     if not f.exists():
         return {}
     return _yaml().safe_load(f.read_text(encoding="utf-8")) or {}
@@ -206,9 +293,16 @@ def default_config(build: str) -> dict:
 
 def merged_config(ds: dict, run_name: str = "<실행 이름>") -> dict:
     """What the workflow will effectively run with: the build's defaults, then the dataset's inputs, then its own settings."""
-    base = default_config(ds.get("build"))
+    wf = workflow_key(ds.get("watch_id"))
+    base = default_config(ds.get("build"), wf)
     inputs = {"use_remote_files": False, "inputs": [{"name": "genomecurator", "metadata": "data/genomecurator/metadata.tsv", "sequences": "data/genomecurator/sequences.fasta"}],
               "build_name": run_name, "auspice_name": run_name}
+    if spec(wf)["layout"] == "single":                                   # one config holds every build: pick this one, and the input needs its species
+        inputs["builds"] = [ds.get("build") or spec(wf)["default_build"]]
+        sp = species_of(wf, datasets_virus_name(ds))
+        if sp:
+            inputs["inputs"][0]["species"] = sp
+            inputs["inputs"][0]["id_field"] = "accession"
     if ds.get("include_private"):
         inputs.update(private_metadata="data/genomecurator/metadata-private.tsv", private_sequences="data/genomecurator/sequences-private.fasta")
     return _deep(_deep(base, inputs), parse_params(ds.get("params_yaml", "")))
@@ -353,14 +447,18 @@ def run(ds: dict, runtime: str = "ambient", cores: int | None = None, force: boo
     """One analysis of the dataset. Raises with the reason when something is missing; a run with the same members / settings / workflow as a finished
     one is not repeated unless force. Returns the run record."""
     p = progress or (lambda *a: None)
-    st = status()
+    wfk = workflow_for(ds.get("watch_id"))                   # this virus's own workflow: its own checkout, builds and output names
+    if not wfk:
+        raise RuntimeError(f"{taxon_of(ds.get('watch_id')) or '이 바이러스'}에 연결된 Nextstrain 워크플로가 없습니다. "
+                           f"nextstrain.WORKFLOWS에 저장소와 빌드를 등록하세요 (지금 있는 것: {', '.join(WORKFLOWS)}).")
+    st = status(wfk)
     if not st["env"]["ok"]:
         raise RuntimeError(f"Nextstrain 환경({env_name()})이 없습니다. 먼저: {st['env']['how']}")
     if not st["workflow"]["ok"]:
         raise RuntimeError(f"워크플로 저장소가 없습니다({st['workflow']['dir']}). Nextstrain 탭의 '워크플로 받기'를 누르세요.")
     if runtime not in ("ambient", "docker"):
         raise ValueError("runtime은 ambient 또는 docker입니다.")
-    build = ds.get("build") or "mpxv"
+    build = ds.get("build") or spec(wfk)["default_build"]
     if build not in st["workflow"]["builds"]:
         raise ValueError(f"워크플로에 빌드 `{build}`가 없습니다 (있는 것: {', '.join(st['workflow']['builds'])}).")
     params = parse_params(ds.get("params_yaml", ""))
@@ -409,12 +507,12 @@ def run(ds: dict, runtime: str = "ambient", cores: int | None = None, force: boo
             con.close()
     try:
         p(5, "입력과 설정을 워크플로 폴더에 쓰는 중…")
-        res = export.write(ds["watch_id"], None, "nextstrain", lambda pct, m: p(5 + pct * 0.1, m), nextstrain_dir=workflow_dir(), dataset=ds, run_name=name,
-                           extra_config=ds.get("params_yaml", ""))
+        res = export.write(ds["watch_id"], None, "nextstrain", lambda pct, m: p(5 + pct * 0.1, m), nextstrain_dir=workflow_dir(wfk), dataset=ds, run_name=name,
+                           extra_config=ds.get("params_yaml", ""), workflow=wfk)
         (rdir / "members.txt").write_text("\n".join(members) + "\n", encoding="utf-8")
         cfg_overlay = Path(res["config"])
-        wf = workflow_dir()
-        cmd = ["nextstrain", "build", f"--{runtime}", ".", "--configfile", f"defaults/{build}/config.yaml", str(cfg_overlay.relative_to(wf)),
+        wf = workflow_dir(wfk)
+        cmd = ["nextstrain", "build", f"--{runtime}", ".", "--configfile", str(defaults_config_path(build, wfk).relative_to(wf)), str(cfg_overlay.relative_to(wf)),
                "--cores", str(cores or os.cpu_count() or 4), "--forceall"]
         logf = open(logp, "w", encoding="utf-8")
         logf.write("$ " + " ".join(cmd) + f"\n(in {wf})\n")
@@ -446,7 +544,7 @@ def run(ds: dict, runtime: str = "ambient", cores: int | None = None, force: boo
         if code != 0:
             tail = "".join(logp.read_text(encoding="utf-8").splitlines(True)[-25:])
             raise RuntimeError(f"워크플로가 실패했습니다 (종료 코드 {code}). 로그 끝부분:\n{tail}")
-        src = wf / "auspice" / f"{name}.json"
+        src = wf / "auspice" / f"{auspice_stem(build, name, wfk)}.json"
         if not src.exists():
             raise RuntimeError(f"결과 파일이 없습니다: {src}")
         p(96, "결과를 보관하는 중…")
@@ -456,7 +554,7 @@ def run(ds: dict, runtime: str = "ambient", cores: int | None = None, force: boo
         if custom and Path(str(custom)).exists() and "# Lineages of sh2023" in Path(str(custom)).read_text(encoding="utf-8"):
             from . import cladedefs                                              # the workflow's renaming script reads Ib lineages as hMPXV-1 ones: put the labels right
             cladedefs.fix_auspice(auspice_dir() / f"{name}.json")
-        root = wf / "auspice" / f"{name}_root-sequence.json"
+        root = wf / "auspice" / f"{auspice_stem(build, name, wfk)}_root-sequence.json"
         if root.exists():
             shutil.copy2(root, auspice_dir() / f"{name}_root-sequence.json")
         gd = wf / "data" / "genomecurator"
@@ -469,7 +567,7 @@ def run(ds: dict, runtime: str = "ambient", cores: int | None = None, force: boo
             shutil.copy2(rc, rdir / "run_config.yaml")
         (rdir / "versions.json").write_text(json.dumps({"tools": versions, "workflow_commit": commit, "runtime": runtime, "build": build}, indent=2), encoding="utf-8")
         shutil.rmtree(wf / "results" / name, ignore_errors=True)             # intermediate files of this run; the kept results are what matter
-        for f in (wf / "auspice").glob(f"{name}*"):
+        for f in (wf / "auspice").glob(f"{auspice_stem(build, name, wfk)}*"):
             f.unlink(missing_ok=True)
         finish("done", auspice=f"{name}.json")
         p(100, "분석 완료")

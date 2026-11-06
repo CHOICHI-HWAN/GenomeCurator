@@ -401,7 +401,7 @@ def exports_dir() -> Path:
 
 
 def write(watch_id: int, out_dir: Path | None = None, profile: str = "nextstrain", progress=None, nextstrain_dir: Path | None = None, include_private: bool = False, dataset: dict | None = None,
-          run_name: str | None = None, extra_config: str = "", **filters) -> dict:
+          run_name: str | None = None, extra_config: str = "", workflow: str | None = None, **filters) -> dict:
     """Write metadata.tsv, sequences.fasta, manifest.json and nextstrain-config.yaml. Default folder: data/exports/<virus>/<timestamp>/.
     With nextstrain_dir (the `phylogenetic/` folder of a nextstrain/mpox checkout) the files go to <it>/data/genomecurator/ and the config to
     <it>/build-configs/genomecurator/config.yaml with paths relative to that folder - the form that also works inside the Docker runtime.
@@ -418,7 +418,7 @@ def write(watch_id: int, out_dir: Path | None = None, profile: str = "nextstrain
     stamp = datetime.now().strftime("%Y%m%d-%H%M%S")
     ns = Path(nextstrain_dir).expanduser() if nextstrain_dir else None
     if ns and not (ns / "Snakefile").exists():
-        raise ValueError(f"{ns}에 Snakefile이 없습니다. nextstrain/mpox 저장소의 phylogenetic/ 폴더를 지정하세요.")
+        raise ValueError(f"{ns}에 Snakefile이 없습니다. Nextstrain 워크플로 저장소의 phylogenetic/ 폴더를 지정하세요.")
     sub = ([slug(dataset["name"])] if dataset else []) + [stamp]
     out = (ns / "data" / "genomecurator") if ns else (Path(out_dir) if out_dir else exports_dir() / slug(w["name"]) / Path(*sub))
     out.mkdir(parents=True, exist_ok=True)
@@ -502,13 +502,16 @@ def write(watch_id: int, out_dir: Path | None = None, profile: str = "nextstrain
                             "Cite the original submitters and sources (NCBI, Pathoplexus, BV-BRC); see docs/LICENSES.md."
                             + (" metadata-private.tsv / sequences-private.fasta hold PRIVATE genomes: do not share or publish them." if priv else "")}
     (out / "manifest.json").write_text(json.dumps(manifest, indent=2, ensure_ascii=False) + "\n", encoding="utf-8")
+    from . import nextstrain as _ns
+    wfk = workflow or _ns.workflow_key(watch_id)
+    sp = _ns.species_of(wfk, w["name"])
     if ns:
         cfg_path = ns / "build-configs" / "genomecurator" / "config.yaml"
         cfg_path.parent.mkdir(parents=True, exist_ok=True)
-        cfg = nextstrain_config(out, profile, relative_to=ns, private=bool(priv), build=(dataset or {}).get("build"), run_name=run_name, extra=extra_config)
+        cfg = nextstrain_config(out, profile, relative_to=ns, private=bool(priv), build=(dataset or {}).get("build"), run_name=run_name, extra=extra_config, workflow=wfk, species=sp)
     else:
         cfg_path = out / "nextstrain-config.yaml"
-        cfg = nextstrain_config(out, profile, private=bool(priv), build=(dataset or {}).get("build"), run_name=run_name, extra=extra_config)
+        cfg = nextstrain_config(out, profile, private=bool(priv), build=(dataset or {}).get("build"), run_name=run_name, extra=extra_config, workflow=wfk, species=sp)
     cfg_path.write_text(cfg, encoding="utf-8")
     con = connect()
     try:
@@ -526,9 +529,15 @@ def write(watch_id: int, out_dir: Path | None = None, profile: str = "nextstrain
 
 
 def nextstrain_config(out: Path, profile: str = "nextstrain", relative_to: Path | None = None, private: bool = False, build: str | None = None,
-                      run_name: str | None = None, extra: str = "") -> str:
-    """A config *overlay* for the Nextstrain mpox workflow: only `inputs` (local files instead of data.nextstrain.org) and use_remote_files.
-    The workflow's Snakefile loads its own defaults/<build>/config.yaml only when no config is given, so pass the build's defaults first."""
+                      run_name: str | None = None, extra: str = "", workflow: str | None = None, species: str = "") -> str:
+    """A config *overlay* for the virus's Nextstrain workflow: only `inputs` (local files instead of data.nextstrain.org) and use_remote_files.
+    The workflow's Snakefile loads its own defaults only when no config is given, so pass those defaults first.
+    `workflow` is the key in nextstrain.WORKFLOWS; workflows that keep every build in one defaults/config.yaml (ebola) get a `builds:` list and
+    a per-input species instead of the mpox workflow's build_name / auspice_name / strain_id_field."""
+    from . import nextstrain                                              # imported here: export is the lower layer of the two
+    if nextstrain.spec(workflow)["layout"] == "single":
+        return _nextstrain_config_single(out, profile, relative_to, build, extra, workflow, species)
+
     def path(name: str) -> str:
         f = out / name
         return (f.relative_to(relative_to) if relative_to else f).as_posix()
@@ -549,6 +558,32 @@ def nextstrain_config(out: Path, profile: str = "nextstrain", relative_to: Path 
             f"inputs:\n  - name: genomecurator\n    metadata: \"{path('metadata.tsv')}\"\n    sequences: \"{path('sequences.fasta')}\"\n"
             + (f"strain_id_field: \"{idc}\"\n" if idc != "PPX_accession" else "")
             + (f"# one build per analysis run: its own results folder and its own Auspice dataset name\nbuild_name: \"{run_name}\"\nauspice_name: \"{run_name}\"\n" if run_name else "")
+            + (f"# --- this dataset's own Nextstrain settings (Nextstrain tab) ---\n{extra.rstrip()}\n" if extra and extra.strip() else ""))
+
+
+def _nextstrain_config_single(out: Path, profile: str, relative_to: Path | None, build: str | None, extra: str, workflow: str | None, species: str) -> str:
+    """The overlay for a workflow that keeps every build in one `defaults/config.yaml` and picks them with `builds:` (nextstrain/ebola).
+    Replacing `inputs` drops the workflow's own S3 inputs, so only the genomes curated here are read; `builds` keeps the run to the one build
+    asked for, because that config defines the others too. This workflow has no build_name / auspice_name: it names its output after the build."""
+    from . import nextstrain
+    wfs = nextstrain.spec(workflow)
+    b = build or wfs["default_build"]
+
+    def path(name: str) -> str:
+        f = out / name
+        return (f.relative_to(relative_to) if relative_to else f).as_posix()
+    cfgp = "build-configs/genomecurator/config.yaml" if relative_to else str(out / "nextstrain-config.yaml")
+    return (f"# Overlay for {wfs['repo']} (phylogenetic/). Run the workflow's own defaults FIRST, then this file:\n"
+            f"#   cd phylogenetic\n"
+            f"#   nextstrain build . --configfile defaults/config.yaml {cfgp}\n"
+            f"# (that one config defines every build; `builds` below keeps this run to the build chosen for this dataset)\n"
+            f"# Inputs replace the published S3 inputs, so only the genomes curated here are read; nothing is downloaded.\n"
+            f"{'' if relative_to else '# Absolute paths do not exist inside the Docker runtime: use --nextstrain-dir to write into the checkout, or run with --ambient/--conda.' + chr(10)}"
+            f"builds:\n  - {b}\n"
+            f"inputs:\n  - name: genomecurator\n"
+            + (f"    species: {species}\n" if species else "")
+            + f"    metadata: \"{path('metadata.tsv')}\"\n    sequences: \"{path('sequences.fasta')}\"\n"
+            f"    id_field: {PROFILES[profile]['id']}\n"
             + (f"# --- this dataset's own Nextstrain settings (Nextstrain tab) ---\n{extra.rstrip()}\n" if extra and extra.strip() else ""))
 
 

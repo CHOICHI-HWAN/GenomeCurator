@@ -591,7 +591,7 @@ def create_app(scheduler: bool = True) -> FastAPI:
     def datasets_page(request: Request, watch: int = 0):
         watches = _rows("SELECT id, name FROM watchlist ORDER BY name")
         wid = watch or next((w["id"] for w in watches if "monkeypox" in w["name"].lower()), watches[0]["id"] if watches else 0)
-        return render(request, "datasets.html", nav="ds", watches=watches, wid=wid, builds=datasets.BUILDS)
+        return render(request, "datasets.html", nav="ds", watches=watches, wid=wid, builds=datasets.builds_for(wid))
 
     @app.get("/api/datasets")
     def api_datasets(watch: int = 0):
@@ -750,14 +750,16 @@ def create_app(scheduler: bool = True) -> FastAPI:
         return render(request, "nextstrain.html", nav="ns", watches=watches, wid=wid, dsid=ds["id"] if ds else 0)
 
     @app.get("/api/nextstrain/status")
-    def api_ns_status():
-        return {**nextstrain.status(), "squirrel": squirrel.status(), "mutprofile": mutprofile.status()}
+    def api_ns_status(watch: int = 0):
+        wf = nextstrain.workflow_key(watch or None)                     # each virus has its own workflow checkout and builds
+        return {**nextstrain.status(wf), "squirrel": squirrel.status(), "mutprofile": mutprofile.status()}
 
     @app.post("/api/nextstrain/clone")
-    def api_ns_clone(request: Request):
+    def api_ns_clone(request: Request, watch: int = 0):
         if not _same_origin(request):
             return JSONResponse({"error": "cross-site request refused"}, 403)
-        return start_job(lambda p: {"redirect": "/nextstrain", "result": nextstrain.clone_workflow(p)}, "Nextstrain 워크플로 받기", "nextstrain")
+        wf = nextstrain.workflow_key(watch or None)
+        return start_job(lambda p: {"redirect": "/nextstrain", "result": nextstrain.clone_workflow(p, wf)}, "Nextstrain 워크플로 받기", "nextstrain")
 
     @app.post("/api/nextstrain/viewer/{action}")
     def api_ns_viewer(request: Request, action: str):
@@ -780,7 +782,7 @@ def create_app(scheduler: bool = True) -> FastAPI:
             merged = nextstrain.merged_config(ds)
             import yaml
             merged_text = yaml.safe_dump(merged, allow_unicode=True, sort_keys=False)
-            defaults_text = yaml.safe_dump(nextstrain.default_config(ds.get("build")), allow_unicode=True, sort_keys=False)
+            defaults_text = yaml.safe_dump(nextstrain.default_config(ds.get("build"), nextstrain.workflow_key(ds.get("watch_id"))), allow_unicode=True, sort_keys=False)
             psha = nextstrain.params_sha(ds.get("params_yaml", ""))
         except ValueError as e:
             merged_text = defaults_text = psha = ""

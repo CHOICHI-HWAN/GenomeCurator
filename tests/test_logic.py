@@ -4184,3 +4184,60 @@ def test_the_model_comparison_does_not_trade_the_reliable_estimator_for_one_more
 
     only_ss = {k: {"ss": v["ss"]} for k, v in res.items()}             # with no GSS at all it still ranks on what it has
     assert compare_models(only_ss)["estimator"] == "ss"
+
+
+# ---------------------------------------------------------------------------------------------- one workflow per virus
+def test_each_virus_gets_its_own_nextstrain_workflow(tmp_path, monkeypatch):
+    """A virus is routed to its own workflow repository by genus; the two layouts (a folder per build, or one config holding
+    every build) are read and invoked differently, and a virus with no workflow registered must not borrow another one's."""
+    from genomecurator import config, nextstrain as ns, datasets as dsmod, export as exp
+    from genomecurator.db import connect
+    monkeypatch.setattr(config, "DB_PATH", tmp_path / "g.db")
+    monkeypatch.setattr(config, "DATA_DIR", tmp_path)
+    con = connect()
+    con.execute("INSERT INTO watchlist(id,name,taxon,taxon_id) VALUES(1,'Mpox','Orthopoxvirus monkeypox',1),"
+                "(2,'BDBV','Orthoebolavirus bundibugyoense',2),(3,'Nipah','Henipavirus nipahense',3)")
+    con.commit()
+    con.close()
+
+    assert ns.workflow_for(1) == "mpox" and ns.workflow_for(2) == "ebola"
+    assert ns.workflow_for(3) == ""                                    # nothing registered: no silent fall back to mpox
+    assert ns.workflow_key(3) == "mpox"                                # the older helpers keep their default
+    assert ns.checkout_dir("mpox") != ns.checkout_dir("ebola")         # separate checkouts, never one shared folder
+
+    # the two layouts: mpox keeps a folder per build, ebola one config.yaml that lists them
+    for key, build in (("mpox", "clade-i"), ("ebola", "bdbv/drc-uganda-2026")):
+        d = ns.workflow_dir(key) / "defaults"
+        d.mkdir(parents=True)
+        (ns.workflow_dir(key) / "Snakefile").write_text("", encoding="utf-8")
+        if key == "mpox":
+            for b in (build, "mpxv"):
+                (d / b).mkdir()
+                (d / b / "config.yaml").write_text("a: 1\n", encoding="utf-8")
+        else:
+            (d / "config.yaml").write_text("builds:\n  - bdbv/drc-uganda-2026\n  - ebov/all-outbreaks\n", encoding="utf-8")
+
+    assert ns.builds_available("mpox") == ["clade-i", "mpxv"]
+    assert ns.builds_available("ebola") == ["bdbv/drc-uganda-2026", "ebov/all-outbreaks"]
+    assert dsmod.builds_for(2) == ("bdbv/drc-uganda-2026", "ebov/all-outbreaks")
+    assert ns.defaults_config_path("clade-i", "mpox").parent.name == "clade-i"
+    assert ns.defaults_config_path("bdbv/drc-uganda-2026", "ebola").name == "config.yaml"
+
+    # the output name: the mpox workflow is told what to call it, the ebola one names it after the build
+    assert ns.auspice_stem("clade-i", "my-run", "mpox") == "my-run"
+    assert ns.auspice_stem("bdbv/drc-uganda-2026", "my-run", "ebola") == "ebola_bdbv_drc-uganda-2026"
+
+    # the overlay: ebola needs the species and the build, and has no build_name / auspice_name to set
+    cfg = exp.nextstrain_config(tmp_path / "data" / "genomecurator", "nextstrain", relative_to=tmp_path,
+                                build="bdbv/drc-uganda-2026", run_name="my-run", workflow="ebola", species="bdbv")
+    assert "builds:\n  - bdbv/drc-uganda-2026\n" in cfg and "species: bdbv" in cfg
+    assert "build_name" not in cfg and "auspice_name" not in cfg
+    assert ns.species_of("ebola", "Orthoebolavirus zairense") == "ebov" and ns.species_of("mpox", "Orthopoxvirus monkeypox") == ""
+
+    mcfg = exp.nextstrain_config(tmp_path / "data" / "genomecurator", "nextstrain", relative_to=tmp_path,
+                                 build="clade-i", run_name="my-run", workflow="mpox")
+    assert "--configfile defaults/clade-i/config.yaml" in mcfg and 'build_name: "my-run"' in mcfg and "builds:" not in mcfg
+
+    # a virus with no workflow is refused with a reason, not run against the wrong one
+    with _pytest.raises(RuntimeError, match="워크플로가 없습니다"):
+        ns.run({"watch_id": 3, "build": "", "name": "x", "id": 1, "rules": {}})

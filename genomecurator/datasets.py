@@ -17,7 +17,15 @@ from .db import audit, connect
 
 RULE_LISTS = ("clade", "lineage", "outbreak", "region", "country", "host", "completeness", "qc_not")
 RULE_NUMS = ("year_min", "year_max", "min_length", "max_length")
-BUILDS = ("mpxv", "hmpxv1", "clade-i")        # which nextstrain/mpox default config the exported overlay suggests
+BUILDS = ("mpxv", "hmpxv1", "clade-i")        # the mpox workflow's builds; builds_for() gives the list for any virus
+
+
+def builds_for(watch_id: int | None = None) -> tuple[str, ...]:
+    """The builds this virus's own Nextstrain workflow offers - read from its checkout when it is there, otherwise the known list.
+    Each virus has its own workflow (nextstrain.WORKFLOWS), so the choices differ between viruses."""
+    from . import nextstrain
+    wf = nextstrain.workflow_key(watch_id)
+    return tuple(nextstrain.builds_available(wf)) or tuple(nextstrain.spec(wf)["builds"])
 PRESETS = {
     "orthopoxvirus monkeypox": [
         {"name": "clade Ib", "build": "clade-i", "rules": {"clade": ["Ib"]}},
@@ -107,8 +115,9 @@ def save(watch_id: int, name: str, rules: dict | None = None, description: str =
     name = (name or "").strip()
     if not name:
         raise ValueError("데이터셋 이름이 필요합니다.")
-    if build and build not in BUILDS:
-        raise ValueError(f"빌드는 {', '.join(BUILDS)} 중 하나입니다.")
+    allowed = builds_for(watch_id)
+    if build and build not in allowed:
+        raise ValueError(f"빌드는 {', '.join(allowed)} 중 하나입니다.")
     clean = lambda xs: [str(x).strip() for x in (xs or []) if str(x).strip()]
     con = connect()
     try:
