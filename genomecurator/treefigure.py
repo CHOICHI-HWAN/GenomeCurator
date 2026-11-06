@@ -21,7 +21,7 @@ import datetime
 import re
 from pathlib import Path
 
-from . import repro
+from . import decimalyear, repro
 
 LINEAGE_COLORS = ["#3b78b0", "#d1603d", "#5b9e55", "#8a5fa8", "#c9a227", "#2f9aa0"]
 COUNTRY_COLORS = ["#8d8d8d", "#4daf4a", "#377eb8", "#984ea3", "#e41a1c", "#ff9f1a", "#a65628", "#17becf", "#bcbd22", "#f781bf", "#1b9e8f", "#aec7e8", "#7f7fff", "#ff7f7f"]
@@ -159,8 +159,7 @@ def _leaves(d, out):
 
 
 def ym(x: float) -> str:
-    y = int(x)
-    d = datetime.date(y, 1, 1) + datetime.timedelta(days=round((x - y) * 365.25))
+    d = decimalyear.calendar(x)
     return f"{d.year}-{d.month:02d}"
 
 

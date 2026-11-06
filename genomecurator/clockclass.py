@@ -13,7 +13,7 @@ from datetime import date
 
 import numpy as np
 
-from . import insight, lineages, outbreak
+from . import decimalyear, insight, lineages, outbreak
 
 
 def _tip_rows(run: dict) -> list[dict]:
@@ -37,7 +37,7 @@ def _tip_rows(run: dict) -> list[dict]:
                 kind, _wk, _mo, shown = lineages.parse_date(g["date"])
                 if kind == "day":
                     y, m, d = (int(x) for x in shown.split("-"))
-                    rows.append({"id": n["name"], "t": y + (date(y, m, d).timetuple().tm_yday - 0.5) / 365.25, "apobec": apo, "other": oth, "lineage": g["lineage"], "country": g["country"]})
+                    rows.append({"id": n["name"], "t": decimalyear.decimal(date(y, m, d)), "apobec": apo, "other": oth, "lineage": g["lineage"], "country": g["country"]})
         for c in kids:
             walk(c, apo, oth)
     walk(tree, 0, 0)

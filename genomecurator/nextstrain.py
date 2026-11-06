@@ -45,10 +45,17 @@ _viewer: subprocess.Popen | None = None
 # `species` is the input key the workflow splits its inputs by (ebola carries ebov / bdbv / sudv in one workflow).
 WORKFLOWS: dict[str, dict] = {
     "mpox": {"repo": "https://github.com/nextstrain/mpox", "dir": "mpox", "layout": "per_build",
-             "genera": ("Orthopoxvirus",), "default_build": "mpxv", "builds": ("mpxv", "hmpxv1", "clade-i")},
+             "genera": ("Orthopoxvirus",), "default_build": "mpxv", "builds": ("mpxv", "hmpxv1", "clade-i"),
+             "reference": ("phylogenetic/defaults/{build}/reference.fasta", "phylogenetic/defaults/reference.fasta")},
     "ebola": {"repo": "https://github.com/nextstrain/ebola", "dir": "ebola", "layout": "single",
               "genera": ("Orthoebolavirus",), "default_build": "bdbv/drc-uganda-2026", "builds": (),
-              "species": {"bundibugyoense": "bdbv", "zairense": "ebov", "sudanense": "sudv"}},
+              "species": {"bundibugyoense": "bdbv", "zairense": "ebov", "sudanense": "sudv"},
+              "reference": ("shared/{species}/reference.fasta",),
+              # what to keep out of the workflow's results folder, which the next run of the same build overwrites.
+              # The masked alignment and the tree are what a molecular clock and then BEAST read, so a run that is kept
+              # has to carry its own copy or it cannot be reproduced or built on later.
+              "keep": ("masked.fasta", "subsampled.fasta", "tree.nwk", "tree_raw.nwk"),
+              "results": "phylogenetic/results/{build}"},
 }
 DEFAULT_WORKFLOW = "mpox"
 
@@ -274,6 +281,25 @@ def defaults_config_path(build: str, wf: str | None = None) -> Path:
     """The workflow's own config that must be passed before the overlay (the Snakefile loads it only when no config is given)."""
     d = workflow_dir(wf) / "defaults"
     return (d / "config.yaml") if spec(wf)["layout"] == "single" else (d / (build or spec(wf)["default_build"]) / "config.yaml")
+
+
+def results_dir(build: str, wf: str | None = None) -> Path | None:
+    """Where the workflow leaves this build's intermediate files, when it keeps them under a fixed name (nextstrain/ebola:
+    `results/<species>/<build>/`, overwritten by the next run of the same build - so a run has to copy what it needs out)."""
+    pat = spec(wf).get("results")
+    return (checkout_dir(wf) / pat.format(build=build or spec(wf)["default_build"])) if pat else None
+
+
+def reference_fasta(build: str = "", wf: str | None = None, species: str = "") -> Path | None:
+    """This virus's reference genome inside its own checkout - the length unit for a tree measured in substitutions.
+    Each workflow keeps it somewhere else, and reading the mpox one for another virus would scale every branch by the
+    ratio of the two genomes (about tenfold between mpox and an ebolavirus)."""
+    key = wf or DEFAULT_WORKFLOW
+    for pat in spec(key).get("reference") or ():
+        f = checkout_dir(key) / pat.format(build=build or spec(key)["default_build"], species=species or "")
+        if f.exists():
+            return f
+    return None
 
 
 def auspice_stem(build: str, run_name: str, wf: str | None = None) -> str:
@@ -565,6 +591,10 @@ def run(ds: dict, runtime: str = "ambient", cores: int | None = None, force: boo
         rc = wf / "results" / "run_config.yaml"
         if rc.exists():
             shutil.copy2(rc, rdir / "run_config.yaml")
+        rsd = results_dir(build, wfk)                                   # the build's own results folder is overwritten by the
+        for f in (spec(wfk).get("keep") or ()):                         # next run of that build, so this run keeps its copy
+            if rsd and (rsd / f).exists():
+                shutil.copy2(rsd / f, rdir / f)
         (rdir / "versions.json").write_text(json.dumps({"tools": versions, "workflow_commit": commit, "runtime": runtime, "build": build}, indent=2), encoding="utf-8")
         shutil.rmtree(wf / "results" / name, ignore_errors=True)             # intermediate files of this run; the kept results are what matter
         for f in (wf / "auspice").glob(f"{auspice_stem(build, name, wfk)}*"):

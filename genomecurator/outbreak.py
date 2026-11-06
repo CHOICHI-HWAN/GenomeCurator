@@ -18,7 +18,7 @@ import re
 from collections import Counter, defaultdict
 from pathlib import Path
 
-from . import insight, lineages, log, mutprofile, nextstrain
+from . import decimalyear, insight, lineages, log, mutprofile, nextstrain
 
 _log = log.get("outbreak")
 ITR = 6500                                                  # bp at each end counted as inverted terminal repeat (hotspots there are left out)
@@ -279,7 +279,7 @@ def accumulation(run: dict, fixed: float = 0.9, max_n: float | None = None) -> d
         y, m, d = (int(x) for x in shown.split("-"))
         from datetime import date
         t = date(y, m, d)
-        dec = y + (t.timetuple().tm_yday - 1) / 365.25
+        dec = decimalyear.decimal(t)
         a_all = a_var = n_all = n_var = 0
         for pos, alt in sn.items():
             ref = ncseq[pos - 1] if 0 < pos <= len(ncseq) else ""

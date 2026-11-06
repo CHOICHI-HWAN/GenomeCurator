@@ -19,7 +19,7 @@ import time
 from datetime import date, datetime, timedelta
 from pathlib import Path
 
-from . import aligned, clock, log, nextstrain, runs
+from . import aligned, clock, decimalyear, log, nextstrain, runs
 
 _log = log.get("beast")
 DEFAULTS = {"n_tips": 150, "chain_length": 30000000, "samples": 10000, "clock": "relaxed", "tree_prior": "exponential", "seed": 1, "threads": 0}
@@ -398,6 +398,17 @@ def folder(clock_run: dict, tag: str = "") -> Path:
     return Path(clock_run["run_dir"]) / "beast" / (_safe(tag) if tag else "")
 
 
+def alignment_of(src: dict) -> Path | None:
+    """The aligned FASTA an analysis run left behind, whichever tool made it. Squirrel's own alignment for mpox; for a
+    virus whose workflow has no Squirrel step, the masked alignment the Nextstrain run kept in its folder. BEAST needs
+    the columns to line up across genomes, so this is always an alignment and never the submitted sequences."""
+    d = Path(src["run_dir"])
+    for f in (d / "squirrel" / "alignment.aln.fasta.gz", d / "masked.fasta", d / "subsampled.fasta"):
+        if f.exists():
+            return f
+    return None
+
+
 def prepare(clock_run: dict, settings: dict | None = None, progress=None) -> dict:
     """Write the BEAST package of a clock run into `<clock run>/beast/`: subsample.tsv, alignment.fasta, dates.tsv, beast.xml, README.txt. -> {n, taxa, groups, files}"""
     p = progress or (lambda *a: None)
@@ -406,8 +417,12 @@ def prepare(clock_run: dict, settings: dict | None = None, progress=None) -> dic
     if not S.get("tips"):
         raise ValueError("이 분자시계 실행에는 결과가 없습니다.")
     src = next((r for r in nextstrain.list_runs(clock_run["dataset_id"]) if r["id"] == S["source_run"]), None)
-    if not src or src["tool"] != "squirrel":
-        raise ValueError("BEAST 패키지는 Squirrel 정렬이 필요합니다. 분자시계를 Squirrel 트리로 실행하세요.")
+    if not src:
+        raise ValueError("이 분자시계 실행의 원본 분석을 찾지 못했습니다.")
+    aln_path = alignment_of(src)
+    if not aln_path:
+        raise ValueError("BEAST 패키지를 만들 정렬을 찾지 못했습니다. mpox는 Squirrel 트리로 분자시계를 실행하고, "
+                         "그 밖의 바이러스는 워크플로가 남긴 정렬을 보관한 Nextstrain 실행을 쓰세요.")
     p(5, "표본을 고르는 중…")
     if s["tip_names"]:
         names = set(s["tip_names"])
@@ -422,7 +437,7 @@ def prepare(clock_run: dict, settings: dict | None = None, progress=None) -> dic
     want = {t["name"] for t in chosen}
     p(15, "정렬에서 서열을 읽는 중…")
     seqs = {}
-    for name, seq in aligned.read_alignment(Path(src["run_dir"]) / "squirrel" / "alignment.aln.fasta.gz"):
+    for name, seq in aligned.read_alignment(aln_path):
         if name in want:
             seqs[name] = seq.upper()
     chosen = [t for t in chosen if t["name"] in seqs]
@@ -810,9 +825,7 @@ def _short_country(c: str) -> str:
 def _tip_label(name: str, a: dict) -> str:
     """`Country  date  lineage  id`: what a tip stands for, readable in the viewer; the country is first so the tips of one place sit together in the eye, and Korea is marked."""
     try:
-        y = float(a.get("date", ""))
-        yr = int(y)
-        d = datetime(yr, 1, 1) + timedelta(days=round((y - yr) * (365 + (yr % 4 == 0))))
+        d = decimalyear.calendar(float(a.get("date", "")))
         date = d.strftime("%Y-%m-%d") if a.get("precision") == "day" else d.strftime("%Y-%m")
     except (TypeError, ValueError):
         date = "?"

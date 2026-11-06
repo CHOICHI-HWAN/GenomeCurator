@@ -4241,3 +4241,31 @@ def test_each_virus_gets_its_own_nextstrain_workflow(tmp_path, monkeypatch):
     # a virus with no workflow is refused with a reason, not run against the wrong one
     with _pytest.raises(RuntimeError, match="워크플로가 없습니다"):
         ns.run({"watch_id": 3, "build": "", "name": "x", "id": 1, "rules": {}})
+
+
+def test_one_decimal_year_convention():
+    """Every decimal year in the package comes from one place: the real length of that year, and floored going back.
+    The round trip has to be exact, because a date's own decimal year is a binary division that falls just short."""
+    from datetime import date, timedelta
+    from genomecurator import decimalyear as dy, clock
+
+    assert (dy.year_length(2024), dy.year_length(2025), dy.year_length(2100), dy.year_length(2000)) == (366, 365, 365, 366)
+    assert dy.decimal(date(2026, 1, 1)) == 2026.0 and clock.decimal_date(date(2026, 1, 1)) == 2026.0
+
+    for yr in (1900, 2000, 2024, 2025, 2026, 2100):                  # a leap year, a century that is not one, and the years in use
+        d = date(yr, 1, 1)
+        while d.year == yr:
+            assert dy.calendar(dy.decimal(d)) == d, d
+            d += timedelta(days=1)
+
+    base = date(2026, 4, 11)                                          # anywhere inside a day names that day: floored, not rounded
+    for frac in (0.0, 0.01, 0.5, 0.99):
+        assert dy.calendar(2026 + (100 + frac) / 365) == base
+    assert dy.calendar(2026.0) == date(2026, 1, 1) and dy.calendar(2026.9999999) == date(2026, 12, 31)
+    assert dy.calendar(2024.9999999) == date(2024, 12, 31)            # a leap year has one more day to fall on
+
+    mid = dy.midpoint(date(2026, 5, 1), date(2026, 5, 31))            # a genome dated only to the month sits in its middle
+    assert dy.calendar(mid) == date(2026, 5, 16)
+
+    # 365.25 inside one year is what the modules used to do differently; it is about a tenth of a day out by midsummer
+    assert abs(dy.decimal(date(2026, 6, 15)) - (2026 + 165 / 365.25)) * 365 > 0.1

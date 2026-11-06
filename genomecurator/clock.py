@@ -22,7 +22,7 @@ from collections import Counter
 from datetime import date, datetime
 from pathlib import Path
 
-from . import aligned, datasets, lineages, log, nextstrain, runs
+from . import aligned, datasets, decimalyear, lineages, log, nextstrain, runs
 from .db import connect
 
 _log = log.get("clock")
@@ -75,8 +75,7 @@ def settings_sha(s: dict) -> str:
 
 # ------------------------------------------------------------------------------------------------ inputs: the tree and the dates
 def decimal_date(d: date) -> float:
-    y0 = date(d.year, 1, 1)
-    return d.year + (d - y0).days / ((date(d.year + 1, 1, 1) - y0).days)
+    return decimalyear.decimal(d)                       # one convention for the whole package (genomecurator/decimalyear.py)
 
 
 def _treetime_date(text: str, min_precision: str) -> tuple[str, str] | None:
@@ -119,13 +118,12 @@ def _squirrel_tree(src: dict) -> tuple[str, int]:
 def _nextstrain_tree(src: dict) -> tuple[str, int]:
     f = nextstrain.runs_dir().parent / "auspice" / src["auspice_file"]
     tree = json.loads(f.read_text(encoding="utf-8"))["tree"]
-    ref = nextstrain.workflow_dir() / "defaults" / (src.get("build") or "") / "reference.fasta"
-    if not ref.exists():
-        ref = nextstrain.workflow_dir() / "defaults" / "reference.fasta"
+    wf = nextstrain.workflow_key(src.get("watch_id"))                   # the reference of THIS virus, from its own checkout
+    ref = nextstrain.reference_fasta(src.get("build") or "", wf, nextstrain.species_of(wf, nextstrain.taxon_of(src.get("watch_id"))))
     from . import seqio
-    length = len(seqio.read_fasta(ref)[1]) if ref.exists() else 0
+    length = len(seqio.read_fasta(ref)[1]) if ref else 0
     if not length:
-        raise ValueError("Nextstrain 트리의 길이 단위를 정할 참조 서열을 찾지 못했습니다.")
+        raise ValueError(f"Nextstrain 트리의 길이 단위를 정할 참조 서열을 찾지 못했습니다 ({nextstrain.checkout_dir(wf)}).")
 
     def nw(n, parent_div):
         div = (n.get("node_attrs") or {}).get("div", parent_div) or 0
