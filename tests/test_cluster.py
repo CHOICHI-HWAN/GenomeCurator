@@ -1422,3 +1422,34 @@ def test_a_machine_committed_past_its_cores_is_not_idle(tmp_path, monkeypatch):
     assert cl._really_idle(idle, 64, 3, 36) is True            # room inside the cores: may take one more
     assert cl._really_idle(idle, 64, 5, 60) is True
     assert cl._really_idle(idle, 64, 6, 72) is False           # already past them: not idle, whatever the CPU says
+
+
+def test_a_zero_exit_code_is_not_a_finished_chain(tmp_path):
+    """`beast` is a shell script around Java: when the MCMC thread throws, it still exits 0. The job was delivered as
+    done with a log holding a fraction of its states, and only the combine step - which refuses runs that did not reach
+    their length - noticed. The worker now checks the length where the run happened, and names the cause."""
+    from genomecurator.clusterworker import Worker, beast_failure
+
+    screen = ("state\tposterior\n"
+              "SEVERE: CoalescentLikelihood for demographic is -Infinity (likely to be extreme model parameter values)\n"
+              'Exception in thread "Thread-0" java.lang.RuntimeException: An error was encountered. Terminating BEAST\n'
+              "\tat dr.inference.mcmc.MCMC.run(Unknown Source)\n35.9 seconds\n")
+    why = beast_failure(screen)
+    assert "terminated itself" in why and "CoalescentLikelihood" in why and "stronger prior" in why
+
+    w = Worker.__new__(Worker)
+    run = tmp_path / "run"
+    run.mkdir()
+    log = run / "beast.log"
+
+    def write(last: int) -> None:
+        rows = "".join(f"{s}\t-1234.5\n" for s in range(0, last + 1, 3000))
+        log.write_text("# BEAST\nstate\tposterior\n" + rows, encoding="utf-8")
+
+    write(255_000)
+    assert w._chain_fell_short(tmp_path, 30_000_000) == "255,000 of 30,000,000 states"
+    write(30_000_000)
+    assert w._chain_fell_short(tmp_path, 30_000_000) == ""        # a chain that reached its length passes
+    assert w._chain_fell_short(tmp_path, 0) == ""                 # nothing to compare against
+    log.unlink()
+    assert w._chain_fell_short(tmp_path, 30_000_000) == ""        # a marginal-likelihood job writes its samples elsewhere

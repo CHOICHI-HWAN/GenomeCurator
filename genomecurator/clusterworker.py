@@ -185,6 +185,10 @@ def beast_failure(text: str) -> str:
                 "The working prior is a KDE over the ordinary chain's samples; the path left the range those samples cover.")
     if "Total = -Infinity" in text:
         return "the chain reached a state with likelihood -Infinity and stopped"
+    if "Terminating BEAST" in text:
+        m = re.search(r"^SEVERE:\s*(.+)$", text, re.M)      # the SEVERE line above it says which likelihood went bad
+        return ("BEAST terminated itself" + (f": {m.group(1).strip()[:200]}" if m else "")
+                + " (an extreme parameter value - the model needs a stronger prior than this run gave it)")
     if "Incorrect file format, no sample is found" in text:
         return ("the marginal-likelihood log holds no samples - the estimation run stopped before writing any "
                 "(look above this line in beast.screen.log for the state that failed)")
@@ -385,10 +389,35 @@ class Worker:
             tail = "".join(text.splitlines(keepends=True)[-6:])[-300:]
             why = beast_failure(text)
             return self._fail(jd, jid, f"BEAST exited with code {proc.returncode}: {why or tail.strip()}")
+        # A zero exit code is not the same as a finished chain. `beast` is a shell script around Java, and when the MCMC
+        # thread throws - a demographic model reaching an impossible parameter value, say - the script still exits 0. The
+        # job was then delivered as done with a log holding a fraction of the states, and only the combine step, which
+        # refuses runs that did not reach their length, noticed. So the length is checked here, where the run happened.
+        short = self._chain_fell_short(jd, int(spec.get("chain_length") or 0))
+        if short:
+            text = (jd / "run" / "beast.screen.log").read_text(encoding="utf-8", errors="replace")
+            return self._fail(jd, jid, f"BEAST stopped before the end of its chain ({short}): " +
+                              (beast_failure(text) or "".join(text.splitlines(keepends=True)[-6:])[-300:].strip()))
         outs = [{"name": n, "sha256": sha256(jd / "run" / n), "bytes": (jd / "run" / n).stat().st_size} for n in KINDS["beast"]["outputs"] if (jd / "run" / n).is_file()]
         self._state(jd, phase="finished", outputs=outs, seconds=round(time.time() - t0))
         self._job_state(jid, outcome="done")
         self.deliver(jd)
+
+    def _chain_fell_short(self, jd: Path, chain_length: int) -> str:
+        """"<reached> of <chain_length> states" when the chain stopped early, "" when it finished or cannot be judged.
+        A run with no beast.log is left alone: a marginal-likelihood job writes its samples elsewhere."""
+        lg = jd / "run" / "beast.log"
+        if chain_length <= 0 or not lg.is_file():
+            return ""
+        last = 0
+        try:
+            with open(lg, encoding="utf-8", errors="replace") as f:
+                for line in f:
+                    if line[:1].isdigit():
+                        last = int(float(line.split("\t", 1)[0]))
+        except (OSError, ValueError):
+            return ""
+        return f"{last:,} of {chain_length:,} states" if last < chain_length else ""
 
     def _fail(self, jd: Path, jid: str, why: str) -> None:
         self._job_state(jid, outcome="failed")
