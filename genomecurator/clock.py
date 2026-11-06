@@ -17,6 +17,7 @@ import hashlib
 import json
 import math
 import re
+import shutil
 import subprocess
 from collections import Counter
 from datetime import date, datetime
@@ -312,8 +313,22 @@ def run(ds: dict, settings: dict | None = None, force: bool = False, note: str =
         if mm:
             root_date_rtt = float(mm[1])
         p(25, "2단계: 시간 보정 트리와 신뢰구간 (몇 분)")
-        t_args = ["--branch-length-mode", "input", "--confidence", "--time-marginal", "assign"] + (["--covariation"] if s["covariation"] else []) + (["--coalescent", s["coalescent"]] if s["coalescent"] else [])
-        _tt(common + t_args + ["--outdir", "time"], rdir, logp)             # stage 2 can take the shared ancestry of the tips into account (covariation)
+        t_args = ["--branch-length-mode", "input", "--confidence", "--time-marginal", "assign"] + (["--coalescent", s["coalescent"]] if s["coalescent"] else [])
+        cov_note = ""
+        try:
+            _tt(common + (["--covariation"] if s["covariation"] else []) + t_args + ["--outdir", "time"], rdir, logp)   # stage 2 can take the shared ancestry of the tips into account
+        except RuntimeError:
+            # Accounting for covariance inverts a 2x2 of the rerooting estimator, and that matrix is singular when the
+            # clock filter has thrown out most of what spread the dates - a set where one outbreak is nearly
+            # contemporaneous and a handful of old genomes sit far away does it. Rather than lose the whole run, stage 2
+            # is repeated taking the tips as independent, which is what stage 1 does anyway, and the run says so.
+            if not s["covariation"]:
+                raise
+            shutil.rmtree(rdir / "time", ignore_errors=True)
+            cov_note = ("2단계에서 공분산(--covariation)을 쓰면 리루팅 추정량의 행렬이 특이해져 실패했습니다. "
+                        "팁을 독립으로 보고 다시 계산했습니다 — 신뢰구간이 공분산을 고려한 것보다 좁게 나올 수 있습니다.")
+            p(25, "2단계: 공분산 없이 다시 (행렬이 특이했습니다)")
+            _tt(common + t_args + ["--outdir", "time"], rdir, logp)
         tc = parse_clock_txt(rdir / "time" / "molecular_clock.txt")
         tr = json.loads((rdir / "time" / "auspice_tree.json").read_text(encoding="utf-8"))["tree"]
         nd = (tr.get("node_attrs") or {}).get("num_date") or {}
@@ -339,7 +354,10 @@ def run(ds: dict, settings: dict | None = None, force: bool = False, note: str =
                    "time": {"root": {"date": nd.get("value"), "lo": conf[0], "hi": conf[1]}, "rate": tc["rate"], "rate_sd": tc["rate_sd"], "r2": tc["r2"], "groups": tmrca},
                    "span_years": (max(dates) - min(dates)) if dates else None, "first_sample": min(dates) if dates else None, "last_sample": max(dates) if dates else None, "tips": tips_out,
                    "treetime": st["version"]}
-        summary["warnings"] = warnings(summary)
+        if cov_note:
+            summary["covariation_fallback"] = True
+            summary["settings"] = {**s, "covariation": False}       # what actually ran, so a repeat of this run matches it
+        summary["warnings"] = ([cov_note] if cov_note else []) + warnings(summary)
         (rdir / "summary.json").write_text(json.dumps(summary, ensure_ascii=False), encoding="utf-8")
         runs.finish(rid, "clock", name, "done", "", "summary.json")
         p(100, "완료")
