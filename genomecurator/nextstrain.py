@@ -46,7 +46,8 @@ _viewer: subprocess.Popen | None = None
 WORKFLOWS: dict[str, dict] = {
     "mpox": {"repo": "https://github.com/nextstrain/mpox", "dir": "mpox", "layout": "per_build",
              "genera": ("Orthopoxvirus",), "default_build": "mpxv", "builds": ("mpxv", "hmpxv1", "clade-i"),
-             "reference": ("phylogenetic/defaults/{build}/reference.fasta", "phylogenetic/defaults/reference.fasta")},
+             "reference": ("phylogenetic/defaults/{build}/reference.fasta", "phylogenetic/defaults/reference.fasta"),
+             "div_units": "mutations"},
     "ebola": {"repo": "https://github.com/nextstrain/ebola", "dir": "ebola", "layout": "single",
               "genera": ("Orthoebolavirus",), "default_build": "bdbv/drc-uganda-2026", "builds": (),
               "species": {"bundibugyoense": "bdbv", "zairense": "ebov", "sudanense": "sudv"},
@@ -55,7 +56,7 @@ WORKFLOWS: dict[str, dict] = {
               # The masked alignment and the tree are what a molecular clock and then BEAST read, so a run that is kept
               # has to carry its own copy or it cannot be reproduced or built on later.
               "keep": ("masked.fasta", "subsampled.fasta", "tree.nwk", "tree_raw.nwk"),
-              "results": "phylogenetic/results/{build}"},
+              "results": "phylogenetic/results/{build}", "div_units": "per_site"},
 }
 DEFAULT_WORKFLOW = "mpox"
 

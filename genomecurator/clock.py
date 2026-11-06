@@ -124,13 +124,19 @@ def _nextstrain_tree(src: dict) -> tuple[str, int]:
     length = len(seqio.read_fasta(ref)[1]) if ref else 0
     if not length:
         raise ValueError(f"Nextstrain 트리의 길이 단위를 정할 참조 서열을 찾지 못했습니다 ({nextstrain.checkout_dir(wf)}).")
+    # TreeTime wants branches in substitutions per site. What `div` holds depends on what the workflow asked
+    # augur refine for: the mpox workflow sets --divergence-units mutations and so counts substitutions, which have
+    # to be divided by the genome; the ebola workflow leaves the default, which is already per site. Dividing that
+    # again would scale every branch - and so the clock rate - by the length of the genome.
+    per_site = nextstrain.spec(wf).get("div_units") == "per_site"
+    unit = 1.0 if per_site else float(length)
 
     def nw(n, parent_div):
         div = (n.get("node_attrs") or {}).get("div", parent_div) or 0
-        bl = max(0.0, (div - parent_div) / length)
+        bl = max(0.0, (div - parent_div) / unit)
         if "children" in n:
-            return "(" + ",".join(nw(c, div) for c in n["children"]) + f"):{bl:.10f}"
-        return f"{n['name']}:{bl:.10f}"
+            return "(" + ",".join(nw(c, div) for c in n["children"]) + f"):{bl:.12f}"
+        return f"{n['name']}:{bl:.12f}"
     return nw(tree, 0) + ";", length
 
 
