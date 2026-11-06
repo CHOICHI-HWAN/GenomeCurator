@@ -341,7 +341,10 @@ def build_xml(seqs: dict[str, str], dates: dict[str, float], groups: dict[str, l
                 # demographic is -Infinity ... try using stronger priors on these", BEAST's own message). A scale of 10 puts
                 # 95% of the prior inside |r| < 30/year - a doubling time of eight days at the edge, well beyond anything an
                 # outbreak lineage sustains - so it constrains nothing the data could say, and the chain stays in range.
-                w(f'\t\t\t<laplacePrior mean="0.0" scale="{GROWTH_SCALE:g}"><parameter idref="{q}"/></laplacePrior>')
+                # On a tree that reaches further back the scale comes down with the span, because what overflows is r*t
+                # and not r alone (see growth_scale); over the mpox lineage this is still 10.
+                w(f'\t\t\t<laplacePrior mean="0.0" scale="{growth_scale(max(dates.values()) - min(dates.values())):g}">'
+                  f'<parameter idref="{q}"/></laplacePrior>')
 
     w('\t\t\t<gmrfSkyGridLikelihood idref="skygrid"/>' if sky else '\t\t\t<coalescentLikelihood idref="coalescent"/>')
     w('\t\t</prior><likelihood id="likelihood"><treeDataLikelihood idref="treeLikelihood"/></likelihood></posterior>')
@@ -902,6 +905,17 @@ ESTIMATORS = ("both", "gss", "ps_ss")
 _MLE_RE = {"ps": re.compile(r"log marginal likelihood \(using path sampling\)[^=]*=\s*(-?[0-9.eE+-]+)"), "ss": re.compile(r"log marginal likelihood \(using stepping stone sampling\)[^=]*=\s*(-?[0-9.eE+-]+)"),
            "gss": re.compile(r"log marginal likelihood \(using generalized stepping stone sampling\)[^=]*=\s*(-?[0-9.eE+-]+)")}
 GROWTH_SCALE = 10.0       # scale of the Laplace prior on a demographic growth rate, per year (see where it is written)
+# What has to stay finite is not the rate but the product of the rate and the time depth, because the coalescent of a
+# growing population works through exp(r*t). A Laplace(0, scale) keeps 95% of its mass inside |r| < 3*scale, so the
+# reachable product is about 3*scale*span. Scale 10 over the mpox lineage's 2.9 years gives 87, which the chain handles.
+# The same 10 over BDBV's 19.4 years - the span the 2007 and 2012 genomes open up - gives 582, and every logistic run
+# died on it. Holding 3*scale*span at the value that works means scale = 29/span, which leaves mpox exactly where it was.
+GROWTH_SCALE_SPAN = 29.0
+
+
+def growth_scale(span: float) -> float:
+    """The Laplace scale for a growth rate on a tree whose tips span `span` years (never wider than GROWTH_SCALE)."""
+    return min(GROWTH_SCALE, GROWTH_SCALE_SPAN / max(0.5, span))
 GSS_PRIOR_SAMPLES = 5000  # rows the ordinary chain logs; the working prior's `burnin` below is counted in these rows, not in states.
 # 1,000 rows (500 after burn-in) made a working prior whose KDE was too ragged to hold a path: on the 250-genome set three
 # of twelve models died when the generalized stepping-stone chain stepped outside the range those few samples covered.

@@ -4296,3 +4296,26 @@ def test_a_vague_value_does_not_bridge_two_conflicting_ones():
     assert len(resolve._clusters("date", dates)) == 1
     s = resolve.suggest("collection_date", dates)
     assert s["value"] == "2026-05-15" and s["confidence"] == "high"
+
+
+def test_the_growth_rate_prior_narrows_with_the_sampled_span():
+    """What overflows in a growing-population coalescent is exp(r*t), so the rate and the time depth have to be bounded
+    together. A fixed scale of 10 is right over the mpox lineage's 2.9 years and lets every logistic run on BDBV's 19.4
+    years die with "CoalescentLikelihood for demographic is -Infinity"."""
+    from genomecurator.beastprep import GROWTH_SCALE, GROWTH_SCALE_SPAN, build_xml, growth_scale, parse_settings
+
+    assert growth_scale(2.9) == GROWTH_SCALE                       # mpox: exactly where it was
+    assert growth_scale(0.3) == GROWTH_SCALE                       # never wider than the cap, however short the span
+    assert round(growth_scale(19.4), 2) == 1.49                    # BDBV
+    for span in (2.9, 5.0, 19.4, 26.0):                            # where it binds, the reachable r*span is held constant
+        assert abs(3 * growth_scale(span) * span - 3 * GROWTH_SCALE_SPAN) < 1e-6
+
+    seqs = {f"t{i}": "ACGT" * 10 for i in range(12)}
+    groups = {"g": sorted(seqs)[:6]}
+    far = {n: 2007.0 + i * 1.7 for i, n in enumerate(sorted(seqs))}         # spans 18.7 years
+    near = {n: 2024.0 + i * 0.1 for i, n in enumerate(sorted(seqs))}        # spans 1.1 years
+    s = parse_settings({"tree_prior": "logistic", "clock": "strict"})
+    import re
+    wide = re.search(r'<laplacePrior mean="0.0" scale="([\d.]+)"', build_xml(seqs, far, groups, s, 1e-4))
+    tight = re.search(r'<laplacePrior mean="0.0" scale="([\d.]+)"', build_xml(seqs, near, groups, s, 1e-4))
+    assert float(wide.group(1)) < 2.0 and float(tight.group(1)) == GROWTH_SCALE
