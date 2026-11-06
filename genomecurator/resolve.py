@@ -75,21 +75,23 @@ def _canonical(kind: str, cluster: list[dict]) -> tuple[dict, str]:
 
 
 def _clusters(kind: str, groups: list[dict]) -> list[list[dict]]:
-    """Groups of values that are the same fact (equal or only written differently)."""
-    parent = list(range(len(groups)))
+    """Groups of values that are the same fact (equal or only written differently).
 
-    def find(i):
-        while parent[i] != i:
-            parent[i] = parent[parent[i]]
-            i = parent[i]
-        return i
-    for i, j in combinations(range(len(groups)), 2):
-        if reconcile.classify(kind, groups[i]["value"], groups[j]["value"]) != "conflict":
-            parent[find(i)] = find(j)
-    out: dict[int, list[dict]] = {}
-    for i, g in enumerate(groups):
-        out.setdefault(find(i), []).append(g)
-    return list(out.values())
+    A value joins a group only if it is compatible with **every** member, never along a chain. `classify` is not
+    transitive: a vague value is compatible with specific values that conflict with each other, so "2026" is
+    compatible with both "2026-05-15" and "2026-06-20" while those two conflict. Merging along the chain put all
+    three in one group, and one group means `suggest` reports "the same fact written differently" with high
+    confidence - a real disagreement between two sources, auto-applied as cosmetic. Groups are seeded in source
+    priority order, so the most authoritative value starts a group and the vaguer ones attach to it."""
+    out: list[list[dict]] = []
+    for g in sorted(groups, key=lambda x: (_prio(x["sources"]), _s(x["value"]))):
+        for c in out:
+            if all(reconcile.classify(kind, g["value"], m["value"]) != "conflict" for m in c):
+                c.append(g)
+                break
+        else:
+            out.append([g])
+    return out
 
 
 def suggest(field: str, groups: list[dict], seq: dict | None = None) -> dict:

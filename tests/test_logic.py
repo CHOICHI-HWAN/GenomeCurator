@@ -4269,3 +4269,30 @@ def test_one_decimal_year_convention():
 
     # 365.25 inside one year is what the modules used to do differently; it is about a tenth of a day out by midsummer
     assert abs(dy.decimal(date(2026, 6, 15)) - (2026 + 165 / 365.25)) * 365 > 0.1
+
+
+def test_a_vague_value_does_not_bridge_two_conflicting_ones():
+    """`classify` is not transitive: "2026" is compatible with both "2026-05-15" and "2026-06-20", which conflict with
+    each other. Merging along that chain put all three in one group, and one group makes `suggest` call a real
+    disagreement "the same fact written differently" with high confidence - which auto-apply would then apply."""
+    from itertools import combinations
+    from genomecurator import reconcile, resolve
+
+    assert reconcile.classify("date", "2026-05-15", "2026-06-20") == "conflict"
+    assert reconcile.classify("date", "2026", "2026-05-15") == "cosmetic"
+    assert reconcile.classify("date", "2026", "2026-06-20") == "cosmetic"
+
+    groups = [{"value": "2026-05-15", "sources": ["ncbi"]}, {"value": "2026", "sources": ["bvbrc"]},
+              {"value": "2026-06-20", "sources": ["pathoplexus"]}]
+    cl = resolve._clusters("date", groups)
+    assert len(cl) == 2                                                  # not one: the two specific dates disagree
+    for c in cl:                                                         # and no group ever holds a conflicting pair
+        assert not any(reconcile.classify("date", a["value"], b["value"]) == "conflict" for a, b in combinations(c, 2))
+    s = resolve.suggest("collection_date", groups)
+    assert s["confidence"] == "medium" and "같은 사실" not in s["reason"]
+
+    dates = [{"value": "2026", "sources": ["bvbrc"]}, {"value": "2026-05", "sources": ["ncbi"]},
+             {"value": "2026-05-15", "sources": ["pathoplexus"]}]        # genuinely one fact, told to three precisions
+    assert len(resolve._clusters("date", dates)) == 1
+    s = resolve.suggest("collection_date", dates)
+    assert s["value"] == "2026-05-15" and s["confidence"] == "high"
