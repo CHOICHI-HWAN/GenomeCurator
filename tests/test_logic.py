@@ -4194,6 +4194,13 @@ def test_each_virus_gets_its_own_nextstrain_workflow(tmp_path, monkeypatch):
     from genomecurator.db import connect
     monkeypatch.setattr(config, "DB_PATH", tmp_path / "g.db")
     monkeypatch.setattr(config, "DATA_DIR", tmp_path)
+    # also pin the checkouts through the env overrides `checkout_dir` reads directly: patching DATA_DIR alone leaves
+    # this test reading the machine's real mpox checkout if anything restores the config module under it, and then
+    # `builds_available` returns that checkout's builds instead of the two made here
+    for key in ("MPOX", "EBOLA"):
+        monkeypatch.setenv(f"GC_NEXTSTRAIN_DIR_{key}", str(tmp_path / "nextstrain" / key.lower()))
+    for key in ("mpox", "ebola"):
+        assert tmp_path in ns.checkout_dir(key).parents or ns.checkout_dir(key).is_relative_to(tmp_path)
     con = connect()
     con.execute("INSERT INTO watchlist(id,name,taxon,taxon_id) VALUES(1,'Mpox','Orthopoxvirus monkeypox',1),"
                 "(2,'BDBV','Orthoebolavirus bundibugyoense',2),(3,'Nipah','Henipavirus nipahense',3),"
