@@ -1021,8 +1021,11 @@ def _bets_data(clock_run: dict, s: dict) -> tuple[dict, dict, float, int, float]
     if not S.get("tips"):
         raise ValueError("이 분자시계 실행에는 결과가 없습니다.")
     src = next((r for r in nextstrain.list_runs(clock_run["dataset_id"]) if r["id"] == S["source_run"]), None)
-    if not src or src["tool"] != "squirrel":
-        raise ValueError("BETS는 Squirrel 정렬이 필요합니다. 분자시계를 Squirrel 트리로 실행하세요.")
+    if not src:
+        raise ValueError("이 분자시계 실행의 원본 분석을 찾지 못했습니다.")
+    aln_path = alignment_of(src)                                          # the same alignment the dating step uses, whichever tool made it
+    if not aln_path:
+        raise ValueError("BETS에 쓸 정렬을 찾지 못했습니다. mpox는 Squirrel 트리로, 그 밖의 바이러스는 워크플로가 정렬을 남긴 Nextstrain 실행으로 분자시계를 실행하세요.")
     if s.get("tip_names"):                                                # the dating analysis's own genomes, so that the signal and the
         want = set(s["tip_names"])                                        # model are judged on the data the answer comes from
         chosen = sorted((t for t in S["tips"] if t["name"] in want), key=lambda t: t["date"])
@@ -1034,7 +1037,7 @@ def _bets_data(clock_run: dict, s: dict) -> tuple[dict, dict, float, int, float]
     if len(chosen) < 10:
         raise ValueError(f"BETS에 쓸 수 있는 유전체(날짜가 일 단위이고 이상치가 아님)가 {len(chosen)}개뿐입니다.")
     want = {t["name"] for t in chosen}
-    seqs = {n: q.upper() for n, q in aligned.read_alignment(Path(src["run_dir"]) / "squirrel" / "alignment.aln.fasta.gz") if n in want}
+    seqs = {n: q.upper() for n, q in aligned.read_alignment(aln_path) if n in want}
     real = {t["name"]: t["date"] for t in chosen if t["name"] in seqs}
     rate0 = (S.get("time") or {}).get("rate") or (S.get("clock") or {}).get("rate") or 1e-5
     return seqs, real, rate0, len(real), max(real.values()) - min(real.values())

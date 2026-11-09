@@ -47,7 +47,7 @@ WORKFLOWS: dict[str, dict] = {
     "mpox": {"repo": "https://github.com/nextstrain/mpox", "dir": "mpox", "layout": "per_build",
              "genera": ("Orthopoxvirus",), "default_build": "mpxv", "builds": ("mpxv", "hmpxv1", "clade-i"),
              "reference": ("phylogenetic/defaults/{build}/reference.fasta", "phylogenetic/defaults/reference.fasta"),
-             "div_units": "mutations"},
+             "div_units": "mutations", "id_field": "PPX_accession"},
     "ebola": {"repo": "https://github.com/nextstrain/ebola", "dir": "ebola", "layout": "single",
               "genera": ("Orthoebolavirus",), "default_build": "bdbv/drc-uganda-2026", "builds": (),
               "species": {"bundibugyoense": "bdbv", "zairense": "ebov", "sudanense": "sudv"},
@@ -56,7 +56,16 @@ WORKFLOWS: dict[str, dict] = {
               # The masked alignment and the tree are what a molecular clock and then BEAST read, so a run that is kept
               # has to carry its own copy or it cannot be reproduced or built on later.
               "keep": ("masked.fasta", "subsampled.fasta", "tree.nwk", "tree_raw.nwk"),
-              "results": "phylogenetic/results/{build}", "div_units": "per_site"},
+              "results": "phylogenetic/results/{build}", "div_units": "per_site", "id_field": "PPX_accession"},
+    # nextstrain/nipah is a third layout again: one defaults/config.yaml like ebola's, but `builds` is a flat list of
+    # names ("human", "I", "II", "all") whose only per-build difference is a filter, and the id column is named once at
+    # the top as `strain_id_field` rather than on each input. Nipah is not on Pathoplexus - every one of the genomes
+    # curated here has an empty PPX_accession - so the id has to be the INSDC accession or the workflow reads no rows.
+    # Its Nextclade step carries its own reference and gene map, which is why no published Nextclade dataset covers it.
+    "nipah": {"repo": "https://github.com/nextstrain/nipah", "dir": "nipah", "layout": "single",
+              "genera": ("Henipavirus",), "default_build": "all", "builds": ("human", "I", "II", "all"),
+              "reference": ("phylogenetic/defaults/reference.fasta",),
+              "div_units": "per_site", "id_field": "accession"},
 }
 DEFAULT_WORKFLOW = "mpox"
 
@@ -88,6 +97,13 @@ def workflow_key(watch_id: int | None = None, taxon: str = "") -> str:
 
 def spec(wf: str | None = None) -> dict:
     return WORKFLOWS[wf or DEFAULT_WORKFLOW]
+
+
+def id_field(wf: str | None = None) -> str:
+    """The metadata column the workflow keys its rows on. It is per virus because it depends on where the genomes come
+    from: mpox and the ebolaviruses are curated from Pathoplexus and their workflows' own include / exclude lists are
+    written in PP_ ids, while Nipah is not on Pathoplexus at all, so its id is the INSDC accession."""
+    return str(spec(wf).get("id_field") or "PPX_accession")
 
 
 def species_of(wf: str | None = None, taxon: str = "") -> str:

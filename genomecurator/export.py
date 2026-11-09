@@ -580,10 +580,13 @@ def _nextstrain_config_single(out: Path, profile: str, relative_to: Path | None,
             f"# Inputs replace the published S3 inputs, so only the genomes curated here are read; nothing is downloaded.\n"
             f"{'' if relative_to else '# Absolute paths do not exist inside the Docker runtime: use --nextstrain-dir to write into the checkout, or run with --ambient/--conda.' + chr(10)}"
             f"builds:\n  - {b}\n"
-            f"inputs:\n  - name: genomecurator\n"
-            + (f"    species: {species}\n" if species else "")
+            # Where the id column is named depends on the workflow: one that splits its inputs by species (ebola) wants it
+            # on each input, one that does not (nipah) names it once at the top. The column itself is per virus, because
+            # Nipah is not on Pathoplexus and its PPX_accession is empty for every genome (nextstrain.id_field).
+            + ("" if species else f"strain_id_field: {nextstrain.id_field(workflow)}\n")
+            + f"inputs:\n  - name: genomecurator\n"
+            + (f"    species: {species}\n    id_field: {nextstrain.id_field(workflow)}\n" if species else "")
             + f"    metadata: \"{path('metadata.tsv')}\"\n    sequences: \"{path('sequences.fasta')}\"\n"
-            f"    id_field: {PROFILES[profile]['id']}\n"
             + (f"# --- this dataset's own Nextstrain settings (Nextstrain tab) ---\n{extra.rstrip()}\n" if extra and extra.strip() else ""))
 
 
