@@ -1487,3 +1487,15 @@ def test_a_pinned_job_waits_for_its_machine_instead_of_oversubscribing_it(tmp_pa
     assert c.claim(hades)["id"] == ids[0]
     assert c.claim(hades) is None                                          # the second waits for a free core, it does not go elsewhere
     assert c.get_job(ids[1])["state"] == "queued"
+
+
+def test_a_pinned_bets_run_keeps_its_pin_on_the_stepping_stone_job(tmp_path, monkeypatch):
+    """The stepping-stone job is queued later, from the group record, so the pin has to survive in the group and not
+    only on the jobs that carried it first."""
+    c = _env(tmp_path, monkeypatch)
+    gid = "g1"
+    rows = [{"id": "j1", "state": "done", "pct": 100, "node_id": None, "target_dir": str(tmp_path),
+             "spec_json": json.dumps({"group": {"id": gid, "kind": "bets", "tag": "dated", "stage": "mcmc", "root": str(tmp_path),
+                                                "tags": ["dated"], "stages": ["mcmc", "gss"], "name": "x", "only_node": "HADES"}})}]
+    g = c._groups(rows, "bets")[gid]
+    assert g["only_node"] == "HADES"                                       # what finish_bets_groups passes on to the next stage

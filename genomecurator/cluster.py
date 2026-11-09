@@ -428,7 +428,7 @@ def _groups(rows: list[dict], kind: str = "split") -> dict[str, dict]:
         if not g or g.get("kind", "split") != kind:
             continue
         e = out.setdefault(g["id"], {"id": g["id"], "kind": kind, "jobs": [], "dirs": {},
-                                     **{k: g.get(k) for k in ("parts", "out", "source", "root", "tags", "stages", "name", "mode")}})
+                                     **{k: g.get(k) for k in ("parts", "out", "source", "root", "tags", "stages", "name", "mode", "only_node")}})
         e["jobs"].append({"id": j["id"], "part": g.get("part"), "tag": g.get("tag"), "stage": g.get("stage"),
                           "state": j["state"], "pct": j.get("pct"), "node_id": j.get("node_id"), "dir": j.get("target_dir")})
         key = g.get("part") if kind == "split" else f'{g.get("tag")}/{g.get("stage")}'      # a string, not a tuple: this goes out as JSON

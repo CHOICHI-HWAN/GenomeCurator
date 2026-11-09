@@ -4215,7 +4215,7 @@ def test_each_virus_gets_its_own_nextstrain_workflow(tmp_path, monkeypatch):
 
     # the id column is per virus: Nipah is not on Pathoplexus, so every PPX_accession it holds is empty
     assert ns.id_field("mpox") == ns.id_field("ebola") == "PPX_accession"
-    assert ns.id_field("nipah") == "accession"
+    assert ns.id_field("nipah") == "INSDC_accession"      # the export puts the Pathoplexus id in `accession`
 
     # the two layouts: mpox keeps a folder per build, ebola one config.yaml that lists them
     for key, build in (("mpox", "clade-i"), ("ebola", "bdbv/drc-uganda-2026")):
@@ -4253,7 +4253,7 @@ def test_each_virus_gets_its_own_nextstrain_workflow(tmp_path, monkeypatch):
     # nipah is the same single-config layout but names the id column once at the top and has no species to split on
     ncfg = exp.nextstrain_config(tmp_path / "data" / "genomecurator", "nextstrain", relative_to=tmp_path,
                                  build="all", run_name="my-run", workflow="nipah")
-    assert "builds:\n  - all\n" in ncfg and "strain_id_field: accession" in ncfg
+    assert "builds:\n  - all\n" in ncfg and "strain_id_field: INSDC_accession" in ncfg
     assert "species:" not in ncfg and "id_field: PPX_accession" not in ncfg
     assert "species: bdbv" in cfg and "strain_id_field:" not in cfg      # ebola puts it on the input instead
 

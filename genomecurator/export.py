@@ -216,9 +216,19 @@ PROFILES = {
 }
 
 
-def _keep_identified(profile: str, sel: list[dict], out: list[dict]) -> tuple[list[dict], dict[str, dict], int, int]:
-    """Rows need a unique, non-empty id (the profile's id column) to line up with the FASTA; the others are left out and counted."""
-    idc = PROFILES[profile]["id"]
+def id_column(profile: str, watch_id: int | None = None) -> str:
+    """The column whose value identifies a row to the workflow. The `nextstrain` profile's default is the Pathoplexus
+    accession, which is what the mpox and ebola workflows key on, but it is per virus: Nipah is not on Pathoplexus, so
+    every PPX_accession it holds is empty and keying on that column would select no genomes at all."""
+    if profile == "nextstrain" and watch_id:
+        from . import nextstrain
+        return nextstrain.id_field(nextstrain.workflow_key(watch_id))
+    return PROFILES[profile]["id"]
+
+
+def _keep_identified(profile: str, sel: list[dict], out: list[dict], watch_id: int | None = None) -> tuple[list[dict], dict[str, dict], int, int]:
+    """Rows need a unique, non-empty id (the virus's id column) to line up with the FASTA; the others are left out and counted."""
+    idc = id_column(profile, watch_id)
     kept, by_id, no_id, dup = [], {}, 0, 0
     for g, row in zip(sel, out):
         k = str(row.get(idc) or "")
@@ -253,7 +263,7 @@ def table(watch_id: int, profile: str = "nextstrain", dataset: dict | None = Non
     prof = PROFILES[profile]
     out = [prof["row"](r) for r in sel]
     sel, out = _in_dataset(dataset, sel, out, profile)
-    out, by_id, _, _ = _keep_identified(profile, sel, out)
+    out, by_id, _, _ = _keep_identified(profile, sel, out, watch_id)
     cols = prof["columns"] or (list(out[0]) if out else ["INSDC_accession_version"])
     return cols, out, by_id, w
 
@@ -267,15 +277,15 @@ def preview(watch_id: int, profile: str = "nextstrain", include_private: bool = 
     sel = select(rows, **filters)
     out_all = [PROFILES[profile]["row"](r) for r in sel]
     sel, out_all = _in_dataset(dataset, sel, out_all, profile)
-    out, by_id, no_id, dup = _keep_identified(profile, sel, out_all)
+    out, by_id, no_id, dup = _keep_identified(profile, sel, out_all, watch_id)
     n = len(out)
     warn = []
     no_seq = sum(1 for r in rows if not (r.get("file_path") and config.data_path(r["file_path"]).exists()))
     if filters.get("require_sequence", True) and no_seq:
         warn.append(f"서열 파일이 없는 유전체 {no_seq:,}건은 제외됩니다 (유전체 화면의 Get FASTA로 받으면 포함됩니다).")
-    idc = PROFILES[profile]["id"]
+    idc = id_column(profile, watch_id)
     if no_id:
-        warn.append(f"`{idc}` 값이 없는 {no_id:,}건은 제외됩니다" + (" (Nextstrain mpox 워크플로는 Pathoplexus accession을 id로 쓰고 포함·제외 목록도 그것으로 맞춥니다)." if profile == "nextstrain" else "."))
+        warn.append(f"`{idc}` 값이 없는 {no_id:,}건은 제외됩니다" + (f" (이 바이러스의 워크플로는 `{idc}`를 id로 쓰고 포함·제외 목록도 그것으로 맞춥니다)." if profile == "nextstrain" else "."))
     if dup:
         warn.append(f"`{idc}`가 겹치는 {dup:,}건은 제외됩니다 (id는 유일해야 합니다).")
     if profile == "nextstrain" and n:

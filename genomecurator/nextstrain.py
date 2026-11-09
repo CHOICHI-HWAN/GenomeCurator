@@ -65,7 +65,7 @@ WORKFLOWS: dict[str, dict] = {
     "nipah": {"repo": "https://github.com/nextstrain/nipah", "dir": "nipah", "layout": "single",
               "genera": ("Henipavirus",), "default_build": "all", "builds": ("human", "I", "II", "all"),
               "reference": ("phylogenetic/defaults/reference.fasta",),
-              "div_units": "per_site", "id_field": "accession"},
+              "div_units": "per_site", "id_field": "INSDC_accession"},
 }
 DEFAULT_WORKFLOW = "mpox"
 
