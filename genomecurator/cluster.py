@@ -347,10 +347,12 @@ def _private_ids() -> set[str]:
 
 
 def submit_beast(folder: str | Path, label: str = "", max_attempts: int = 3, private: bool | None = None, group: dict | None = None,
-                 extra_inputs: tuple[str, ...] = ()) -> str:
+                 extra_inputs: tuple[str, ...] = (), only_node: str | None = None) -> str:
     """Queue the BEAST package in `folder` (its beast.xml and settings.json). The result files are put back into the same folder.
     `group` marks the job as one part of a larger piece of work (a split analysis, a BETS run) and is carried in the job's spec.
-    `extra_inputs` are further files of the folder the run reads (a BETS stepping-stone job reads `prior.log`)."""
+    `extra_inputs` are further files of the folder the run reads (a BETS stepping-stone job reads `prior.log`).
+    `only_node` is the name of the one worker that may run it: a long analysis can then be kept on one machine, so that it is not
+    spread over workers whose cores are wanted for something else, and so that every chain of it is timed on the same hardware."""
     d = Path(folder).resolve()
     try:
         d.relative_to(config.DATA_DIR.resolve())
@@ -377,6 +379,8 @@ def submit_beast(folder: str | Path, label: str = "", max_attempts: int = 3, pri
             "beast_args": list(st.get("beast_args") or BEAST_ARGS)}
     if group:
         spec["group"] = dict(group)
+    if only_node:
+        spec["only_node"] = str(only_node)
     con = connect()
     try:
         con.execute("INSERT INTO cluster_job(id,kind,label,state,created,queued,max_attempts,private,spec_json,inputs_json,target_dir,log_json) VALUES(?,?,?,?,?,?,?,?,?,?,?,?)",
@@ -395,7 +399,7 @@ def submit_beast(folder: str | Path, label: str = "", max_attempts: int = 3, pri
 # full length under a different seed on every machine. Dividing one total between them used to be offered as well; it is gone,
 # because it did not reproduce the undivided answer (beastprep, above the chain-length helpers, has the measurement). When the last
 # chain comes back the main server joins them with LogCombiner, after checking that they agree.
-def submit_beast_split(folder: str | Path, parts: int, label: str = "", max_attempts: int = 3, seed0: int = 1) -> dict:
+def submit_beast_split(folder: str | Path, parts: int, label: str = "", max_attempts: int = 3, seed0: int = 1, only_node: str | None = None) -> dict:
     """Run the prepared BEAST package in `folder` on `parts` machines at once, each at the analysis's full length under its own
     seed, and join the results into `<folder>-combined`. -> {"group", "jobs", "parts", "out", "mode"}"""
     from . import beastprep
@@ -410,7 +414,7 @@ def submit_beast_split(folder: str | Path, parts: int, label: str = "", max_atte
     base = label or f"BEAST {json.loads((d / 'settings.json').read_text(encoding='utf-8')).get('tag') or d.name}"
     jobs = []
     for i, pd in enumerate(dirs, 1):
-        jobs.append(submit_beast(pd, f"{base} [{i}/{parts}]", max_attempts,
+        jobs.append(submit_beast(pd, f"{base} [{i}/{parts}]", max_attempts, only_node=only_node,
                                  group={"id": gid, "part": i, "parts": parts, "out": str(out), "source": str(d), "mode": "replicate"}))
     audit_now("cluster_job", f"{d.name}: {parts} full-length chains over the cluster (group {gid})")
     return {"group": gid, "jobs": jobs, "parts": [str(p) for p in dirs], "out": str(out), "mode": "replicate"}
@@ -536,7 +540,7 @@ def _bets_settings(folder: Path, s: dict, tag: str, stage: str, chain: int, tips
                                                       "tag": f"{s.get('name') or 'bets'}-{tag}-{stage}", "tip_names": tips}, ensure_ascii=False), encoding="utf-8")
 
 
-def submit_bets(clock_run: dict, settings: dict | None = None, max_attempts: int = 3) -> dict:
+def submit_bets(clock_run: dict, settings: dict | None = None, max_attempts: int = 3, only_node: str | None = None) -> dict:
     """Queue every analysis of a BETS run (or of a model comparison) as its own cluster job. The generalized stepping-stone analyses
     are queued later, each when its own ordinary chain comes back. -> {"group", "jobs", "root", "tags", "stages"}"""
     from . import beastprep
@@ -557,23 +561,24 @@ def submit_bets(clock_run: dict, settings: dict | None = None, max_attempts: int
         base = Path(info["folders"][tag])
         if "psss" in stages:
             _bets_settings(base / "psss", s, tag, "psss", s["initial_chain"], tips)
-            jobs.append(_submit_bets_stage(gid, s, root_dir, tags, stages, tag, "psss", base / "psss", what, max_attempts))
+            jobs.append(_submit_bets_stage(gid, s, root_dir, tags, stages, tag, "psss", base / "psss", what, max_attempts, only_node))
         if "gss" in stages:
             (base / "gssrun").mkdir(parents=True, exist_ok=True)
             (base / "gssrun" / "template.xml").write_text(beastprep.bets_gss_template(clock_run, tag, s), encoding="utf-8")
             _bets_settings(base / "mcmc", s, tag, "mcmc", s["initial_chain"], tips)
-            jobs.append(_submit_bets_stage(gid, s, root_dir, tags, stages, tag, "mcmc", base / "mcmc", what, max_attempts))
+            jobs.append(_submit_bets_stage(gid, s, root_dir, tags, stages, tag, "mcmc", base / "mcmc", what, max_attempts, only_node))
     (root_dir / "summary.json").unlink(missing_ok=True)
     audit_now("cluster_job", f"{what} {root_dir.name} queued as {len(tags) * len(stages)} analyses (group {gid})")
     return {"group": gid, "jobs": jobs, "root": str(root_dir), "tags": tags, "stages": stages}
 
 
 def _submit_bets_stage(gid: str, s: dict, root_dir: Path, tags: list[str], stages: list[str], tag: str, stage: str,
-                       folder: Path, what: str, max_attempts: int = 3) -> str:
+                       folder: Path, what: str, max_attempts: int = 3, only_node: str | None = None) -> str:
+    # the pin is kept in the group as well as the job, because the stepping-stone job is queued later from the group record
     return submit_beast(folder, f"{what} [{tag} · {BETS_STAGES[stage]}]", max_attempts,
                         group={"id": gid, "kind": "bets", "tag": tag, "stage": stage, "root": str(root_dir),
-                               "tags": tags, "stages": stages, "name": s.get("name") or ""},
-                        extra_inputs=("prior.log",) if stage == "gss" else ())
+                               "tags": tags, "stages": stages, "name": s.get("name") or "", "only_node": only_node},
+                        extra_inputs=("prior.log",) if stage == "gss" else (), only_node=only_node)
 
 
 def bets_groups() -> list[dict]:
@@ -603,7 +608,7 @@ def finish_bets_groups() -> list[dict]:
                 mcmc_set = json.loads((Path(x["dir"]) / "settings.json").read_text(encoding="utf-8"))
                 _bets_settings(gd, s, x["tag"], "gss", 0, mcmc_set.get("tip_names", []))   # 0: the path sampling has no state count to show progress against
                 jid = _submit_bets_stage(g["id"], s, root_dir, g["tags"], g["stages"], x["tag"], "gss", gd,
-                                         "model comparison" if s.get("compare") else "BETS")
+                                         "model comparison" if s.get("compare") else "BETS", only_node=g.get("only_node"))
                 out.append({"group": g["id"], "queued": jid, "tag": x["tag"], "stage": "gss"})
             except Exception as ex:
                 _log.warning("BETS %s/%s: the stepping-stone analysis could not be queued: %s", g["id"], x["tag"], ex)
@@ -817,13 +822,16 @@ def claim(node: dict, kinds: list[str] | None = None, metrics: dict | None = Non
             q += " AND private=0"
         outranked = None
         for j in con.execute(q + " ORDER BY created, rowid", kinds).fetchall():
-            want = int((json.loads(j["spec_json"] or "{}")).get("threads") or DEFAULT_THREADS)
+            spec = json.loads(j["spec_json"] or "{}")
+            if spec.get("only_node") and spec["only_node"] != node["name"]:
+                continue                    # pinned to one machine by whoever queued it
+            want = int(spec.get("threads") or DEFAULT_THREADS)
             if running and want > free and not spare:
                 continue                    # it would oversubscribe this machine; another worker can take it
             if outranked is None:           # the same for every job in this pass, so it is worked out once
                 outranked = _outranked(con, node)
-            if outranked and _waited(j) < FIRST_REFUSAL:
-                continue                    # a machine the owner ranked above this one is free: leave it for them a little longer
+            if outranked and _waited(j) < FIRST_REFUSAL and not spec.get("only_node"):
+                continue                    # a machine the owner ranked above this one is free: leave it for them a little longer (a pinned job has nowhere else to go)
             n = con.execute("UPDATE cluster_job SET state='running', node_id=?, claimed=?, heartbeat=?, attempts=attempts+1, pct=0, msg='assigned' WHERE id=? AND state='queued'",
                             (node["id"], _now(), _now(), j["id"])).rowcount
             if n:

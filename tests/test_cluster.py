@@ -1453,3 +1453,37 @@ def test_a_zero_exit_code_is_not_a_finished_chain(tmp_path):
     assert w._chain_fell_short(tmp_path, 0) == ""                 # nothing to compare against
     log.unlink()
     assert w._chain_fell_short(tmp_path, 30_000_000) == ""        # a marginal-likelihood job writes its samples elsewhere
+
+
+def test_a_job_pinned_to_one_worker_is_offered_to_no_other(tmp_path, monkeypatch):
+    """A long analysis can be kept on one machine: other workers pass the job over, the named one takes it."""
+    c = _env(tmp_path, monkeypatch)
+    hades = c.authenticate(c.create_node("HADES")["key"])
+    other = c.authenticate(c.create_node("dolphin")["key"])
+    for n in (hades, other):
+        c.hello(n, {"kinds": ["beast"], "cpus": 64})
+    pinned = c.submit_beast(_pkg(tmp_path, "a"), only_node="HADES")
+    free = c.submit_beast(_pkg(tmp_path, "b"))
+    assert c.get_job(pinned)["spec"]["only_node"] == "HADES"
+    got = c.claim(other)                                                   # dolphin may not have the pinned one
+    assert got and got["id"] == free
+    assert c.claim(other) is None
+    got = c.claim(hades)
+    assert got and got["id"] == pinned
+    assert c.get_job(pinned)["node"] == "HADES"
+
+
+def test_a_pinned_job_waits_for_its_machine_instead_of_oversubscribing_it(tmp_path, monkeypatch):
+    """Pinning says where, not how many: the machine's core budget still holds and the rest of the jobs queue."""
+    c = _env(tmp_path, monkeypatch)
+    hades = c.authenticate(c.create_node("HADES")["key"])
+    c.hello(hades, {"kinds": ["beast"], "cpus": c.RESERVE_CPUS + 8})       # room for one 8-thread job
+    import json as _j
+    ids = []
+    for name in ("a", "b"):
+        d = _pkg(tmp_path, name)
+        (d / "settings.json").write_text(_j.dumps({"seed": 1, "threads": 8, "chain_length": 1000, "tag": name, "tip_names": []}), encoding="utf-8")
+        ids.append(c.submit_beast(d, only_node="HADES"))
+    assert c.claim(hades)["id"] == ids[0]
+    assert c.claim(hades) is None                                          # the second waits for a free core, it does not go elsewhere
+    assert c.get_job(ids[1])["state"] == "queued"

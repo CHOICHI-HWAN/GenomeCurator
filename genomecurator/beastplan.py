@@ -56,9 +56,11 @@ def list_plans(clock_run: dict) -> list[dict]:
 
 
 def start(clock_run: dict, name: str, tip_names: list[str], modelfinder: str | Path, dating: dict | None = None,
-          bets: dict | None = None, chains: int = 2) -> dict:
+          bets: dict | None = None, chains: int = 2, only_node: str | None = None) -> dict:
     """Begin a plan. `tip_names` are the genomes every step uses, `modelfinder` the IQ-TREE report whose chosen model every step
-    uses, `dating` the settings of the final analysis (chain length, priors, groups), `chains` how many full-length chains it runs."""
+    uses, `dating` the settings of the final analysis (chain length, priors, groups), `chains` how many full-length chains it runs.
+    `only_node` keeps every step of the plan on the one named worker, so the whole analysis runs on the same hardware and leaves
+    the other machines to whatever else is queued."""
     from . import cluster
     if read(clock_run, name):
         raise ValueError(f"{name} 계획이 이미 있습니다.")
@@ -76,11 +78,12 @@ def start(clock_run: dict, name: str, tip_names: list[str], modelfinder: str | P
     p = {"name": name, "created": datetime.now().isoformat(timespec="seconds"), "run_dir": str(clock_run["run_dir"]),
          "clock_run_id": clock_run.get("id"), "n_tips": len(tips), "tip_names": tips, "model": model,
          "bets_settings": bs, "dating_settings": ds, "chains": int(chains), "stage": "bets", "groups": {}, "results": {},
-         "grid": [f"{c}-{t}" for c in beastprep.CLOCKS for t in beastprep.PRIORS], "signal_min": SIGNAL_MIN}
+         "grid": [f"{c}-{t}" for c in beastprep.CLOCKS for t in beastprep.PRIORS], "signal_min": SIGNAL_MIN,
+         "only_node": only_node}
     bs["name"] = f"plan-{beastprep._safe(name)}-signal"
-    g = cluster.submit_bets(clock_run, bs)
+    g = cluster.submit_bets(clock_run, bs, only_node=only_node)
     p["groups"]["bets"] = g["group"]
-    p["log"] = [f"{p['created']}  시작: 유전체 {len(tip_names)}개, 치환 모형 {model['model']} ({model['note']}), 시계 신호 확인 {len(g['jobs'])}개 작업"]
+    p["log"] = [f"{p['created']}  시작: 유전체 {len(tip_names)}개, 치환 모형 {model['model']} ({model['note']}), 시계 신호 확인 {len(g['jobs'])}개 작업" + (f", {only_node}에서만 실행" if only_node else "")]
     return _write(clock_run, p)
 
 
@@ -117,7 +120,7 @@ def advance(clock_run: dict, name: str) -> dict:
             _note(p, p["stopped_because"])
             return _write(clock_run, p)
         cs = dict(p["bets_settings"], compare=True, name=f"plan-{beastprep._safe(name)}-models")
-        ng = cluster.submit_bets(clock_run, cs)
+        ng = cluster.submit_bets(clock_run, cs, only_node=p.get("only_node"))
         p["groups"]["compare"] = ng["group"]
         p["compare_settings"] = cs
         p["stage"] = "compare"
@@ -144,7 +147,7 @@ def advance(clock_run: dict, name: str) -> dict:
         ds = dict(p["dating_settings"], clock=clock_m, tree_prior=tree_m, tag=f"plan-{beastprep._safe(name)}-dating")
         beastprep.prepare(clock_run, ds)                                   # the dating package, under the model the comparison chose
         d = beastprep.folder(clock_run, ds["tag"])
-        ng = cluster.submit_beast_split(d, p["chains"], f"plan {name}: dating under {best}")
+        ng = cluster.submit_beast_split(d, p["chains"], f"plan {name}: dating under {best}", only_node=p.get("only_node"))
         p["groups"]["dating"] = ng["group"]
         p["dating_settings"] = ds
         p["dating_out"] = ng["out"]
