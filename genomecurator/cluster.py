@@ -31,6 +31,7 @@ RESERVE_CPUS = int(os.environ.get("GC_CLUSTER_RESERVE_CPUS", "1"))   # these are
 BEAST_ARGS = [a for a in os.environ.get("GC_BEAST_ARGS", "-pattern_compression ambiguous_constant").split() if a]   # measured 19x faster on the 166-genome alignment, with the same posterior
 DEFAULT_THREADS = 8                                              # assumed when a job or a worker does not say           # seconds without a heartbeat before a running job is shown as "not answering" (grace starts)
 LOG_MAX = 300
+CANNOT_JOIN = "cannot-join.json"                                 # written beside a split group's output when its parts cannot be joined (see finish_split_groups)
 # the only commands a worker runs; {x} are filled from the job's spec by the worker, never from free text
 KINDS = {"beast": {"label": "BEAST", "inputs": ["beast.xml"], "outputs": ["beast.log", "beast.trees", "beast.ops", "beast.screen.log"], "required": ["beast.log", "beast.trees"]}}
 
@@ -445,6 +446,16 @@ def _groups(rows: list[dict], kind: str = "split") -> dict[str, dict]:
                     e["agreement"] = json.loads(ag.read_text(encoding="utf-8"))
                 except (OSError, ValueError):
                     e["agreement"] = None
+            # A group whose parts are all `done` but which cannot be joined would be retried on every background pass,
+            # which is how two of them filled the server log with the same refusal every few seconds. The refusal is
+            # recorded next to where the join would have gone, and the group is left alone until someone asks again.
+            cj = Path(e["out"] or "/nonexistent") / CANNOT_JOIN
+            e["unjoinable"] = cj.is_file() and not e["joined"]
+            if e["unjoinable"]:
+                try:
+                    e["cannot_join"] = json.loads(cj.read_text(encoding="utf-8"))
+                except (OSError, ValueError):
+                    e["cannot_join"] = None
         else:
             e["expected"] = len(e["tags"] or []) * len(e["stages"] or [])
             # A run is ready to summarize when every model has a marginal likelihood from at least one estimator, not when
@@ -481,7 +492,8 @@ def split_groups() -> list[dict]:
 
 
 def join_group(gid: str) -> dict:
-    """Join the parts of a finished split analysis. Safe to call again: a group that is already joined is left alone."""
+    """Join the parts of a finished split analysis. Safe to call again: a group that is already joined is left alone,
+    and one that was recorded as unjoinable is tried once more (asking for it explicitly clears that record)."""
     from . import beastprep
     g = next((x for x in split_groups() if x["id"] == gid), None)
     if not g:
@@ -490,6 +502,7 @@ def join_group(gid: str) -> dict:
         return {"group": gid, "joined": True, "already": True, "out": g["out"]}
     if not g["ready"]:
         raise ValueError(f"{g['done']}/{g['parts']} parts are done; nothing to join yet")
+    (Path(g["out"]) / CANNOT_JOIN).unlink(missing_ok=True)       # a deliberate retry is never blocked by the record
     dirs = [g["dirs"][i] for i in sorted(g["dirs"]) if g["dirs"].get(i)]
     out = beastprep.combine_folders(dirs, Path(g["out"]), 0.1)
     agree = json.loads((out / "agreement.json").read_text(encoding="utf-8"))
@@ -509,12 +522,21 @@ def finish_split_groups() -> list[dict]:
     """Join every split analysis whose parts have all come back. Called from the background; errors are recorded on the jobs, not raised."""
     out = []
     for g in split_groups():
-        if not g["ready"] or g["joined"]:
+        if not g["ready"] or g["joined"] or g.get("unjoinable"):
             continue
         try:
             out.append(join_group(g["id"]))
         except Exception as ex:                                  # a join that fails must not stop the server or the other groups
             _log.warning("split group %s could not be joined: %s", g["id"], ex)
+            try:                                                 # write it down so the next pass leaves this group alone
+                p = Path(g["out"]); p.mkdir(parents=True, exist_ok=True)
+                (p / CANNOT_JOIN).write_text(json.dumps(
+                    {"group": g["id"], "when": datetime.now().isoformat(timespec="seconds"), "reason": str(ex)[:400],
+                     "parts": [{"id": x["id"], "part": x["part"], "state": x["state"], "dir": x["dir"]} for x in g["jobs"]],
+                     "note": "join_group() on this group tries again and removes this file"},
+                    ensure_ascii=False, indent=1), encoding="utf-8")
+            except OSError:
+                pass
             con = connect()
             try:
                 for x in g["jobs"]:

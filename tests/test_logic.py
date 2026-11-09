@@ -4196,14 +4196,19 @@ def test_each_virus_gets_its_own_nextstrain_workflow(tmp_path, monkeypatch):
     monkeypatch.setattr(config, "DATA_DIR", tmp_path)
     con = connect()
     con.execute("INSERT INTO watchlist(id,name,taxon,taxon_id) VALUES(1,'Mpox','Orthopoxvirus monkeypox',1),"
-                "(2,'BDBV','Orthoebolavirus bundibugyoense',2),(3,'Nipah','Henipavirus nipahense',3)")
+                "(2,'BDBV','Orthoebolavirus bundibugyoense',2),(3,'Nipah','Henipavirus nipahense',3),"
+                "(4,'Junin','Mammarenavirus juninense',4)")
     con.commit()
     con.close()
 
-    assert ns.workflow_for(1) == "mpox" and ns.workflow_for(2) == "ebola"
-    assert ns.workflow_for(3) == ""                                    # nothing registered: no silent fall back to mpox
-    assert ns.workflow_key(3) == "mpox"                                # the older helpers keep their default
-    assert ns.checkout_dir("mpox") != ns.checkout_dir("ebola")         # separate checkouts, never one shared folder
+    assert ns.workflow_for(1) == "mpox" and ns.workflow_for(2) == "ebola" and ns.workflow_for(3) == "nipah"
+    assert ns.workflow_for(4) == ""                                    # nothing registered: no silent fall back to mpox
+    assert ns.workflow_key(4) == "mpox"                                # the older helpers keep their default
+    assert len({ns.checkout_dir(k) for k in ("mpox", "ebola", "nipah")}) == 3    # separate checkouts, never one shared
+
+    # the id column is per virus: Nipah is not on Pathoplexus, so every PPX_accession it holds is empty
+    assert ns.id_field("mpox") == ns.id_field("ebola") == "PPX_accession"
+    assert ns.id_field("nipah") == "accession"
 
     # the two layouts: mpox keeps a folder per build, ebola one config.yaml that lists them
     for key, build in (("mpox", "clade-i"), ("ebola", "bdbv/drc-uganda-2026")):
@@ -4238,9 +4243,16 @@ def test_each_virus_gets_its_own_nextstrain_workflow(tmp_path, monkeypatch):
                                  build="clade-i", run_name="my-run", workflow="mpox")
     assert "--configfile defaults/clade-i/config.yaml" in mcfg and 'build_name: "my-run"' in mcfg and "builds:" not in mcfg
 
+    # nipah is the same single-config layout but names the id column once at the top and has no species to split on
+    ncfg = exp.nextstrain_config(tmp_path / "data" / "genomecurator", "nextstrain", relative_to=tmp_path,
+                                 build="all", run_name="my-run", workflow="nipah")
+    assert "builds:\n  - all\n" in ncfg and "strain_id_field: accession" in ncfg
+    assert "species:" not in ncfg and "id_field: PPX_accession" not in ncfg
+    assert "species: bdbv" in cfg and "strain_id_field:" not in cfg      # ebola puts it on the input instead
+
     # a virus with no workflow is refused with a reason, not run against the wrong one
     with _pytest.raises(RuntimeError, match="워크플로가 없습니다"):
-        ns.run({"watch_id": 3, "build": "", "name": "x", "id": 1, "rules": {}})
+        ns.run({"watch_id": 4, "build": "", "name": "x", "id": 1, "rules": {}})
 
 
 def test_one_decimal_year_convention():
